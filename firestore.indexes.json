@@ -33,16 +33,6 @@
       ]
     },
     {
-      "collectionGroup": "chatMessages",
-      "queryScope": "COLLECTION",
-      "fields": [
-        {
-          "fieldPath": "createdAt",
-          "order": "DESCENDING"
-        }
-      ]
-    },
-    {
       "collectionGroup": "packLists",
       "queryScope": "COLLECTION",
       "fields": [
@@ -53,16 +43,6 @@
         {
           "fieldPath": "createdAt",
           "order": "ASCENDING"
-        }
-      ]
-    },
-    {
-      "collectionGroup": "notes",
-      "queryScope": "COLLECTION",
-      "fields": [
-        {
-          "fieldPath": "updatedAt",
-          "order": "DESCENDING"
         }
       ]
     },
