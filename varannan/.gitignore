@@ -1,0 +1,5 @@
+.test-out/
+node_modules/
+.next/
+out/
+.env.local

@@ -1,0 +1,23 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "commonjs",
+    "strict": false,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "outDir": "../.test-out",
+    "rootDir": "..",
+    "types": [
+      "node"
+    ],
+    "moduleResolution": "node"
+  },
+  "include": [
+    "*.ts",
+    "../lib/custodyCycle.ts",
+    "../lib/dayBalance.ts",
+    "../lib/recurrence.ts",
+    "../types/schema.ts",
+    "../lib/onboarding.ts"
+  ]
+}
