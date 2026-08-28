@@ -9,7 +9,7 @@
     "start": "next start",
     "lint": "next lint",
     "emulators": "firebase emulators:start",
-    "deploy": "npm run export && firebase deploy",
+    "deploy": "firebase deploy",
     "test": "tsc -p test/tsconfig.json && node .test-out/test/correctness.js",
     "bench": "tsc -p test/tsconfig.json && node .test-out/test/bench.js",
     "bench:firestore": "tsc -p test/tsconfig.json && node .test-out/test/firestoreBench.js"

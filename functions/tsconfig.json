@@ -5,10 +5,12 @@
     "lib": ["ES2020"],
     "strict": true,
     "esModuleInterop": true,
-    "skipLibCheck": true,"downlevelIteration": true,
+    "skipLibCheck": true,
+    "downlevelIteration": true,
     "rootDir": "..",
     "outDir": "lib"
   },
-  "include": ["src/**/*.ts", "../types/**/*.ts"],
+  "include": ["src/**/*.ts"],
+  "exclude": ["node_modules"],
   "compileOnSave": true
 }
