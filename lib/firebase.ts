@@ -20,7 +20,7 @@ const firebaseConfig = {
 export const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 export const db = getFirestore(app);
-export const functions = getFunctions(app, "europe-west1"); // matcha regionen ni deployar Functions till
+export const functions = getFunctions(app, "us-central1"); // matchar regionen Cloud Functions är deployade till
 
 // Lokal utveckling: `npm run emulators` i ett annat fönster, sätt sedan
 // NEXT_PUBLIC_USE_FIREBASE_EMULATORS=true i .env.local
