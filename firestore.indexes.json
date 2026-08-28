@@ -23,16 +23,6 @@
       "queryScope": "COLLECTION",
       "fields": [
         {
-          "fieldPath": "startAt",
-          "order": "ASCENDING"
-        }
-      ]
-    },
-    {
-      "collectionGroup": "events",
-      "queryScope": "COLLECTION",
-      "fields": [
-        {
           "fieldPath": "recurrence",
           "order": "ASCENDING"
         },
