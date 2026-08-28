@@ -1,7 +1,7 @@
 import { httpsCallable } from "firebase/functions";
 import { doc, setDoc, collection } from "firebase/firestore";
-import { functions, db } from "../firebase";
-import { CustodyCycleBlock, ChildDoc } from "../../types/schema";
+import { functions, db } from "./firebase";
+import { CustodyCycleBlock, ChildDoc } from "../types/schema";
 
 /**
  * team/invite/cykel går via Cloud Functions eftersom firestore.rules

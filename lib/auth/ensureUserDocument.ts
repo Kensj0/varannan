@@ -1,7 +1,7 @@
 import { doc, getDoc, setDoc, serverTimestamp } from "firebase/firestore";
 import { User } from "firebase/auth";
-import { db } from "./firebase";
-import { UserDoc } from "../types/schema";
+import { db } from "../firebase";
+import { UserDoc } from "../../types/schema";
 
 /**
  * Körs direkt efter lyckad inloggning/registrering. Skapar users/{uid}
