@@ -18,9 +18,15 @@
  */
 
 import * as admin from "firebase-admin";
+import { setGlobalOptions } from "firebase-functions/v2";
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { onDocumentWritten } from "firebase-functions/v2/firestore";
 import { google } from "googleapis";
+
+// Alla functions i samma region — undviker mismatch mellan Firestore-
+// triggers (Eventarc) och databasens region, vilket annars kan ge
+// "Location X is not found or access is unauthorized".
+setGlobalOptions({ region: "us-central1" });
 
 import {
   CustodyCycleDoc,

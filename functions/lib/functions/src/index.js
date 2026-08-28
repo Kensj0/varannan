@@ -53,9 +53,14 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.exportEventToGoogleCalendar = exports.approveShiftRequest = exports.saveCustodyCycle = exports.syncDisplayNameToTeam = exports.acceptInvite = exports.createInvite = exports.createFamilyTeam = void 0;
 const admin = __importStar(require("firebase-admin"));
+const v2_1 = require("firebase-functions/v2");
 const https_1 = require("firebase-functions/v2/https");
 const firestore_1 = require("firebase-functions/v2/firestore");
 const googleapis_1 = require("googleapis");
+// Alla functions i samma region — undviker mismatch mellan Firestore-
+// triggers (Eventarc) och databasens region, vilket annars kan ge
+// "Location X is not found or access is unauthorized".
+(0, v2_1.setGlobalOptions)({ region: "us-central1" });
 const dayBalance_1 = require("../../lib/dayBalance");
 const onboarding_1 = require("../../lib/onboarding");
 const onboardingAdapter_1 = require("./onboardingAdapter");
