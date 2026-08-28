@@ -1,0 +1,112 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function userTeamId() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.teamId;
+    }
+
+    function isTeamMember(teamId) {
+      return isSignedIn() && userTeamId() == teamId;
+    }
+
+    // ---------------------------------------------------------------
+    // users/{uid}
+    // ---------------------------------------------------------------
+    match /users/{uid} {
+      allow read: if isSignedIn() && request.auth.uid == uid;
+      // teamId får bara sättas av en Cloud Function (createTeam/joinTeam),
+      // inte skrivas fritt av klienten, för att undvika att man "hoppar in"
+      // i ett team man inte blivit inbjuden till.
+      allow update: if isSignedIn() && request.auth.uid == uid
+                    && !("teamId" in request.resource.data.diff(resource.data).affectedKeys());
+      allow create: if isSignedIn() && request.auth.uid == uid;
+    }
+
+    // ---------------------------------------------------------------
+    // teams/{teamId}
+    // ---------------------------------------------------------------
+    match /teams/{teamId} {
+      allow read: if isTeamMember(teamId);
+      // Skapande och inbjudan-godkännande sker via Cloud Functions
+      // (admin SDK, kringgår rules) för att garantera att parentIds
+      // aldrig kan manipuleras direkt av klienten.
+      allow write: if false;
+
+      match /children/{childId} {
+        allow read, write: if isTeamMember(teamId);
+
+        match /childInfo/{docId} {
+          // Barninfo innehåller personnummer, passnummer och
+          // medicinsk information. Endast teamets två föräldrar får
+          // läsa/skriva — ingen delning, ingen collectionGroup-fråga
+          // (se saknaden av index på dessa fält i firestore.indexes.json:
+          // fälten ska ALDRIG indexeras, då de annars blir sökbara).
+          allow read, write: if isTeamMember(teamId);
+        }
+        match /accounts/{accountId} {
+          // Inloggningar och PIN-koder till barnens tjänster.
+          // Samma restriktion som childInfo.
+          allow read, write: if isTeamMember(teamId);
+        }
+        match /custodyCycle/{docId} {
+          allow read: if isTeamMember(teamId);
+          // Cykeln påverkar Ställningen retroaktivt om den ändras —
+          // låt bara Cloud Function skriva den (kräver explicit
+          // "bekräfta"-flöde i UI:t som anropar en callable function).
+          allow write: if false;
+        }
+        match /dayBalance/{docId} {
+          allow read: if isTeamMember(teamId);
+          // Skrivs ENDAST av Cloud Function (respondToShiftRequest-
+          // transaktionen) — aldrig direkt av klienten.
+          allow write: if false;
+        }
+      }
+
+      match /events/{eventId} {
+        allow read, write: if isTeamMember(teamId);
+      }
+
+      match /shiftRequests/{requestId} {
+        allow read: if isTeamMember(teamId);
+        allow create: if isTeamMember(teamId)
+                      && request.resource.data.status == "pending"
+                      && request.resource.data.requestedBy == request.auth.uid;
+        // Statusändring (approved/declined) görs via callable Cloud
+        // Function eftersom godkännande måste trigga dayBalance-
+        // transaktionen atomiskt.
+        allow update: if false;
+      }
+
+      match /packLists/{listId} {
+        allow read, write: if isTeamMember(teamId);
+      }
+      match /notes/{noteId} {
+        allow read, write: if isTeamMember(teamId);
+      }
+      match /todos/{todoId} {
+        allow read, write: if isTeamMember(teamId);
+      }
+      match /chatMessages/{messageId} {
+        allow read: if isTeamMember(teamId);
+        allow create: if isTeamMember(teamId) && request.resource.data.senderId == request.auth.uid;
+        allow update, delete: if false;
+      }
+    }
+
+    // ---------------------------------------------------------------
+    // teamInvites/{code} — korttidsgiltiga inbjudningskoder för att
+    // knyta ihop förälder 2 med teamet (se lib/onboarding.ts)
+    // ---------------------------------------------------------------
+    match /teamInvites/{code} {
+      allow read: if isSignedIn(); // måste kunna läsas för att validera koden innan man är medlem
+      allow write: if false; // skapas/konsumeras endast via Cloud Function
+    }
+  }
+}

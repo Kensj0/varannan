@@ -1,0 +1,31 @@
+{
+  "name": "varannan",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "export": "next build && next export -o out",
+    "start": "next start",
+    "lint": "next lint",
+    "emulators": "firebase emulators:start",
+    "deploy": "npm run export && firebase deploy",
+    "test": "tsc -p test/tsconfig.json && node .test-out/test/correctness.js",
+    "bench": "tsc -p test/tsconfig.json && node .test-out/test/bench.js",
+    "bench:firestore": "tsc -p test/tsconfig.json && node .test-out/test/firestoreBench.js"
+  },
+  "dependencies": {
+    "next": "^14.2.0",
+    "react": "^18.3.0",
+    "react-dom": "^18.3.0",
+    "firebase": "^10.12.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0",
+    "@types/react": "^18.3.0",
+    "@types/node": "^20.12.0",
+    "tailwindcss": "^3.4.0",
+    "postcss": "^8.4.0",
+    "autoprefixer": "^10.4.0"
+  }
+}
