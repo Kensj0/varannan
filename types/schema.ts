@@ -38,6 +38,8 @@ export interface UserDoc {
     refreshTokenRef?: string; // referens till hemlighet i Secret Manager, ALDRIG rå token i Firestore
     lastSyncedAt?: FirestoreTimestamp;
   };
+  /** Web push-tokens (en per enhet/webbläsare som aktiverat notiser). */
+  fcmTokens?: string[];
   createdAt: FirestoreTimestamp;
 }
 

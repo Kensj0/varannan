@@ -1,7 +1,8 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "../lib/auth/AuthProvider";
+import { requestAndSavePushToken, getPushPermissionState, listenForForegroundMessages } from "../lib/pushNotifications";
 import {
   useTeam,
   useChildren,
@@ -77,6 +78,32 @@ const TAB_LABELS: Record<Tab, string> = {
 
 export default function HomePage() {
   const { user, userDoc, signOutUser } = useAuth();
+
+  // Push-notiser: fråga om lov och visa en banderoll om pushar som
+  // kommer in medan fliken redan är öppen (då visar inte webbläsaren
+  // en OS-notis själv, se lib/pushNotifications.ts).
+  const [pushPermission, setPushPermission] = useState<
+    "unsupported" | "default" | "granted" | "denied" | null
+  >(null);
+  const [pushToast, setPushToast] = useState<{ title: string; body: string } | null>(null);
+
+  useEffect(() => {
+    getPushPermissionState().then(setPushPermission);
+    let unsubscribe: (() => void) | undefined;
+    listenForForegroundMessages((title, body) => {
+      setPushToast({ title, body });
+      setTimeout(() => setPushToast(null), 5000);
+    }).then((unsub) => {
+      unsubscribe = unsub;
+    });
+    return () => unsubscribe?.();
+  }, []);
+
+  async function enablePushNotifications() {
+    if (!user) return;
+    const result = await requestAndSavePushToken(user.uid);
+    setPushPermission(result);
+  }
   const teamId = userDoc?.teamId ?? null;
 
   const { data: team } = useTeam(teamId);
@@ -187,12 +214,28 @@ export default function HomePage() {
 
   return (
     <main className="mx-auto max-w-md px-4 py-6">
+      {pushToast && (
+        <div className="fixed left-1/2 top-3 z-50 w-[calc(100%-2rem)] max-w-sm -translate-x-1/2 rounded-xl bg-stone-800 px-4 py-3 text-white shadow-lg">
+          <p className="text-sm font-semibold">{pushToast.title}</p>
+          <p className="text-xs text-stone-300">{pushToast.body}</p>
+        </div>
+      )}
+
       <header className="mb-4 flex items-center justify-between">
         <h1 className="text-xl font-bold text-stone-800">Varannan</h1>
         <button onClick={signOutUser} className="text-sm text-stone-400 hover:text-rose-500">
           Logga ut
         </button>
       </header>
+
+      {pushPermission === "default" && (
+        <button
+          onClick={enablePushNotifications}
+          className="mb-4 w-full rounded-xl bg-sky-50 px-4 py-3 text-left text-sm font-medium text-sky-700 hover:bg-sky-100"
+        >
+          Aktivera notiser för byten och inbjudningar →
+        </button>
+      )}
 
       {!hasPartner && (
         <InvitePartnerBanner teamName={team?.name} onCreateInvite={() => createInvite(teamId!)} />

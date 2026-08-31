@@ -20,7 +20,7 @@
 import * as admin from "firebase-admin";
 import { setGlobalOptions } from "firebase-functions/v2";
 import { onCall, HttpsError } from "firebase-functions/v2/https";
-import { onDocumentWritten } from "firebase-functions/v2/firestore";
+import { onDocumentWritten, onDocumentCreated } from "firebase-functions/v2/firestore";
 import { google } from "googleapis";
 
 // Alla functions i samma region — undviker mismatch mellan Firestore-
@@ -45,6 +45,7 @@ import {
   setupCustodyCycle,
 } from "../../lib/onboarding";
 import { createOnboardingAdapter } from "./onboardingAdapter";
+import { sendPushToUser, sendPushToUsers } from "./notifications";
 
 admin.initializeApp();
 const db = admin.firestore();
@@ -121,6 +122,17 @@ export const acceptInvite = onCall(async (request) => {
     }
     throw new HttpsError("failed-precondition", "Koden är ogiltig eller har gått ut.");
   }
+
+  const joinerProfile = profileFromAuth(request.auth!);
+  const teamSnap = await db.doc(`teams/${result.teamId}`).get();
+  const otherParentIds: string[] = (teamSnap.data()?.parentIds ?? []).filter((id: string) => id !== uid);
+  if (otherParentIds.length > 0) {
+    await sendPushToUsers(db, otherParentIds, {
+      title: "Din partner har anslutit!",
+      body: `${joinerProfile.displayName} har gått med i Varannan. Schemat är nu aktivt.`,
+    });
+  }
+
   return result;
 });
 
@@ -198,6 +210,9 @@ export const approveShiftRequest = onCall(async (request) => {
   const balanceRef = db.doc(`teams/${teamId}/children/${childId}/dayBalance/main`);
   const historyRef = db.collection(`teams/${teamId}/children/${childId}/dayBalanceHistory`).doc();
 
+  let notifyRequestedBy: string | null = null;
+  let responderName = "Andra föräldern";
+
   await db.runTransaction(async (tx) => {
     const [teamSnap, requestSnap] = await Promise.all([tx.get(teamRef), tx.get(requestRef)]);
 
@@ -216,6 +231,9 @@ export const approveShiftRequest = onCall(async (request) => {
     if (shiftRequest.requestedBy === uid) {
       throw new HttpsError("permission-denied", "Du kan inte godkänna din egen förfrågan.");
     }
+
+    notifyRequestedBy = shiftRequest.requestedBy;
+    responderName = teamSnap.data()?.parentProfiles?.[uid]?.displayName ?? responderName;
 
     if (decision === "declined") {
       tx.update(requestRef, {
@@ -261,6 +279,16 @@ export const approveShiftRequest = onCall(async (request) => {
     });
   });
 
+  if (notifyRequestedBy) {
+    await sendPushToUser(db, notifyRequestedBy, {
+      title: decision === "approved" ? "Bytet godkändes" : "Bytet avböjdes",
+      body:
+        decision === "approved"
+          ? `${responderName} godkände ändringen av schemat.`
+          : `${responderName} avböjde ändringen av schemat.`,
+    });
+  }
+
   return { ok: true };
 });
 
@@ -291,6 +319,10 @@ export const approveShiftRequestBatch = onCall(async (request) => {
   const cycleRef = db.doc(`teams/${teamId}/children/${childId}/custodyCycle/main`);
   const balanceRef = db.doc(`teams/${teamId}/children/${childId}/dayBalance/main`);
 
+  let notifyRequestedBy: string | null = null;
+  let responderName = "Andra föräldern";
+  let dayCount = 0;
+
   await db.runTransaction(async (tx) => {
     const teamSnap = await tx.get(teamRef);
     if (!teamSnap.exists) throw new HttpsError("not-found", "Team saknas.");
@@ -305,6 +337,10 @@ export const approveShiftRequestBatch = onCall(async (request) => {
     if (batchSnap.empty) throw new HttpsError("not-found", "Förfrågan saknas.");
 
     const requests = batchSnap.docs.map((d) => d.data() as ShiftRequestDoc);
+    dayCount = requests.length;
+    notifyRequestedBy = requests[0]?.requestedBy ?? null;
+    responderName = teamSnap.data()?.parentProfiles?.[uid]?.displayName ?? responderName;
+
     for (const req of requests) {
       if (req.status !== "pending") {
         throw new HttpsError("failed-precondition", "Förfrågan är redan hanterad.");
@@ -366,8 +402,80 @@ export const approveShiftRequestBatch = onCall(async (request) => {
     });
   });
 
+  if (notifyRequestedBy) {
+    const dayLabel = `${dayCount} dag${dayCount === 1 ? "" : "ar"}`;
+    await sendPushToUser(db, notifyRequestedBy, {
+      title: decision === "approved" ? "Ändringen godkändes" : "Ändringen avböjdes",
+      body:
+        decision === "approved"
+          ? `${responderName} godkände förslaget om ${dayLabel}.`
+          : `${responderName} avböjde förslaget om ${dayLabel}.`,
+    });
+  }
+
   return { ok: true };
 });
+
+// ---------------------------------------------------------------------------
+// 1c. notifyOnShiftRequestCreated — pushar till MOTPARTEN när ett nytt
+//     ansvarsbyte föreslås (en enskild dag eller en hel batch från
+//     kalenderns ändringsläge).
+//
+//     Batchar (flera shiftRequests med samma batchId, skrivna nästan
+//     samtidigt av klienten) ska bara ge EN push, inte en per dag. Det
+//     löses med en "claim"-transaktion: bara den trigger-körning som
+//     lyckas SKAPA teams/{teamId}/shiftRequestBatchNotified/{batchId}
+//     (create-semantik — kastar om dokumentet redan finns) skickar
+//     pushen, resten ser att den redan är tagen och hoppar över.
+// ---------------------------------------------------------------------------
+
+export const notifyOnShiftRequestCreated = onDocumentCreated(
+  "teams/{teamId}/shiftRequests/{requestId}",
+  async (event) => {
+    const request = event.data?.data() as ShiftRequestDoc | undefined;
+    if (!request) return;
+
+    if (request.batchId) {
+      const claimRef = db.doc(`teams/${event.params.teamId}/shiftRequestBatchNotified/${request.batchId}`);
+      try {
+        await db.runTransaction(async (tx) => {
+          const claimSnap = await tx.get(claimRef);
+          if (claimSnap.exists) throw new Error("already-claimed");
+          tx.create(claimRef, { createdAt: admin.firestore.FieldValue.serverTimestamp() });
+        });
+      } catch {
+        return; // en annan trigger-körning i samma batch tog redan pushen
+      }
+    }
+
+    const teamSnap = await db.doc(`teams/${event.params.teamId}`).get();
+    const parentIds: string[] = teamSnap.data()?.parentIds ?? [];
+    const otherParentIds = parentIds.filter((id) => id !== request.requestedBy);
+    if (otherParentIds.length === 0) return;
+
+    const requesterName =
+      teamSnap.data()?.parentProfiles?.[request.requestedBy]?.displayName ?? "Andra föräldern";
+
+    // Hur många dagar hela batchen omfattar (inte bara det här enskilda
+    // dokumentet, som kan vara ett flerdagars-block i sig).
+    let dayCount = 1;
+    if (request.batchId) {
+      const batchSnap = await db
+        .collection(`teams/${event.params.teamId}/shiftRequests`)
+        .where("batchId", "==", request.batchId)
+        .get();
+      dayCount = batchSnap.size;
+    }
+
+    await sendPushToUsers(db, otherParentIds, {
+      title: "Nytt förslag på ansvarsbyte",
+      body:
+        dayCount > 1
+          ? `${requesterName} föreslår ändring av ${dayCount} dagar.`
+          : `${requesterName} föreslår ett ansvarsbyte.`,
+    });
+  }
+);
 
 // ---------------------------------------------------------------------------
 // 2. exportEventToGoogleCalendar — envägs export till varje förälders
