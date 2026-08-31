@@ -67,7 +67,6 @@ import TodoView from "../components/TodoView";
 import ChildInfoView from "../components/ChildInfoView";
 import AccountsView from "../components/AccountsView";
 import CycleSetupScreen from "../components/onboarding/CycleSetupScreen";
-import InvitePartnerBanner from "../components/onboarding/InvitePartnerBanner";
 import AddFirstChildScreen from "../components/onboarding/AddFirstChildScreen";
 import { createInvite, addChild, saveCustodyCycle } from "../lib/onboardingClient";
 import {
@@ -292,6 +291,9 @@ export default function HomePage() {
 
   const otherParentId = parents.find((p) => p.id !== balance?.referenceParentId)?.id ?? parents[1].id;
 
+  // Barnväljaren visas bara när det faktiskt finns flera barn — annars
+  // äter den höjd i onödan. Övriga rubriker är borttagna: månad och
+  // barnets namn står redan i kalenderns egen header.
   const showChildChips = children.length > 1 && section !== "chat" && section !== "settings";
 
   return (
@@ -303,43 +305,20 @@ export default function HomePage() {
         </div>
       )}
 
-      <header className="shrink-0 border-b border-stone-200 bg-white px-4 pt-3 pb-2">
-        <div className="mx-auto flex w-full max-w-md items-center justify-between">
-          <h1 className="text-lg font-bold text-stone-800">Varannan</h1>
-          <span className="text-xs text-stone-400">{activeChild.name}s schema</span>
-        </div>
-
+      <div className="mx-auto flex w-full max-w-md flex-1 flex-col overflow-hidden">
         {showChildChips && (
-          <div className="mx-auto mt-2 flex w-full max-w-md gap-2 overflow-x-auto">
+          <div className="flex shrink-0 gap-2 overflow-x-auto px-4 pt-3">
             {children.map((child) => (
               <button
                 key={child.id}
                 onClick={() => setSelectedChildId(child.id)}
                 className={`whitespace-nowrap rounded-full px-3 py-1 text-xs font-medium ${
-                  child.id === activeChildId ? "bg-rose-500 text-white" : "bg-stone-100 text-stone-600"
+                  child.id === activeChildId ? "bg-rose-500 text-white" : "bg-white text-stone-600"
                 }`}
               >
                 {child.name}
               </button>
             ))}
-          </div>
-        )}
-      </header>
-
-      <div className="mx-auto flex w-full max-w-md flex-1 flex-col overflow-hidden">
-        {(pushPermission === "default" || !hasPartner) && (
-          <div className="shrink-0 px-4 pt-3">
-            {pushPermission === "default" && (
-              <button
-                onClick={enablePushNotifications}
-                className="mb-3 w-full rounded-xl bg-sky-50 px-4 py-3 text-left text-sm font-medium text-sky-700 hover:bg-sky-100"
-              >
-                Aktivera notiser för byten och inbjudningar →
-              </button>
-            )}
-            {!hasPartner && (
-              <InvitePartnerBanner teamName={team?.name} onCreateInvite={() => createInvite(teamId!)} />
-            )}
           </div>
         )}
 
@@ -451,13 +430,18 @@ export default function HomePage() {
                 email={user?.email ?? null}
                 onResetPassword={resetPassword}
                 onSignOut={signOutUser}
+                pushPermission={pushPermission}
+                onEnablePush={enablePushNotifications}
+                hasPartner={hasPartner}
+                teamName={team?.name}
+                onCreateInvite={() => createInvite(teamId!)}
               />
             )}
 
             {section === "calendar" && (
               <>
                 {balance && (
-                  <div className="mb-4">
+                  <div className="mb-3">
                     <BalanceCard balance={balance} parentNames={parentNames} otherParentId={otherParentId} />
                   </div>
                 )}
