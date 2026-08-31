@@ -467,10 +467,9 @@ export default function HomePage() {
         </div>
       )}
 
-      <MonthNav monthDate={monthDate} onChange={setMonthDate} />
-
       <CalendarView
         monthDate={monthDate}
+        onChangeMonth={setMonthDate}
         childId={activeChild.id}
         childName={activeChild.name}
         cycle={cycle}
@@ -535,29 +534,6 @@ export default function HomePage() {
   );
 }
 
-function MonthNav({ monthDate, onChange }: { monthDate: Date; onChange: (d: Date) => void }) {
-  return (
-    <div className="mb-3 flex items-center justify-between">
-      <button
-        onClick={() => onChange(new Date(monthDate.getFullYear(), monthDate.getMonth() - 1, 1))}
-        className="rounded-full px-3 py-1 text-stone-500 hover:bg-white"
-        aria-label="Föregående månad"
-      >
-        ‹
-      </button>
-      <button onClick={() => onChange(new Date())} className="text-sm text-stone-400 hover:text-rose-500">
-        Idag
-      </button>
-      <button
-        onClick={() => onChange(new Date(monthDate.getFullYear(), monthDate.getMonth() + 1, 1))}
-        className="rounded-full px-3 py-1 text-stone-500 hover:bg-white"
-        aria-label="Nästa månad"
-      >
-        ›
-      </button>
-    </div>
-  );
-}
 
 function Centered({ children }: { children: React.ReactNode }) {
   return <div className="mx-auto flex min-h-screen max-w-sm flex-col justify-center px-6 text-center">{children}</div>;

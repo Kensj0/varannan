@@ -47,9 +47,8 @@ export default function CalendarSettingsPanel({
   const [feedError, setFeedError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 
-  const [hh, mm] = (switchHour || "08:00").split(":");
+  const [hh] = (switchHour || "08:00").split(":");
   const [pendingHh, setPendingHh] = useState(hh ?? "08");
-  const [pendingMm, setPendingMm] = useState(mm ?? "00");
   const [changingTime, setChangingTime] = useState(false);
   const [timeError, setTimeError] = useState<string | null>(null);
 
@@ -100,58 +99,43 @@ export default function CalendarSettingsPanel({
 
         <Section title="Bytestid" />
         <p className="mb-2 text-[11px] leading-snug text-stone-400">
-          Vilken tid dygnet växlar mellan föräldrarna. Visas på bytesdagarna och skickas med i calendario-exporten.
+          Vilken timme dygnet växlar mellan föräldrarna. Visas på bytesdagarna och skickas med i kalenderexporten.
         </p>
-        <div className="mb-2 flex gap-2">
-          <div className="flex-1">
-            <label className="block text-[11px] text-stone-500 mb-1">Timme</label>
-            <input
-              type="number"
-              min="0"
-              max="23"
-              value={pendingHh}
-              onChange={(e) => setPendingHh(e.target.value)}
-              disabled={changingTime}
-              className="w-full rounded-lg border border-stone-200 px-2 py-1.5 text-sm disabled:opacity-50"
-            />
-          </div>
-          <div className="flex-1">
-            <label className="block text-[11px] text-stone-500 mb-1">Minut</label>
-            <input
-              type="number"
-              min="0"
-              max="59"
-              value={pendingMm}
-              onChange={(e) => setPendingMm(e.target.value)}
-              disabled={changingTime}
-              className="w-full rounded-lg border border-stone-200 px-2 py-1.5 text-sm disabled:opacity-50"
-            />
-          </div>
+        <div className="mb-2">
+          <label className="block text-[11px] text-stone-500 mb-1">Timme (00:00)</label>
+          <input
+            type="number"
+            min="0"
+            max="23"
+            value={pendingHh}
+            onChange={(e) => setPendingHh(e.target.value)}
+            disabled={changingTime}
+            className="w-full rounded-lg border border-stone-200 px-2 py-1.5 text-sm disabled:opacity-50"
+          />
         </div>
         {timeError && <p className="mb-2 text-[11px] text-rose-600">{timeError}</p>}
         <button
           onClick={async () => {
             setTimeError(null);
-            if (!pendingHh || !pendingMm) {
-              setTimeError("Båda fälten krävs.");
+            if (!pendingHh) {
+              setTimeError("Ange en timme.");
               return;
             }
             const hhNum = Number(pendingHh);
-            const mmNum = Number(pendingMm);
-            if (hhNum < 0 || hhNum > 23 || mmNum < 0 || mmNum > 59) {
-              setTimeError("Ogiltig tid.");
+            if (hhNum < 0 || hhNum > 23) {
+              setTimeError("Ogiltig timme.");
               return;
             }
             setChangingTime(true);
             try {
-              await onChangeSwitchHour(String(hhNum).padStart(2, "0"), String(mmNum).padStart(2, "0"));
+              await onChangeSwitchHour(String(hhNum).padStart(2, "0"), "00");
             } catch {
               setTimeError("Kunde inte uppdatera tiden. Försök igen.");
             } finally {
               setChangingTime(false);
             }
           }}
-          disabled={changingTime || `${pendingHh}:${pendingMm}` === (switchHour || "08:00")}
+          disabled={changingTime || `${pendingHh}:00` === (switchHour || "08:00")}
           className="w-full rounded-lg bg-stone-50 px-3 py-2 text-sm font-medium text-stone-700 hover:bg-stone-100 disabled:opacity-50"
         >
           {changingTime ? "Uppdaterar…" : "Uppdatera tid"}

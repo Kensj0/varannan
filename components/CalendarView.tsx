@@ -36,6 +36,7 @@ interface CalendarViewProps {
   approvedShiftRequests: ShiftRequestDoc[];
   events: EventDoc[];
   currentUserId: string;
+  onChangeMonth: (date: Date) => void;
   onCreateActivity: (date: Date, title: string, recurring: boolean) => void;
   onProposeShift: (date: Date, takingOverParentId: string) => void;
   onProposeShiftBatch: (changes: DayChange[]) => Promise<void>;
@@ -64,6 +65,7 @@ export default function CalendarView({
   parents,
   approvedShiftRequests,
   events,
+  onChangeMonth,
   onCreateActivity,
   onProposeShift,
   onProposeShiftBatch,
@@ -104,6 +106,8 @@ export default function CalendarView({
 
   const weeks = useMemo(() => buildWeekRows(monthDate), [monthDate]);
   const monthLabel = monthDate.toLocaleDateString("sv-SE", { month: "long", year: "numeric" });
+  const now0 = new Date();
+  const isCurrentMonth = monthDate.getFullYear() === now0.getFullYear() && monthDate.getMonth() === now0.getMonth();
 
   const eventsByDay = useMemo(() => {
     const rangeStart = new Date(monthDate.getFullYear(), monthDate.getMonth() - 1, 1);
@@ -224,7 +228,7 @@ export default function CalendarView({
   const gridCols = showWeekNumbers ? "26px repeat(7, minmax(0, 1fr))" : "repeat(7, minmax(0, 1fr))";
 
   return (
-    <div className="overflow-hidden rounded-2xl bg-white shadow-sm">
+    <div className="rounded-2xl bg-white shadow-sm">
       <header className="relative flex items-center justify-between px-3 py-3">
         <button
           onClick={() => setEditMode(true)}
@@ -233,10 +237,39 @@ export default function CalendarView({
         >
           <EditCalendarIcon />
         </button>
-        <div className="text-center">
-          <h2 className="text-xl font-bold capitalize leading-tight text-stone-800">{monthLabel}</h2>
-          <span className="text-xs text-stone-400">{childName}s schema</span>
+
+        <div className="flex items-center gap-1">
+          <button
+            onClick={() => onChangeMonth(new Date(monthDate.getFullYear(), monthDate.getMonth() - 1, 1))}
+            aria-label="Föregående månad"
+            className="grid h-7 w-7 place-items-center rounded-full text-stone-300 hover:bg-stone-50 hover:text-rose-500"
+          >
+            ‹
+          </button>
+
+          <div className="text-center">
+            <h2 className="text-xl font-bold capitalize leading-tight text-stone-800">{monthLabel}</h2>
+            {isCurrentMonth ? (
+              <span className="text-xs text-stone-400">{childName}s schema</span>
+            ) : (
+              <button
+                onClick={() => onChangeMonth(new Date())}
+                className="text-xs font-medium text-rose-500 hover:underline"
+              >
+                Till idag
+              </button>
+            )}
+          </div>
+
+          <button
+            onClick={() => onChangeMonth(new Date(monthDate.getFullYear(), monthDate.getMonth() + 1, 1))}
+            aria-label="Nästa månad"
+            className="grid h-7 w-7 place-items-center rounded-full text-stone-300 hover:bg-stone-50 hover:text-rose-500"
+          >
+            ›
+          </button>
         </div>
+
         <button
           onClick={() => setSettingsOpen((v) => !v)}
           aria-label="Kalenderinställningar"
@@ -267,6 +300,7 @@ export default function CalendarView({
         )}
       </header>
 
+      <div className="overflow-hidden rounded-b-2xl">
       {editMode && (
         <div className="flex items-center justify-between gap-2 border-y border-rose-100 bg-rose-50 px-3 py-2">
           <p className="text-[11px] font-semibold leading-tight text-rose-600">
@@ -476,6 +510,8 @@ export default function CalendarView({
           </button>
         </div>
       )}
+      </div>
+
 
       {activeDay && !editMode && (
         <DayActionModal
