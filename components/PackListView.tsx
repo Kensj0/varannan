@@ -8,7 +8,6 @@ interface PackListViewProps {
   currentUserId: string;
   parentNames: Record<string, string>;
   childName: string;
-  /** Nästa kommande byte, för banderollen överst. */
   nextShift?: ShiftRequestDoc;
   nextOrdinaryHandoff?: Date;
   onCreateList: (title: string) => Promise<void>;
@@ -16,13 +15,9 @@ interface PackListViewProps {
   onToggleItem: (list: PackListDoc, itemId: string) => Promise<void>;
   onRemoveItem: (list: PackListDoc, itemId: string) => Promise<void>;
   onMarkSeen: (listId: string) => Promise<void>;
+  onDeleteList: (listId: string) => Promise<void>;
 }
 
-/**
- * Packlistor knutna till nästa byte. Motsvarar PACKLISTA-fliken:
- * lila banderoll med när nästa byte sker, sedan listorna med
- * avbockning och "Sedd av"-markering.
- */
 export default function PackListView({
   lists,
   currentUserId,
@@ -34,19 +29,18 @@ export default function PackListView({
   onToggleItem,
   onRemoveItem,
   onMarkSeen,
+  onDeleteList,
 }: PackListViewProps) {
   const [newListTitle, setNewListTitle] = useState("");
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
 
-  // Markera listor som sedda när de visas för den andra föräldern.
   useEffect(() => {
     for (const list of lists) {
       if (!list.seenBy.includes(currentUserId)) {
         void onMarkSeen(list.id);
       }
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lists.map((l) => l.id).join(",")]);
 
   return (
@@ -74,12 +68,13 @@ export default function PackListView({
             onAddItem={onAddItem}
             onToggleItem={onToggleItem}
             onRemoveItem={onRemoveItem}
+            onDeleteList={onDeleteList}
           />
         ))}
       </div>
 
       {createError && <p className="text-sm text-rose-600 mb-2">{createError}</p>}
-      
+
       <div className="mt-4 flex gap-2">
         <input
           value={newListTitle}
@@ -96,7 +91,7 @@ export default function PackListView({
               await onCreateList(newListTitle.trim());
               setNewListTitle("");
             } catch (err) {
-              setCreateError((err instanceof Error ? err.message : "Kunde inte skapa listan"));
+              setCreateError(err instanceof Error ? err.message : "Kunde inte skapa listan");
             } finally {
               setCreating(false);
             }
@@ -117,6 +112,7 @@ function PackListCard({
   onAddItem,
   onToggleItem,
   onRemoveItem,
+  onDeleteList,
 }: {
   list: PackListDoc;
   currentUserId: string;
@@ -124,11 +120,13 @@ function PackListCard({
   onAddItem: (list: PackListDoc, name: string) => Promise<void>;
   onToggleItem: (list: PackListDoc, itemId: string) => Promise<void>;
   onRemoveItem: (list: PackListDoc, itemId: string) => Promise<void>;
+  onDeleteList: (listId: string) => Promise<void>;
 }) {
   const [newItem, setNewItem] = useState("");
   const [addingItem, setAddingItem] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
-  
+  const [deleting, setDeleting] = useState(false);
+
   async function handleAddItem() {
     if (!newItem.trim()) return;
     setAddingItem(true);
@@ -142,6 +140,18 @@ function PackListCard({
       setAddingItem(false);
     }
   }
+
+  async function handleDelete() {
+    if (!confirm("Radera denna packlista?")) return;
+    setDeleting(true);
+    try {
+      await onDeleteList(list.id);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Kunde inte radera listan");
+      setDeleting(false);
+    }
+  }
+
   const packed = list.items.filter((i) => i.checked).length;
   const seenByOthers = list.seenBy.filter((uid) => uid !== currentUserId);
 
@@ -149,9 +159,19 @@ function PackListCard({
     <div className="rounded-2xl bg-white p-4 shadow-sm">
       <div className="mb-2 flex items-baseline justify-between">
         <h3 className="font-bold text-stone-800">{list.title}</h3>
-        <span className="text-xs text-stone-400">
-          {packed}/{list.items.length} packat
-        </span>
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-stone-400">
+            {packed}/{list.items.length} packat
+          </span>
+          <button
+            onClick={handleDelete}
+            disabled={deleting}
+            className="text-xs text-stone-300 hover:text-rose-500 disabled:opacity-50"
+            title="Radera lista"
+          >
+            ✕
+          </button>
+        </div>
       </div>
 
       <ul className="space-y-1">
@@ -181,7 +201,7 @@ function PackListCard({
       </ul>
 
       {addError && <p className="text-[11px] text-rose-600 mt-2">{addError}</p>}
-      
+
       <div className="mt-2 flex gap-2">
         <input
           value={newItem}
