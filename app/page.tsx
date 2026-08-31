@@ -76,6 +76,7 @@ import {
   buildFeedLinks,
   getCalendarFeedTokens,
   createCalendarFeedToken,
+  setCustomSwitchHour,
   updateParentColor,
   CalendarFeedLinks,
 } from "../lib/calendarExport";
@@ -148,6 +149,11 @@ export default function HomePage() {
   async function handleSelectColor(colorId: ParentColorId) {
     if (!teamId) return;
     await updateParentColor(teamId, colorId);
+  }
+
+  async function handleChangeSwitchHour(hh: string, mm: string) {
+    if (!teamId || !activeChildId) return;
+    await setCustomSwitchHour(teamId, activeChildId, `${hh}:${mm}`);
   }
   const activeChild = children.find((c) => c.id === activeChildId) ?? null;
 
@@ -520,9 +526,8 @@ export default function HomePage() {
           (parents.find((p) => p.id !== user!.uid) ?? parents[1]).color
         }
         feedLinks={feedLinks ? feedLinks[user!.uid] : null}
-        otherFeedLink={feedLinks ? feedLinks[parents.find((p) => p.id !== user!.uid)?.id || ""] : null}
-        otherParentName={parents.find((p) => p.id !== user!.uid)?.name || ""}
         onCreateFeed={handleCreateFeed}
+        onChangeSwitchHour={handleChangeSwitchHour}
       />
       </>
       )}
