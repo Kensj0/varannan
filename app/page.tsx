@@ -35,6 +35,7 @@ import {
 import { sendChatMessage } from "../lib/chatActions";
 import {
   createPackList,
+  deletePackList,
   addPackListItem,
   togglePackListItem,
   removePackListItem,
@@ -377,6 +378,7 @@ export default function HomePage() {
           onToggleItem={(list, itemId) => togglePackListItem(teamId!, list, itemId, user!.uid)}
           onRemoveItem={(list, itemId) => removePackListItem(teamId!, list, itemId)}
           onMarkSeen={(listId) => markPackListSeen(teamId!, listId, user!.uid)}
+          onDeleteList={(listId) => deletePackList(teamId!, listId)}
         />
       )}
 
