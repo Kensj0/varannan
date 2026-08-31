@@ -130,6 +130,15 @@ export interface CustodyCycleBlock {
   days: number; // heltal, antal dygn i blocket
 }
 
+/**
+ * Platshållar-id för en föräldraroll i schemat som ännu inte har en
+ * riktig person kopplad — dvs. man har byggt schemat själv innan man
+ * bjudit in den andra föräldern. Byts automatiskt ut mot personens
+ * riktiga uid när hen accepterar inbjudan (se acceptParentInvite i
+ * lib/onboarding.ts), så schemat "aktiveras" utan att behöva byggas om.
+ */
+export const PENDING_PARTNER_ID = "__pending_partner__";
+
 /** /children/{childId}/custodyCycle/main */
 export interface CustodyCycleDoc {
   childId: string;

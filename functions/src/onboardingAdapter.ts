@@ -92,5 +92,15 @@ export function createOnboardingAdapter(db: admin.firestore.Firestore): Onboardi
     async initDayBalance(teamId: string, childId: string, doc: DayBalanceDoc) {
       await db.doc(`teams/${teamId}/children/${childId}/dayBalance/main`).set(doc);
     },
+
+    async listChildIds(teamId: string) {
+      const snap = await db.doc(`teams/${teamId}`).get();
+      return (snap.data()?.childIds as string[]) ?? [];
+    },
+
+    async readCustodyCycle(teamId: string, childId: string) {
+      const snap = await db.doc(`teams/${teamId}/children/${childId}/custodyCycle/main`).get();
+      return snap.exists ? (snap.data() as CustodyCycleDoc) : null;
+    },
   };
 }

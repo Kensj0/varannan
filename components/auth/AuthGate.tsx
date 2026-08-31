@@ -5,7 +5,7 @@ import { usePathname } from "next/navigation";
 import { useAuth } from "../../lib/auth/AuthProvider";
 import LoginForm from "./LoginForm";
 import OnboardingFlow from "../onboarding/OnboardingFlow";
-import { createFamilyTeam, createInvite, addChild } from "../../lib/onboardingClient";
+import { createFamilyTeam, createInvite, addChild, saveCustodyCycle } from "../../lib/onboardingClient";
 
 /**
  * Ligger överst i app/layout.tsx (innanför <AuthProvider>).
@@ -43,8 +43,19 @@ export default function AuthGate({ children }: { children: ReactNode }) {
     return (
       <OnboardingFlow
         currentUserName={user.displayName ?? "Du"}
+        currentUserUid={user.uid}
         onCreateTeam={createFamilyTeam}
         onAddChild={addChild}
+        onSetupCycle={async (teamId, childId, blocks, cycleStartDate, switchHour) => {
+          await saveCustodyCycle({
+            teamId,
+            childId,
+            blocks,
+            cycleStartDate,
+            switchHour,
+            referenceParentId: user.uid,
+          });
+        }}
         onCreateInvite={createInvite}
         onFinish={refreshUserDoc}
       />

@@ -35,6 +35,7 @@ import {
   EventDoc,
   UserDoc,
   TeamParentProfile,
+  PENDING_PARTNER_ID,
 } from "../../types/schema";
 import { applyApprovedShiftToBalance } from "../../lib/dayBalance";
 import {
@@ -155,11 +156,12 @@ export const saveCustodyCycle = onCall(async (request) => {
   const parentIds: string[] = teamSnap.data()?.parentIds ?? [];
   if (!parentIds.includes(uid)) throw new HttpsError("permission-denied", "Du är inte medlem i teamet.");
 
-  // Blocken måste peka på teamets faktiska föräldrar — annars blir
-  // schemat omöjligt att rendera (uid:t matchar ingen användare).
+  // Blocken måste peka på teamets faktiska föräldrar (eller platshållaren
+  // för en förälder som ännu inte bjudits in) — annars blir schemat
+  // omöjligt att rendera (uid:t matchar ingen användare).
   const blockParents = new Set(raw.blocks.map((b) => b.parentId));
   for (const pid of blockParents) {
-    if (!parentIds.includes(pid)) {
+    if (pid !== PENDING_PARTNER_ID && !parentIds.includes(pid)) {
       throw new HttpsError("invalid-argument", `Okänd förälder i schemat: ${pid}`);
     }
   }

@@ -17,6 +17,7 @@ import {
   CustodyCycleDoc,
   CustodyCycleBlock,
   DayBalanceDoc,
+  PENDING_PARTNER_ID,
 } from "../types/schema";
 
 export interface OnboardingFirestore {
@@ -31,6 +32,9 @@ export interface OnboardingFirestore {
   createChild(doc: Omit<ChildDoc, "id">): Promise<string>;
   writeCustodyCycle(teamId: string, childId: string, doc: CustodyCycleDoc): Promise<void>;
   initDayBalance(teamId: string, childId: string, doc: DayBalanceDoc): Promise<void>;
+  /** Barn-id:n för teamet — används för att hitta scheman att migrera. */
+  listChildIds(teamId: string): Promise<string[]>;
+  readCustodyCycle(teamId: string, childId: string): Promise<CustodyCycleDoc | null>;
 }
 
 // ---------------------------------------------------------------------------
@@ -106,6 +110,27 @@ export async function acceptParentInvite(
 
   await db.addParentToTeam(consumed.teamId, args.uid, args.profile);
   await db.updateUser(args.uid, { teamId: consumed.teamId });
+
+  // Om ett schema redan byggdes solo (innan partnern fanns) pekar vissa
+  // block på platshållaren PENDING_PARTNER_ID istället för ett riktigt
+  // uid. Nu när partnern anslutit, ersätt platshållaren med hens riktiga
+  // uid överallt — annars skulle schemat behöva byggas om från noll.
+  const childIds = await db.listChildIds(consumed.teamId);
+  for (const childId of childIds) {
+    const existingCycle = await db.readCustodyCycle(consumed.teamId, childId);
+    if (!existingCycle) continue;
+    const hasPlaceholder = existingCycle.blocks.some((b) => b.parentId === PENDING_PARTNER_ID);
+    if (!hasPlaceholder) continue;
+    await db.writeCustodyCycle(consumed.teamId, childId, {
+      ...existingCycle,
+      blocks: existingCycle.blocks.map((b) =>
+        b.parentId === PENDING_PARTNER_ID ? { ...b, parentId: args.uid } : b
+      ),
+      updatedAt: nowTs(),
+      updatedBy: args.uid,
+    });
+  }
+
   return { teamId: consumed.teamId };
 }
 
