@@ -34,10 +34,10 @@ export interface CalendarFeedLinks {
   outlook: string;
 }
 
-export function buildFeedLinks(teamId: string, childId: string, token: string): CalendarFeedLinks {
+export function buildFeedLinks(teamId: string, childId: string, parentId: string, token: string): CalendarFeedLinks {
   const ics = `${FEED_BASE}?team=${encodeURIComponent(teamId)}&child=${encodeURIComponent(
     childId
-  )}&token=${encodeURIComponent(token)}`;
+  )}&parent=${encodeURIComponent(parentId)}&token=${encodeURIComponent(token)}`;
   const webcal = ics.replace(/^https?:\/\//, "webcal://");
   const encoded = encodeURIComponent(ics);
 
@@ -53,23 +53,34 @@ export function buildFeedLinks(teamId: string, childId: string, token: string): 
 }
 
 /** Befintligt token för barnet, eller null om inget skapats än. */
-export async function getCalendarFeedToken(teamId: string, childId: string): Promise<string | null> {
+/** Båda föräldrarnas tokens för ett barn — en per förälder. */
+export async function getCalendarFeedTokens(teamId: string, childId: string): Promise<Record<string, string>> {
   const snap = await getDoc(doc(db, "teams", teamId));
-  return snap.data()?.calendarFeedTokens?.[childId] ?? null;
+  const allTokens = snap.data()?.calendarFeedTokens ?? {};
+  const result: Record<string, string> = {};
+  for (const [key, token] of Object.entries(allTokens)) {
+    if (key.startsWith(`${childId}:`)) {
+      const parentId = key.split(":")[1];
+      result[parentId] = token as string;
+    }
+  }
+  return result;
 }
 
 /**
- * Skapar ett nytt token (eller roterar det befintliga). Roterar man,
- * slutar den gamla länken att fungera — det är så man återkallar en
- * delad prenumeration.
+ * Skapar tokens för BÅDA föräldrarna (eller roterar de befintliga).
+ * Båda får var sin link som bara visar deras ansvarsblock.
  */
-export async function createCalendarFeedToken(teamId: string, childId: string): Promise<string> {
-  const call = httpsCallable<{ teamId: string; childId: string }, { token: string }>(
+export async function createCalendarFeedToken(
+  teamId: string,
+  childId: string
+): Promise<Record<string, string>> {
+  const call = httpsCallable<{ teamId: string; childId: string }, { tokens: Record<string, string> }>(
     functions,
     "createCalendarFeedToken"
   );
   const result = await call({ teamId, childId });
-  return result.data.token;
+  return result.data.tokens;
 }
 
 /**

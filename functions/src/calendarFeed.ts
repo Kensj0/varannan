@@ -56,10 +56,18 @@ export const createCalendarFeedToken = onCall(async (request) => {
   const parentIds: string[] = teamSnap.data()?.parentIds ?? [];
   if (!parentIds.includes(uid)) throw new HttpsError("permission-denied", "Du tillhör inte teamet.");
 
-  const token = crypto.randomBytes(24).toString("base64url");
-  await teamRef.set({ calendarFeedTokens: { [childId]: token } }, { merge: true });
+  // Generera tokens för BÅDA föräldrar (eller just denna om en inte är med än).
+  const tokens: Record<string, string> = {};
+  for (const pid of parentIds) {
+    tokens[pid] = crypto.randomBytes(24).toString("base64url");
+  }
 
-  return { token };
+  await teamRef.set(
+    { calendarFeedTokens: Object.fromEntries(Object.entries(tokens).map(([pid, t]) => [`${childId}:${pid}`, t])) },
+    { merge: true }
+  );
+
+  return { tokens };
 });
 
 // ---------------------------------------------------------------------------
@@ -69,16 +77,17 @@ export const createCalendarFeedToken = onCall(async (request) => {
 export const calendarFeed = onRequest({ cors: true }, async (req, res) => {
   const teamId = String(req.query.team ?? "");
   const childId = String(req.query.child ?? "");
+  const parentId = String(req.query.parent ?? "");
   const token = String(req.query.token ?? "");
 
-  if (!teamId || !childId || !token) {
-    res.status(400).send("Saknar team, child eller token.");
+  if (!teamId || !childId || !parentId || !token) {
+    res.status(400).send("Saknar team, child, parent eller token.");
     return;
   }
 
   const db = admin.firestore();
   const teamSnap = await db.doc(`teams/${teamId}`).get();
-  const expected = teamSnap.data()?.calendarFeedTokens?.[childId];
+  const expected = teamSnap.data()?.calendarFeedTokens?.[`${childId}:${parentId}`];
 
   // Konstanttidsjämförelse så att token inte kan gissas fram tecken för tecken.
   if (!expected || !safeEqual(expected, token)) {

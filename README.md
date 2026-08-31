@@ -498,20 +498,24 @@ misslyckas deploy av just den funktionen (resten av `firebase deploy
 ## Exportera kalender (ICS-prenumeration)
 
 Google Calendar, Apple Kalender och Outlook prenumererar alla på samma
-sorts ICS-URL, så i stället för tre integrationer serverar
-`functions/src/calendarFeed.ts` ETT flöde som alla tre kan läsa:
+sorts ICS-URL. I stället för en integrering serverar
+`functions/src/calendarFeed.ts` **två flöden per barn** — ett för varje
+förälder, vars schemalänk bara visar den förälderns ansvarsblock:
 
-- `calendarFeed` (HTTP) bygger en `VCALENDAR` med ett event per
-  sammanhängande ansvarsperiod ("Lova hos Kenny") plus alla aktiviteter,
-  3 månader bakåt och 12 framåt.
-- Åtkomst styrs av ett hemligt token på
-  `teams/{teamId}.calendarFeedTokens[childId]`, skapat av callablen
-  `createCalendarFeedToken`. Jämförelsen är konstanttid. Vem som helst med
-  URL:en kan läsa schemat — skapar man ett nytt token slutar den gamla
-  länken att fungera, vilket är hur man återkallar en delad prenumeration.
-- Inställningspanelen bygger de tre plattformslänkarna
-  (`lib/calendarExport.ts`): Google `addbyurl`, `webcal://` för iOS/macOS,
-  och Outlooks `addfromweb`.
+- `calendarFeed?team=X&child=Y&parent=Z&token=ABC` bygger en `VCALENDAR`
+  med endast den förälderns ansvarsperioder ("Lova hos Kenny") plus alla
+  aktiviteter, 3 månader bakåt och 12 framåt.
+- Google Calendar kan sätta rätt färg på vardera länken (en färg per
+  prenumeration), så Kenny och Livias scheman ser rätt ut utan att behöva
+  färga om i kalenderappen.
+- Åtkomst styrs av hemliga tokens per förälder per barn
+  (`teams/{teamId}.calendarFeedTokens[childId:parentId]`), skapade av
+  callablen `createCalendarFeedToken`. Vem som helst med URL:en kan läsa
+  det schemat. Skapar man nya tokens slutar de gamla att fungera — så man
+  återkallar genom att rotera.
+- Inställningspanelen visar båda länkarna separat — "Din schemalänk" och
+  "[Andra förälderns namn]s schemalänk" — med Google-, Apple- och Outlook-
+  knappar för vardera.
 
 Detta är läsbar prenumeration, till skillnad från den befintliga
 `exportEventToGoogleCalendar` som via OAuth skriver in event-kopior i
