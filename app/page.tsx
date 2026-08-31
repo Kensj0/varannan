@@ -2,7 +2,12 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "../lib/auth/AuthProvider";
-import { requestAndSavePushToken, getPushPermissionState, listenForForegroundMessages } from "../lib/pushNotifications";
+import {
+  requestAndSavePushToken,
+  getPushPermissionState,
+  listenForForegroundMessages,
+  updateHandoffReminderPrefs,
+} from "../lib/pushNotifications";
 import {
   useTeam,
   useChildren,
@@ -61,7 +66,7 @@ import CycleSetupScreen from "../components/onboarding/CycleSetupScreen";
 import InvitePartnerBanner from "../components/onboarding/InvitePartnerBanner";
 import AddFirstChildScreen from "../components/onboarding/AddFirstChildScreen";
 import { createInvite, addChild, saveCustodyCycle } from "../lib/onboardingClient";
-import { PENDING_PARTNER_ID } from "../types/schema";
+import { PENDING_PARTNER_ID, DEFAULT_HANDOFF_REMINDER_PREFS } from "../types/schema";
 
 const PARENT_COLORS = ["bg-rose-500", "bg-sky-500"];
 
@@ -104,6 +109,14 @@ export default function HomePage() {
     if (!user) return;
     const result = await requestAndSavePushToken(user.uid);
     setPushPermission(result);
+  }
+
+  // Påminnelser om överlämning (dagen innan / samma dag) — sparas per
+  // användare på users/{uid}, läses av den schemalagda Cloud Functionen.
+  const reminderPrefs = userDoc?.handoffReminderPrefs ?? DEFAULT_HANDOFF_REMINDER_PREFS;
+  async function handleUpdateReminderPrefs(prefs: { dayBefore: boolean; sameDay: boolean }) {
+    if (!user) return;
+    await updateHandoffReminderPrefs(user.uid, prefs);
   }
   const teamId = userDoc?.teamId ?? null;
 
@@ -445,6 +458,10 @@ export default function HomePage() {
             changes,
           });
         }}
+        pushPermission={pushPermission}
+        onEnablePush={enablePushNotifications}
+        reminderPrefs={reminderPrefs}
+        onUpdateReminderPrefs={handleUpdateReminderPrefs}
       />
       </>
       )}

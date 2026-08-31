@@ -173,6 +173,20 @@ function resolveCycleAnchorMs(cycle: CustodyCycleDoc): number {
 }
 
 /**
+ * Bytestidens exakta tidpunkt (UTC-instant) för ett givet kalenderdatum,
+ * i cykelns egen tidszon — t.ex. "2026-09-10" + switchHour "12:00" +
+ * timezone "Europe/Stockholm" → rätt UTC-instant oavsett var koden körs.
+ * Används av den schemalagda överlämnings-påminnelsen (Cloud Functions
+ * kör i UTC, så Date.setHours() duger inte där, se resonemanget ovan).
+ */
+export function switchInstantForDate(cycle: CustodyCycleDoc, dateStr: string): Date {
+  const [year, month, day] = dateStr.split("-").map(Number);
+  const [switchH, switchM] = cycle.switchHour.split(":").map(Number);
+  const timeZone = cycle.timezone || "Europe/Stockholm";
+  return new Date(zonedWallClockToMs(year, month - 1, day, switchH ?? 12, switchM ?? 0, timeZone));
+}
+
+/**
  * KÄND BEGRÄNSNING: blockgränser beräknas som anchorMs + N * 24h. Över
  * en sommartidsövergång driver bytestiden därför en timme (12:00 blir
  * 11:00 eller 13:00) tills cykeln ankras om. Eftersom svenska

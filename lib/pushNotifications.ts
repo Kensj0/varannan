@@ -66,6 +66,18 @@ export async function removePushToken(uid: string, token: string): Promise<void>
 }
 
 /**
+ * Sparar när överlämnings-påminnelser ska skickas (dagen innan / samma
+ * dag). Läses av den schemalagda Cloud Functionen
+ * (functions/src/handoffReminders.ts) för just den här användaren.
+ */
+export async function updateHandoffReminderPrefs(
+  uid: string,
+  prefs: { dayBefore: boolean; sameDay: boolean }
+): Promise<void> {
+  await updateDoc(doc(db, "users", uid), { handoffReminderPrefs: prefs });
+}
+
+/**
  * Visar pushar som kommer in medan fliken är öppen (webbläsaren visar
  * INTE en OS-notis själv i det läget — service workern hanterar bara
  * bakgrundsfallet). Returnerar en avregistreringsfunktion.
