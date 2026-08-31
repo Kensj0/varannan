@@ -4,6 +4,7 @@ import { useState } from "react";
 import { PushPermissionState } from "../lib/pushNotifications";
 import { PARENT_PALETTE, ParentColorId } from "../types/schema";
 import { CalendarFeedLinks } from "../lib/calendarExport";
+import { CustodyCycleDoc } from "../types/schema";
 
 interface CalendarSettingsPanelProps {
   onClose: () => void;
@@ -14,16 +15,15 @@ interface CalendarSettingsPanelProps {
   onEnablePush: () => void;
   reminderPrefs: { dayBefore: boolean; sameDay: boolean };
   onUpdateReminderPrefs: (prefs: { dayBefore: boolean; sameDay: boolean }) => void;
-  /** Inloggad förälders valda färg (undefined = standardfärgen för platsen). */
   myColorId?: ParentColorId;
   onSelectColor: (colorId: ParentColorId) => Promise<void>;
-  /** Den andra förälderns färg, så samma färg inte kan väljas av båda. */
   otherParentColorHex: string;
-  /** null tills en prenumerationslänk skapats. */
   feedLinks: CalendarFeedLinks | null;
   onCreateFeed: () => Promise<void>;
-  otherFeedLink?: CalendarFeedLinks | null;
-  otherParentName?: string;
+  switchHour: string;
+  onChangeSwitchHour: (hh: string, mm: string) => Promise<void>;
+  childName: string;
+  cycle: CustodyCycleDoc | undefined;
 }
 
 export default function CalendarSettingsPanel({
@@ -40,12 +40,18 @@ export default function CalendarSettingsPanel({
   otherParentColorHex,
   feedLinks,
   onCreateFeed,
-  otherFeedLink,
-  otherParentName,
+  switchHour,
+  onChangeSwitchHour,
 }: CalendarSettingsPanelProps) {
   const [creatingFeed, setCreatingFeed] = useState(false);
   const [feedError, setFeedError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+
+  const [hh, mm] = (switchHour || "08:00").split(":");
+  const [pendingHh, setPendingHh] = useState(hh ?? "08");
+  const [pendingMm, setPendingMm] = useState(mm ?? "00");
+  const [changingTime, setChangingTime] = useState(false);
+  const [timeError, setTimeError] = useState<string | null>(null);
 
   async function handleCreateFeed() {
     setCreatingFeed(true);
@@ -90,6 +96,65 @@ export default function CalendarSettingsPanel({
           className="w-full rounded-lg bg-stone-50 px-3 py-2 text-left text-sm font-medium text-stone-700 hover:bg-stone-100"
         >
           Gå in i ändringsläge
+        </button>
+
+        <Section title="Bytestid" />
+        <p className="mb-2 text-[11px] leading-snug text-stone-400">
+          Vilken tid dygnet växlar mellan föräldrarna. Visas på bytesdagarna och skickas med i calendario-exporten.
+        </p>
+        <div className="mb-2 flex gap-2">
+          <div className="flex-1">
+            <label className="block text-[11px] text-stone-500 mb-1">Timme</label>
+            <input
+              type="number"
+              min="0"
+              max="23"
+              value={pendingHh}
+              onChange={(e) => setPendingHh(e.target.value)}
+              disabled={changingTime}
+              className="w-full rounded-lg border border-stone-200 px-2 py-1.5 text-sm disabled:opacity-50"
+            />
+          </div>
+          <div className="flex-1">
+            <label className="block text-[11px] text-stone-500 mb-1">Minut</label>
+            <input
+              type="number"
+              min="0"
+              max="59"
+              value={pendingMm}
+              onChange={(e) => setPendingMm(e.target.value)}
+              disabled={changingTime}
+              className="w-full rounded-lg border border-stone-200 px-2 py-1.5 text-sm disabled:opacity-50"
+            />
+          </div>
+        </div>
+        {timeError && <p className="mb-2 text-[11px] text-rose-600">{timeError}</p>}
+        <button
+          onClick={async () => {
+            setTimeError(null);
+            if (!pendingHh || !pendingMm) {
+              setTimeError("Båda fälten krävs.");
+              return;
+            }
+            const hhNum = Number(pendingHh);
+            const mmNum = Number(pendingMm);
+            if (hhNum < 0 || hhNum > 23 || mmNum < 0 || mmNum > 59) {
+              setTimeError("Ogiltig tid.");
+              return;
+            }
+            setChangingTime(true);
+            try {
+              await onChangeSwitchHour(String(hhNum).padStart(2, "0"), String(mmNum).padStart(2, "0"));
+            } catch {
+              setTimeError("Kunde inte uppdatera tiden. Försök igen.");
+            } finally {
+              setChangingTime(false);
+            }
+          }}
+          disabled={changingTime || `${pendingHh}:${pendingMm}` === (switchHour || "08:00")}
+          className="w-full rounded-lg bg-stone-50 px-3 py-2 text-sm font-medium text-stone-700 hover:bg-stone-100 disabled:opacity-50"
+        >
+          {changingTime ? "Uppdaterar…" : "Uppdatera tid"}
         </button>
 
         <Section title="Min färg" />
@@ -166,17 +231,6 @@ export default function CalendarSettingsPanel({
               <FeedLink href={feedLinks.apple} label="iPhone / Apple Kalender" />
               <FeedLink href={feedLinks.outlook} label="Outlook / Microsoft" />
             </div>
-
-            {otherFeedLink && (
-              <>
-                <p className="mb-2 text-[11px] font-medium text-stone-700">{otherParentName}s schemalänk:</p>
-                <div className="mb-3 space-y-1.5">
-                  <FeedLink href={otherFeedLink.google} label="Google Kalender" />
-                  <FeedLink href={otherFeedLink.apple} label="iPhone / Apple Kalender" />
-                  <FeedLink href={otherFeedLink.outlook} label="Outlook / Microsoft" />
-                </div>
-              </>
-            )}
 
             <button
               onClick={copyIcsUrl}

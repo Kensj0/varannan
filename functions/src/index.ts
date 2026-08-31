@@ -50,6 +50,39 @@ import { sendPushToUser, sendPushToUsers } from "./notifications";
 export { sendHandoffReminders } from "./handoffReminders";
 export { calendarFeed, createCalendarFeedToken, setParentColor } from "./calendarFeed";
 
+// setCustomSwitchHour — uppdatera bytestiden för ett barn
+export const setCustomSwitchHour = onCall(async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) throw new HttpsError("unauthenticated", "Du måste vara inloggad.");
+
+  const { teamId, childId, switchHour } = request.data as {
+    teamId?: string;
+    childId?: string;
+    switchHour?: string;
+  };
+  if (!teamId || !childId || !switchHour) {
+    throw new HttpsError("invalid-argument", "teamId, childId och switchHour krävs.");
+  }
+
+  // Validera format HH:MM
+  if (!/^\d{2}:\d{2}$/.test(switchHour)) {
+    throw new HttpsError("invalid-argument", "switchHour måste vara HH:MM (t.ex. 08:00).");
+  }
+
+  const db = admin.firestore();
+  const teamSnap = await db.doc(`teams/${teamId}`).get();
+  if (!teamSnap.exists) throw new HttpsError("not-found", "Teamet finns inte.");
+
+  const parentIds: string[] = teamSnap.data()?.parentIds ?? [];
+  if (!parentIds.includes(uid)) throw new HttpsError("permission-denied", "Du tillhör inte teamet.");
+
+  const cycleRef = db.doc(`teams/${teamId}/children/${childId}/custodyCycle/main`);
+  await cycleRef.update({ switchHour });
+
+  return { ok: true };
+});
+
+
 admin.initializeApp();
 const db = admin.firestore();
 const onboardingDb = createOnboardingAdapter(db);

@@ -95,3 +95,13 @@ export async function updateParentColor(teamId: string, colorId: ParentColorId):
   );
   await call({ teamId, colorId });
 }
+
+
+/** Uppdatera bytestiden för ett barn. */
+export async function setCustomSwitchHour(teamId: string, childId: string, switchHour: string): Promise<void> {
+  const call = httpsCallable<{ teamId: string; childId: string; switchHour: string }, { ok: boolean }>(
+    functions,
+    "setCustomSwitchHour"
+  );
+  await call({ teamId, childId, switchHour });
+}
