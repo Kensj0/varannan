@@ -135,6 +135,15 @@ export default function CustodyCycleBuilder({
   }, [days, parentA.id, parentB.id]);
 
   const nameFor = (id: string) => (id === parentA.id ? parentA.name : parentB.name);
+
+  // Hur stor andel av dygnet (i procent) som ligger FÖRE bytestiden —
+  // avgör hur stor "morgon"-delen av varje dagruta ska rita ut sig som.
+  // T.ex. switchHour "12:00" ger 50%, "08:00" ger ~33%.
+  const switchHourPct = useMemo(() => {
+    const [h, m] = switchHour.split(":").map(Number);
+    const minutes = (h ?? 12) * 60 + (m ?? 0);
+    return Math.min(100, Math.max(0, (minutes / 1440) * 100));
+  }, [switchHour]);
   const isBalanced = split[parentA.id] === split[parentB.id];
 
   const [y, m, d] = cycleStartDate.split("-").map(Number);
@@ -177,7 +186,7 @@ export default function CustodyCycleBuilder({
         </div>
       </div>
 
-      <div className="mb-2 flex items-center gap-4 text-xs text-stone-500">
+      <div className="mb-1 flex items-center gap-4 text-xs text-stone-500">
         <span className="flex items-center gap-1.5">
           <span className="h-3 w-3 rounded-full bg-rose-500" /> {parentA.name}
         </span>
@@ -185,6 +194,10 @@ export default function CustodyCycleBuilder({
           <span className="h-3 w-3 rounded-full bg-sky-500" /> {parentB.name}
         </span>
       </div>
+      <p className="mb-2 text-[11px] text-stone-400">
+        Varje ruta visar dygnet delat vid bytestiden {switchHour} — övre delen är morgonen (gårdagens
+        förälder), nedre delen är från bytet och resten av dagen.
+      </p>
 
       <div className="mb-4 space-y-1">
         {Array.from({ length: periodWeeks }, (_, week) => (
@@ -192,21 +205,38 @@ export default function CustodyCycleBuilder({
             {Array.from({ length: 7 }, (_, dow) => {
               const i = week * 7 + dow;
               const parentId = days[i];
+              // Bytet sker vid switchHour, inte midnatt: morgonen på en
+              // given kalenderdag tillhör alltså GÅRDAGENS block, och det
+              // är först vid switchHour som dagens block (parentId) tar
+              // över. Cykeln loopar, så dag 0:s morgon tillhör cykelns
+              // sista dag (mod-räkning).
+              const morningParentId = days[(i - 1 + days.length) % days.length];
               const date = new Date(startDateObj.getTime() + i * 24 * 60 * 60 * 1000);
               return (
                 <button
                   key={i}
                   type="button"
                   onClick={() => toggleDay(i)}
-                  title={`${date.toLocaleDateString("sv-SE")} — ${nameFor(parentId)}`}
-                  className={`flex flex-col items-center rounded-lg py-2 text-white transition active:scale-95 ${
-                    parentId === parentA.id ? "bg-rose-500" : "bg-sky-500"
-                  }`}
+                  title={`${date.toLocaleDateString("sv-SE")} — ${nameFor(morningParentId)} till ${switchHour}, sedan ${nameFor(parentId)}`}
+                  className="flex flex-col overflow-hidden rounded-lg text-white transition active:scale-95"
+                  style={{ height: "48px" }}
                 >
-                  <span className="text-[9px] uppercase opacity-80">
-                    {date.toLocaleDateString("sv-SE", { weekday: "narrow" })}
-                  </span>
-                  <span className="text-xs font-semibold">{date.getDate()}</span>
+                  <div
+                    className={`flex items-center justify-center text-[9px] font-semibold opacity-90 ${
+                      morningParentId === parentA.id ? "bg-rose-500" : "bg-sky-500"
+                    }`}
+                    style={{ height: `${switchHourPct}%` }}
+                  />
+                  <div
+                    className={`flex flex-1 flex-col items-center justify-center ${
+                      parentId === parentA.id ? "bg-rose-500" : "bg-sky-500"
+                    }`}
+                  >
+                    <span className="text-[9px] uppercase opacity-80">
+                      {date.toLocaleDateString("sv-SE", { weekday: "narrow" })}
+                    </span>
+                    <span className="text-xs font-semibold">{date.getDate()}</span>
+                  </div>
                 </button>
               );
             })}
