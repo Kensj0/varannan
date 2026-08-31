@@ -265,6 +265,111 @@ export const approveShiftRequest = onCall(async (request) => {
 });
 
 // ---------------------------------------------------------------------------
+// 1b. approveShiftRequestBatch — samma sak som approveShiftRequest, men
+//     för flera shiftRequests som skickades tillsammans (samma batchId)
+//     från kalenderns ändringsläge. Godkänns/avböjs som EN atomisk
+//     transaktion, så ställningen aldrig kan hamna i otakt om något
+//     misslyckas halvvägs.
+// ---------------------------------------------------------------------------
+
+export const approveShiftRequestBatch = onCall(async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) throw new HttpsError("unauthenticated", "Du måste vara inloggad.");
+
+  const { teamId, childId, batchId, decision } = request.data as {
+    teamId: string;
+    childId: string;
+    batchId: string;
+    decision: "approved" | "declined";
+  };
+
+  if (!["approved", "declined"].includes(decision)) {
+    throw new HttpsError("invalid-argument", "decision måste vara 'approved' eller 'declined'.");
+  }
+
+  const teamRef = db.doc(`teams/${teamId}`);
+  const cycleRef = db.doc(`teams/${teamId}/children/${childId}/custodyCycle/main`);
+  const balanceRef = db.doc(`teams/${teamId}/children/${childId}/dayBalance/main`);
+
+  await db.runTransaction(async (tx) => {
+    const teamSnap = await tx.get(teamRef);
+    if (!teamSnap.exists) throw new HttpsError("not-found", "Team saknas.");
+    const parentIds: string[] = teamSnap.data()!.parentIds;
+    if (!parentIds.includes(uid)) {
+      throw new HttpsError("permission-denied", "Du är inte medlem i det här teamet.");
+    }
+
+    const batchSnap = await tx.get(
+      db.collection(`teams/${teamId}/shiftRequests`).where("batchId", "==", batchId)
+    );
+    if (batchSnap.empty) throw new HttpsError("not-found", "Förfrågan saknas.");
+
+    const requests = batchSnap.docs.map((d) => d.data() as ShiftRequestDoc);
+    for (const req of requests) {
+      if (req.status !== "pending") {
+        throw new HttpsError("failed-precondition", "Förfrågan är redan hanterad.");
+      }
+      // Bara MOTPARTEN (inte den som föreslog) får godkänna/avböja.
+      if (req.requestedBy === uid) {
+        throw new HttpsError("permission-denied", "Du kan inte godkänna din egen förfrågan.");
+      }
+    }
+
+    if (decision === "declined") {
+      for (const docSnap of batchSnap.docs) {
+        tx.update(docSnap.ref, {
+          status: "declined",
+          respondedBy: uid,
+          respondedAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+      }
+      return;
+    }
+
+    const [cycleSnap, balanceSnap] = await Promise.all([tx.get(cycleRef), tx.get(balanceRef)]);
+    if (!cycleSnap.exists) throw new HttpsError("not-found", "Ingen boendecykel konfigurerad för barnet.");
+    if (!balanceSnap.exists) throw new HttpsError("not-found", "Ingen ställning initierad för barnet.");
+
+    const cycle = cycleSnap.data() as CustodyCycleDoc;
+    let runningBalance = balanceSnap.data() as DayBalanceDoc;
+    let totalDelta = 0;
+
+    // Applicera varje förfrågan i tur och ordning — nästa förfrågans
+    // avvikelse räknas mot ställningen EFTER föregåendes justering.
+    for (const docSnap of batchSnap.docs) {
+      const req = docSnap.data() as ShiftRequestDoc;
+      const approvedRequest: ShiftRequestDoc = { ...req, status: "approved", respondedBy: uid };
+      const { updatedBalance, deltaDays } = applyApprovedShiftToBalance(runningBalance, cycle, approvedRequest);
+      runningBalance = updatedBalance;
+      totalDelta += deltaDays;
+
+      tx.update(docSnap.ref, {
+        status: "approved",
+        respondedBy: uid,
+        respondedAt: admin.firestore.FieldValue.serverTimestamp(),
+        balanceDeltaDays: deltaDays,
+      });
+      const historyRef = db.collection(`teams/${teamId}/children/${childId}/dayBalanceHistory`).doc();
+      tx.set(historyRef, {
+        id: historyRef.id,
+        childId,
+        shiftRequestId: docSnap.id,
+        deltaDays,
+        balanceAfter: runningBalance.balanceDays,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+    }
+
+    tx.set(balanceRef, {
+      ...runningBalance,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+  });
+
+  return { ok: true };
+});
+
+// ---------------------------------------------------------------------------
 // 2. exportEventToGoogleCalendar — envägs export till varje förälders
 //    egen Google-kalender när ett EventDoc skapas eller ändras.
 // ---------------------------------------------------------------------------

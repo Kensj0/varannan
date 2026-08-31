@@ -18,7 +18,13 @@ import {
   useChildInfo,
   useChildAccounts,
 } from "../lib/hooks/useFirestore";
-import { createEvent, proposeShiftRequest, respondToShiftRequest } from "../lib/calendarActions";
+import {
+  createEvent,
+  proposeShiftRequest,
+  respondToShiftRequest,
+  proposeShiftRequestBatch,
+  respondToShiftRequestBatch,
+} from "../lib/calendarActions";
 import { sendChatMessage } from "../lib/chatActions";
 import {
   createPackList,
@@ -334,6 +340,14 @@ export default function HomePage() {
                 decision,
               });
             }}
+            onRespondBatch={async (batchId, decision) => {
+              await respondToShiftRequestBatch({
+                teamId: teamId!,
+                childId: activeChild.id,
+                batchId,
+                decision,
+              });
+            }}
           />
         </div>
       )}
@@ -375,6 +389,15 @@ export default function HomePage() {
             requestedBy: user!.uid,
             takingOverParentId,
             startAt: date,
+          });
+        }}
+        onProposeShiftBatch={async (changes) => {
+          await proposeShiftRequestBatch({
+            teamId: teamId!,
+            childId: activeChild.id,
+            requestedBy: user!.uid,
+            switchHour: cycle.switchHour,
+            changes,
           });
         }}
       />

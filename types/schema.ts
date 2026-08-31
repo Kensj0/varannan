@@ -177,6 +177,13 @@ export interface ShiftRequestDoc {
   takingOverParentId: string;
   startAt: FirestoreTimestamp; // t.ex. 25 Aug 2026 12:00
   /**
+   * Grupperar flera shiftRequests som skickades tillsammans i EN
+   * "Skicka förslag"-åtgärd (t.ex. flera separata dagar man målat om i
+   * kalenderns ändringsläge), så de visas och besvaras som en enhet
+   * istället för N separata förfrågningar.
+   */
+  batchId?: string;
+  /**
    * endAt är valfritt. Om null/undefined gäller bytet "fram till nästa
    * ordinarie byte" enligt custodyCycle — dvs det beräknas dynamiskt,
    * precis som texten i appen: "Livia fortsätter att ha ansvaret fram
