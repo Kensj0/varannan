@@ -495,6 +495,43 @@ att Cloud Scheduler-API:t är aktiverat i GCP-projektet — annars
 misslyckas deploy av just den funktionen (resten av `firebase deploy
 --only functions` påverkas inte).
 
+## Exportera kalender (ICS-prenumeration)
+
+Google Calendar, Apple Kalender och Outlook prenumererar alla på samma
+sorts ICS-URL, så i stället för tre integrationer serverar
+`functions/src/calendarFeed.ts` ETT flöde som alla tre kan läsa:
+
+- `calendarFeed` (HTTP) bygger en `VCALENDAR` med ett event per
+  sammanhängande ansvarsperiod ("Lova hos Kenny") plus alla aktiviteter,
+  3 månader bakåt och 12 framåt.
+- Åtkomst styrs av ett hemligt token på
+  `teams/{teamId}.calendarFeedTokens[childId]`, skapat av callablen
+  `createCalendarFeedToken`. Jämförelsen är konstanttid. Vem som helst med
+  URL:en kan läsa schemat — skapar man ett nytt token slutar den gamla
+  länken att fungera, vilket är hur man återkallar en delad prenumeration.
+- Inställningspanelen bygger de tre plattformslänkarna
+  (`lib/calendarExport.ts`): Google `addbyurl`, `webcal://` för iOS/macOS,
+  och Outlooks `addfromweb`.
+
+Detta är läsbar prenumeration, till skillnad från den befintliga
+`exportEventToGoogleCalendar` som via OAuth skriver in event-kopior i
+Googles kalender. Båda finns kvar och gör olika saker.
+
+**Kräver en ny GitHub-secret:** `NEXT_PUBLIC_CALENDAR_FEED_URL`, satt till
+funktionens URL (t.ex.
+`https://us-central1-varannan-familj.cloudfunctions.net/calendarFeed`).
+Utan den blir länkarna tomma.
+
+## Schemafärger
+
+`PARENT_PALETTE` i `types/schema.ts` är sex av Google Calendars egna
+kalenderfärger, så ett prenumererat schema ser likadant ut i appen som i
+Google Calendar. Valet sparas som `parentProfiles[uid].colorId` via
+callablen `setParentColor` — inte direkt från klienten, eftersom
+`teams/{teamId}` är låst i `firestore.rules` och för att man bara ska
+kunna ändra sin egen färg. Den andra förälderns färg är utgråad i
+väljaren så båda inte kan ha samma.
+
 ## Nästa steg (föreslaget)
 
 1. Klient-side-kryptering av `pinOrNote` och `personalNumber`

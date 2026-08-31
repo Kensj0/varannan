@@ -6,13 +6,15 @@ import { getScheduledParentForDate } from "../lib/custodyCycle";
 import { expandEvents, EventOccurrence } from "../lib/recurrence";
 import { atSwitchHour, addDays } from "../lib/calendarActions";
 import { PushPermissionState } from "../lib/pushNotifications";
+import { ParentColorId } from "../types/schema";
+import { CalendarFeedLinks } from "../lib/calendarExport";
 import DayActionModal from "./DayActionModal";
 import CalendarSettingsPanel from "./CalendarSettingsPanel";
 
 interface ParentMeta {
   id: string;
   name: string;
-  color: string; // tailwind bg-class, t.ex. "bg-rose-500"
+  color: string; // hex ur PARENT_PALETTE, t.ex. "#D50000"
 }
 
 interface DayChange {
@@ -41,6 +43,12 @@ interface CalendarViewProps {
   onEnablePush: () => void;
   reminderPrefs: ReminderPrefs;
   onUpdateReminderPrefs: (prefs: ReminderPrefs) => void;
+  /** Inloggad förälders valda schemafärg, och den andras (för att blockera dubbletter). */
+  myColorId?: ParentColorId;
+  onSelectColor: (colorId: ParentColorId) => Promise<void>;
+  otherParentColorHex: string;
+  feedLinks: CalendarFeedLinks | null;
+  onCreateFeed: () => Promise<void>;
 }
 
 const WEEKDAY_LABELS = ["M", "T", "O", "T", "F", "L", "S"];
@@ -62,6 +70,11 @@ export default function CalendarView({
   onEnablePush,
   reminderPrefs,
   onUpdateReminderPrefs,
+  myColorId,
+  onSelectColor,
+  otherParentColorHex,
+  feedLinks,
+  onCreateFeed,
 }: CalendarViewProps) {
   const [activeDay, setActiveDay] = useState<Date | null>(null);
   const [parentA, parentB] = parents;
@@ -239,6 +252,11 @@ export default function CalendarView({
             onEnablePush={onEnablePush}
             reminderPrefs={reminderPrefs}
             onUpdateReminderPrefs={onUpdateReminderPrefs}
+            myColorId={myColorId}
+            onSelectColor={onSelectColor}
+            otherParentColorHex={otherParentColorHex}
+            feedLinks={feedLinks}
+            onCreateFeed={onCreateFeed}
           />
         )}
       </header>
@@ -369,9 +387,10 @@ export default function CalendarView({
                 <div
                   key={`bar-${bi}`}
                   className={`absolute inset-y-0 flex items-center justify-center overflow-hidden px-1 ${
-                    bar.parent.color
-                  } ${bar.hasChange ? "ring-2 ring-inset ring-stone-800" : ""}`}
+                    bar.hasChange ? "ring-2 ring-inset ring-stone-800" : ""
+                  }`}
                   style={{
+                    background: bar.parent.color,
                     left: `${(bar.from / 7) * 100}%`,
                     width: `${((bar.to - bar.from) / 7) * 100}%`,
                     borderTopLeftRadius: bar.roundedStart ? 6 : 0,
