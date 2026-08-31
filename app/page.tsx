@@ -50,7 +50,7 @@ import TodoView from "../components/TodoView";
 import ChildInfoView from "../components/ChildInfoView";
 import AccountsView from "../components/AccountsView";
 import CycleSetupScreen from "../components/onboarding/CycleSetupScreen";
-import WaitingForParentScreen from "../components/onboarding/WaitingForParentScreen";
+import InvitePartnerBanner from "../components/onboarding/InvitePartnerBanner";
 import AddFirstChildScreen from "../components/onboarding/AddFirstChildScreen";
 import { createInvite, addChild, saveCustodyCycle } from "../lib/onboardingClient";
 import { PENDING_PARTNER_ID } from "../types/schema";
@@ -101,13 +101,24 @@ export default function HomePage() {
   // läsbart för ägaren själv, därför ligger namnen i team-dokumentet).
   const parents = useMemo(() => {
     const ids = team?.parentIds ?? [];
-    return ids.map((id, i) => ({
+    const real = ids.map((id, i) => ({
       id,
       name:
         team?.parentProfiles?.[id]?.displayName ??
         (id === user?.uid ? user?.displayName ?? "Du" : "Andra föräldern"),
       color: PARENT_COLORS[i % PARENT_COLORS.length],
     }));
+    // Andra föräldern har inte anslutit än — fyll ut med en platshållare
+    // så resten av vyn (färger, "otherParentId" m.m.) alltid kan anta att
+    // det finns två poster, utan att blockera appen tills hen bjudits in.
+    if (real.length < 2) {
+      real.push({
+        id: PENDING_PARTNER_ID,
+        name: "Väntar på inbjudan",
+        color: PARENT_COLORS[real.length % PARENT_COLORS.length],
+      });
+    }
+    return real;
   }, [team, user]);
 
   const parentNames = useMemo(
@@ -161,18 +172,10 @@ export default function HomePage() {
     );
   }
 
-  // Schemat finns (ev. med platshållare väntande på partnern), men själva
-  // vardagsanvändningen — chatt, byten, ställning — kräver att båda
-  // föräldrarna faktiskt finns, så den väntar tills partnern anslutit.
-  if (parents.length < 2) {
-    return (
-      <WaitingForParentScreen
-        teamName={team?.name}
-        onCreateInvite={() => createInvite(teamId!)}
-        onSignOut={signOutUser}
-      />
-    );
-  }
+  // Andra föräldern kanske inte anslutit än — schemat och kalendern
+  // fungerar redan (mot platshållaren), så det blockerar inte längre.
+  // En banner högst upp låter en bjuda in när man vill istället.
+  const hasPartner = (team?.parentIds?.length ?? 0) >= 2;
 
   const otherParentId = parents.find((p) => p.id !== balance?.referenceParentId)?.id ?? parents[1].id;
 
@@ -184,6 +187,10 @@ export default function HomePage() {
           Logga ut
         </button>
       </header>
+
+      {!hasPartner && (
+        <InvitePartnerBanner teamName={team?.name} onCreateInvite={() => createInvite(teamId!)} />
+      )}
 
       <nav className="mb-4 flex gap-1 overflow-x-auto rounded-full bg-white p-1">
         {(Object.keys(TAB_LABELS) as Tab[]).map((t) => (
