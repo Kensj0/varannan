@@ -37,8 +37,11 @@ export async function addChild(teamId: string, name: string, birthYear?: number)
     id: ref.id,
     teamId,
     name,
-    birthYear,
     createdAt: { seconds: Math.floor(Date.now() / 1000), nanoseconds: 0 },
+    // Firestores webb-SDK kastar fel på `undefined`-fält (till skillnad
+    // från Admin SDK), så birthYear inkluderas bara när det faktiskt
+    // angetts — annars kraschar setDoc när fältet lämnas tomt.
+    ...(birthYear !== undefined ? { birthYear } : {}),
   };
   await setDoc(ref, childDoc);
   return { childId: ref.id };

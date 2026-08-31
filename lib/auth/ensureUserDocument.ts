@@ -23,9 +23,12 @@ export async function ensureUserDocument(user: User): Promise<UserDoc> {
     uid: user.uid,
     displayName: user.displayName ?? user.email?.split("@")[0] ?? "Förälder",
     email: user.email ?? "",
-    avatarUrl: user.photoURL ?? undefined,
     teamId: null,
     createdAt: serverTimestamp() as any,
+    // Firestores webb-SDK kastar fel på `undefined`-fält, så avatarUrl
+    // inkluderas bara när användaren faktiskt har en profilbild (t.ex.
+    // saknas photoURL vid e-post/lösenord-inloggning).
+    ...(user.photoURL ? { avatarUrl: user.photoURL } : {}),
   };
 
   await setDoc(ref, newUser);
