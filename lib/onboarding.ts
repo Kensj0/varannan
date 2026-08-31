@@ -75,7 +75,7 @@ export async function createParentInvite(
   return {
     code,
     expiresAt,
-    shareUrl: `${baseUrl.replace(/\/$/, "")}/join/${encodeURIComponent(code)}`,
+    shareUrl: `${baseUrl.replace(/\/$/, "")}/join?code=${encodeURIComponent(code)}`,
   };
 }
 
