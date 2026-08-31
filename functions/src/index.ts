@@ -47,6 +47,8 @@ import {
 import { createOnboardingAdapter } from "./onboardingAdapter";
 import { sendPushToUser, sendPushToUsers } from "./notifications";
 
+export { sendHandoffReminders } from "./handoffReminders";
+
 admin.initializeApp();
 const db = admin.firestore();
 const onboardingDb = createOnboardingAdapter(db);

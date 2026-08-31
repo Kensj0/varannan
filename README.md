@@ -456,6 +456,45 @@ firebase functions:config:set app.origins="https://ert-projekt.web.app"
 
 Testsviten är utökad från 31 till **46 test**.
 
+## Kalendervyn (veckorader) + inställningar + överlämnings-påminnelser
+
+Kalendern (`CalendarView.tsx`) ritas nu som obrutna veckorader i stället
+för en månadsruta med tomma celler, för att matcha originalappens vy:
+
+- Varje vecka är en rad. Dagar där SAMMA förälder har hela dygnet slås
+  ihop till en sammanhängande färgad stapel med namnet centrerat
+  (`computeBlockSegments`), i stället för en ruta per dag. Dagar där ett
+  byte faktiskt sker (`morningParent !== afternoonParent`) visas som en
+  egen, ofärgad ruta med bytestiden (t.ex. "8:00") — precis som i
+  bifogad skärmdump.
+- Aktiviteter visas som en gul markering i dagrutan (`bg-amber-300`).
+- Veckonummer-kolumnen är en ren visningsinställning (sparas i
+  `localStorage`, `varannan:showWeekNumbers`), inte i Firestore — den
+  påverkar bara den egna enheten.
+- Kögelikonen uppe till höger öppnar `CalendarSettingsPanel`: visa
+  veckonummer, gå in i ändringsläget, samt två toggles för
+  överlämnings-påminnelser ("Dagen innan" / "Samma dag"). De sparas per
+  användare på `users/{uid}.handoffReminderPrefs` (se
+  `lib/pushNotifications.ts#updateHandoffReminderPrefs`). Pennikonen
+  uppe till vänster går rakt in i ändringsläget, som ett alternativ till
+  långtryck på en dag.
+
+**Push-påminnelsen** skickas av en ny schemalagd Cloud Function,
+`functions/src/handoffReminders.ts` (`sendHandoffReminders`), som körs
+en gång om dagen (08:00 Europe/Stockholm). Den loopar över alla team och
+barn, räknar ut om ett byte sker idag/imorgon (fast cykel + godkända ad
+hoc-byten, se `lib/handoffPreview.ts`), och skickar till den förälder
+som tar över ("Du tar över ansvaret") respektive lämnar över ("Du lämnar
+över ansvaret") — med antal opackade saker i barnets packlistor i
+brödtexten, t.ex. "Byte kl 12:00 idag (2 saker kvar att packa)". Varje
+förälders `handoffReminderPrefs` avgör om just den påminnelsen skickas
+till just den personen.
+
+OBS: schemalagda (`onSchedule`) Cloud Functions kräver Blaze-planen och
+att Cloud Scheduler-API:t är aktiverat i GCP-projektet — annars
+misslyckas deploy av just den funktionen (resten av `firebase deploy
+--only functions` påverkas inte).
+
 ## Nästa steg (föreslaget)
 
 1. Klient-side-kryptering av `pinOrNote` och `personalNumber`

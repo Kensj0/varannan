@@ -1,11 +1,13 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { CustodyCycleDoc, ShiftRequestDoc, EventDoc } from "../types/schema";
 import { getScheduledParentForDate } from "../lib/custodyCycle";
 import { expandEvents, EventOccurrence } from "../lib/recurrence";
 import { atSwitchHour, addDays } from "../lib/calendarActions";
+import { PushPermissionState } from "../lib/pushNotifications";
 import DayActionModal from "./DayActionModal";
+import CalendarSettingsPanel from "./CalendarSettingsPanel";
 
 interface ParentMeta {
   id: string;
@@ -16,6 +18,11 @@ interface ParentMeta {
 interface DayChange {
   date: Date;
   takingOverParentId: string;
+}
+
+interface ReminderPrefs {
+  dayBefore: boolean;
+  sameDay: boolean;
 }
 
 interface CalendarViewProps {
@@ -33,11 +40,17 @@ interface CalendarViewProps {
   onProposeShift: (date: Date, takingOverParentId: string) => void;
   /** Skickar flera dagändringar (från ändringsläget) som ETT samlat förslag. */
   onProposeShiftBatch: (changes: DayChange[]) => Promise<void>;
+  /** Push-status/inställningar — visas i inställningspanelen (kugghjulet). */
+  pushPermission: PushPermissionState | null;
+  onEnablePush: () => void;
+  reminderPrefs: ReminderPrefs;
+  onUpdateReminderPrefs: (prefs: ReminderPrefs) => void;
 }
 
 const WEEKDAY_LABELS = ["M", "T", "O", "T", "F", "L", "S"];
 const LONG_PRESS_MS = 500;
 const ONE_MINUTE_MS = 60 * 1000;
+const SHOW_WEEK_NUMBERS_KEY = "varannan:showWeekNumbers";
 
 export default function CalendarView({
   monthDate,
@@ -49,10 +62,29 @@ export default function CalendarView({
   onCreateActivity,
   onProposeShift,
   onProposeShiftBatch,
+  pushPermission,
+  onEnablePush,
+  reminderPrefs,
+  onUpdateReminderPrefs,
 }: CalendarViewProps) {
   const [activeDay, setActiveDay] = useState<Date | null>(null);
   const [parentA, parentB] = parents;
   const switchHour = cycle.switchHour;
+
+  // Veckonummer-kolumnen är en ren visningsinställning, sparas lokalt
+  // (påverkar ingen annan användare) — läses från localStorage vid
+  // första render, med "visa" som default.
+  const [showWeekNumbers, setShowWeekNumbers] = useState(true);
+  useEffect(() => {
+    const stored = typeof window !== "undefined" ? window.localStorage.getItem(SHOW_WEEK_NUMBERS_KEY) : null;
+    if (stored !== null) setShowWeekNumbers(stored === "1");
+  }, []);
+  function toggleShowWeekNumbers(value: boolean) {
+    setShowWeekNumbers(value);
+    if (typeof window !== "undefined") window.localStorage.setItem(SHOW_WEEK_NUMBERS_KEY, value ? "1" : "0");
+  }
+
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   // ---- Ändringsläge: håll in en dag för att gå in. "Förskjut" flyttar
   // HELA det synliga schemat (varje dag) ett dygn i taget — inte bara
@@ -67,7 +99,7 @@ export default function CalendarView({
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const longPressFired = useRef(false);
 
-  const weeks = useMemo(() => buildMonthGrid(monthDate), [monthDate]);
+  const weeks = useMemo(() => buildWeekRows(monthDate), [monthDate]);
   const monthLabel = monthDate.toLocaleDateString("sv-SE", { month: "long", year: "numeric" });
 
   // Expandera återkommande aktiviteter till konkreta tillfällen och
@@ -180,7 +212,7 @@ export default function CalendarView({
     setSubmitError(null);
   }
 
-  const visibleDays = useMemo(() => weeks.flat().filter((d): d is Date => d !== null), [weeks]);
+  const visibleDays = useMemo(() => weeks.flat(), [weeks]);
 
   // Vilka dagar som faktiskt skiljer sig från originalschemat just nu
   // (förskjutning + enskilda rättelser tillsammans) — det här är exakt
@@ -213,15 +245,49 @@ export default function CalendarView({
     }
   }
 
+  const today = new Date();
+  const gridTemplate = showWeekNumbers ? "28px repeat(7, 1fr)" : "repeat(7, 1fr)";
+
   return (
     <div className="rounded-2xl bg-white shadow-sm">
-      <header className="flex items-center justify-between px-5 py-4">
-        <h2 className="text-2xl font-bold capitalize text-stone-800">{monthLabel}</h2>
-        <span className="text-sm text-stone-400">{childName}s schema</span>
+      <header className="relative flex items-center justify-between px-4 py-3">
+        <button
+          onClick={() => setEditMode(true)}
+          aria-label="Gå in i ändringsläge"
+          className="grid h-8 w-8 place-items-center rounded-full text-stone-400 hover:bg-stone-50 hover:text-rose-500"
+        >
+          <EditCalendarIcon />
+        </button>
+
+        <div className="text-center">
+          <h2 className="text-lg font-bold capitalize leading-tight text-stone-800">{monthLabel}</h2>
+          <span className="text-xs text-stone-400">{childName}s schema</span>
+        </div>
+
+        <button
+          onClick={() => setSettingsOpen((v) => !v)}
+          aria-label="Kalenderinställningar"
+          className="grid h-8 w-8 place-items-center rounded-full text-stone-400 hover:bg-stone-50 hover:text-rose-500"
+        >
+          <SettingsIcon />
+        </button>
+
+        {settingsOpen && (
+          <CalendarSettingsPanel
+            onClose={() => setSettingsOpen(false)}
+            showWeekNumbers={showWeekNumbers}
+            onToggleShowWeekNumbers={toggleShowWeekNumbers}
+            onEnterEditMode={() => setEditMode(true)}
+            pushPermission={pushPermission}
+            onEnablePush={onEnablePush}
+            reminderPrefs={reminderPrefs}
+            onUpdateReminderPrefs={onUpdateReminderPrefs}
+          />
+        )}
       </header>
 
       {editMode && (
-        <div className="flex items-center justify-between border-t border-rose-100 bg-rose-50 px-5 py-2">
+        <div className="flex items-center justify-between border-t border-rose-100 bg-rose-50 px-4 py-2">
           <p className="text-xs font-semibold text-rose-600">
             Ändringsläge — tryck på dagar för att rätta, eller förskjut hela schemat
           </p>
@@ -247,7 +313,15 @@ export default function CalendarView({
         </div>
       )}
 
-      <div className="grid grid-cols-7 border-t border-stone-100 text-center text-xs font-medium text-stone-400">
+      <div
+        className="grid border-t border-stone-100 text-center text-xs font-medium text-stone-400"
+        style={{ gridTemplateColumns: gridTemplate }}
+      >
+        {showWeekNumbers && (
+          <div className="py-2 text-[10px] uppercase text-stone-300" aria-label="Vecka">
+            V.
+          </div>
+        )}
         {WEEKDAY_LABELS.map((d, i) => (
           <div key={i} className="py-2">
             {d}
@@ -255,75 +329,94 @@ export default function CalendarView({
         ))}
       </div>
 
-      <div className="grid grid-cols-7">
-        {weeks.flat().map((day, i) => {
-          if (!day) return <div key={i} className="h-24 border border-stone-50" />;
+      <div className="pb-1">
+        {weeks.map((week, wIdx) => {
+          const dayInfos: DayInfo[] = week.map((day) => {
+            const morning = morningParent(day, editMode);
+            const afternoon = afternoonParent(day, editMode);
+            const type: DaySegmentType = morning.id === afternoon.id ? "block" : "handover";
+            const isChanged =
+              editMode &&
+              (morning.id !== morningParent(day, false).id || afternoon.id !== afternoonParent(day, false).id);
+            return {
+              date: day,
+              type,
+              parent: afternoon,
+              isChanged,
+              isToday: isSameDay(day, today),
+              inMonth: day.getMonth() === monthDate.getMonth(),
+              events: eventsByDay.get(dayKey(day)) ?? [],
+            };
+          });
 
-          const morning = morningParent(day, editMode);
-          const afternoon = afternoonParent(day, editMode);
-          const isChanged =
-            editMode &&
-            (morning.id !== morningParent(day, false).id || afternoon.id !== afternoonParent(day, false).id);
-          const isToday = isSameDay(day, new Date());
-          const dayEvents = eventsByDay.get(dayKey(day)) ?? [];
+          const segments = computeBlockSegments(dayInfos);
+          const dayColumnOffset = showWeekNumbers ? 2 : 1;
 
           return (
-            <button
-              key={i}
-              onPointerDown={() => startLongPress(day)}
-              onPointerUp={cancelLongPress}
-              onPointerLeave={cancelLongPress}
-              onPointerCancel={cancelLongPress}
-              onClick={() => handleDayClick(day)}
-              className={`relative h-24 overflow-hidden border p-1.5 text-left align-top transition hover:opacity-90 ${
-                isChanged ? "border-rose-300 ring-2 ring-inset ring-rose-300" : "border-stone-50"
-              } ${isToday && !isChanged ? "ring-2 ring-inset ring-rose-400" : ""}`}
-            >
-              {/* Halvdags-bakgrund: bytet sker vid switchHour, inte midnatt. */}
-              <div className="absolute inset-0 flex flex-col">
-                <div className={`${morning.color} opacity-25`} style={{ height: `${switchHourPct(switchHour)}%` }} />
-                <div className={`${afternoon.color} flex-1 opacity-25`} />
-              </div>
+            <div key={wIdx} className="relative grid" style={{ gridTemplateColumns: gridTemplate }}>
+              {showWeekNumbers && (
+                <div className="flex items-center justify-center text-[11px] font-medium text-stone-300">
+                  {getISOWeek(week[0])}
+                </div>
+              )}
 
-              <span className="relative text-sm font-semibold text-stone-700">{day.getDate()}</span>
-
-              <span className="relative mt-0.5 block space-y-0.5">
-                {dayEvents.slice(0, 2).map((occurrence) => (
+              {dayInfos.map((info, i) => (
+                <button
+                  key={i}
+                  onPointerDown={() => startLongPress(info.date)}
+                  onPointerUp={cancelLongPress}
+                  onPointerLeave={cancelLongPress}
+                  onPointerCancel={cancelLongPress}
+                  onClick={() => handleDayClick(info.date)}
+                  className={dayButtonClasses(info, segments, i)}
+                >
                   <span
-                    key={occurrence.occurrenceId}
-                    title={occurrence.title}
-                    className="block truncate rounded bg-violet-100 px-1 text-[10px] leading-tight text-violet-800"
+                    className={`relative text-[10px] font-semibold ${
+                      info.type === "block" ? "text-white/85" : "text-stone-400"
+                    } ${!info.inMonth ? "opacity-40" : ""}`}
                   >
-                    {occurrence.isRecurring && <span aria-label="Återkommande">↻ </span>}
-                    {occurrence.title}
+                    {info.date.getDate()}
                   </span>
-                ))}
-                {dayEvents.length > 2 && (
-                  <span className="block px-1 text-[10px] text-stone-400">+{dayEvents.length - 2} till</span>
-                )}
-              </span>
 
-              <span className="absolute inset-x-1 bottom-1.5 flex gap-0.5">
-                <span
-                  title={`Morgon (till ${switchHour}): ${morning.name}`}
-                  className={`flex-1 truncate rounded-full px-1.5 py-0.5 text-[9px] font-semibold text-white ${morning.color}`}
-                >
-                  {morning.name}
-                </span>
-                <span
-                  title={`Från ${switchHour}: ${afternoon.name}`}
-                  className={`flex-1 truncate rounded-full px-1.5 py-0.5 text-[9px] font-semibold text-white ${afternoon.color}`}
-                >
-                  {afternoon.name}
-                </span>
-              </span>
-            </button>
+                  {info.type === "handover" && (
+                    <span className="relative mt-2 block text-center text-[11px] font-semibold text-stone-400">
+                      {formatSwitchHourShort(switchHour)}
+                    </span>
+                  )}
+
+                  {info.events.length > 0 && (
+                    <span
+                      title={info.events.map((e) => e.title).join(", ")}
+                      className="absolute inset-x-0.5 bottom-0.5 truncate rounded bg-amber-300 px-1 text-center text-[9px] font-semibold leading-4 text-amber-900"
+                    >
+                      {info.events[0].title}
+                      {info.events.length > 1 ? ` +${info.events.length - 1}` : ""}
+                    </span>
+                  )}
+                </button>
+              ))}
+
+              {/* Namnetiketten för ett block ritas EN gång, centrerad över hela
+                  det sammanslagna färgade intervallet, i ett overlay-lager ovanpå
+                  dagknapparna (pointer-events-none så klick går igenom till dem). */}
+              <div className="pointer-events-none absolute inset-0 grid" style={{ gridTemplateColumns: gridTemplate }}>
+                {segments.map((seg, si) => (
+                  <div
+                    key={si}
+                    className="flex items-center justify-center px-1"
+                    style={{ gridColumn: `${dayColumnOffset + seg.startIndex} / span ${seg.length}` }}
+                  >
+                    <span className="truncate text-[11px] font-semibold text-white">{seg.parentName}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
           );
         })}
       </div>
 
       {editMode && (
-        <div className="flex items-center gap-2 border-t border-stone-100 px-5 py-3">
+        <div className="flex items-center gap-2 border-t border-stone-100 px-4 py-3">
           <button onClick={exitEditMode} className="text-sm text-stone-400 hover:text-rose-500">
             Avbryt
           </button>
@@ -370,23 +463,110 @@ export default function CalendarView({
 // Hjälpfunktioner
 // ---------------------------------------------------------------------------
 
-function buildMonthGrid(monthDate: Date): (Date | null)[][] {
+type DaySegmentType = "handover" | "block";
+
+interface DayInfo {
+  date: Date;
+  type: DaySegmentType;
+  /** Block: förälder som har hela dagen. Handover: förälder som TAR ÖVER. */
+  parent: ParentMeta;
+  isChanged: boolean;
+  isToday: boolean;
+  inMonth: boolean;
+  events: EventOccurrence[];
+}
+
+interface BlockSegment {
+  startIndex: number;
+  length: number;
+  parentId: string;
+  parentName: string;
+}
+
+/**
+ * Slår ihop sammanhängande "block"-dagar (samma förälder hela dygnet,
+ * inga byten) inom EN veckorad till ett enda sammanhängande intervall,
+ * så de kan ritas som en obruten färgad stapel istället för N separata
+ * rutor — det är precis det som gör originalappens vy ren och läsbar.
+ * Handover-dagar (halva dygnet hos vardera föräldern) bryter alltid
+ * en sammanslagning och visas istället som en egen, ofärgad ruta med
+ * bytestiden.
+ */
+function computeBlockSegments(dayInfos: DayInfo[]): BlockSegment[] {
+  const segments: BlockSegment[] = [];
+  let i = 0;
+  while (i < dayInfos.length) {
+    if (dayInfos[i].type !== "block") {
+      i++;
+      continue;
+    }
+    const parentId = dayInfos[i].parent.id;
+    let j = i;
+    while (j < dayInfos.length && dayInfos[j].type === "block" && dayInfos[j].parent.id === parentId) j++;
+    segments.push({ startIndex: i, length: j - i, parentId, parentName: dayInfos[i].parent.name });
+    i = j;
+  }
+  return segments;
+}
+
+function dayButtonClasses(info: DayInfo, segments: BlockSegment[], i: number): string {
+  const base = "relative h-14 overflow-hidden p-1 text-left align-top transition hover:opacity-90";
+  let bg = "bg-transparent";
+  let rounding = "";
+
+  if (info.type === "block") {
+    bg = info.parent.color;
+    const seg = segments.find((s) => i >= s.startIndex && i < s.startIndex + s.length);
+    if (seg) {
+      if (i === seg.startIndex) rounding += " rounded-l-lg";
+      if (i === seg.startIndex + seg.length - 1) rounding += " rounded-r-lg";
+    }
+  }
+
+  const ring = info.isChanged
+    ? " ring-2 ring-inset ring-rose-400"
+    : info.isToday
+    ? " ring-2 ring-inset ring-stone-800"
+    : "";
+
+  return `${base} ${bg}${rounding}${ring}`;
+}
+
+/** Måndag-baserade, sammanhängande veckorader från månaden före till efter, så vyn
+ *  aldrig visar tomma rutor (matchar originalappens obrutna veckoscroll). */
+function buildWeekRows(monthDate: Date): Date[][] {
   const year = monthDate.getFullYear();
   const month = monthDate.getMonth();
   const firstOfMonth = new Date(year, month, 1);
-  // Måndag = 0 i svensk kalender
-  const leadingBlanks = (firstOfMonth.getDay() + 6) % 7;
-  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const lastOfMonth = new Date(year, month + 1, 0);
 
-  const cells: (Date | null)[] = [
-    ...Array(leadingBlanks).fill(null),
-    ...Array.from({ length: daysInMonth }, (_, i) => new Date(year, month, i + 1)),
-  ];
-  while (cells.length % 7 !== 0) cells.push(null);
+  const firstMonday = addDays(firstOfMonth, -((firstOfMonth.getDay() + 6) % 7));
+  const lastSunday = addDays(lastOfMonth, 6 - ((lastOfMonth.getDay() + 6) % 7));
 
-  const weeks: (Date | null)[][] = [];
-  for (let i = 0; i < cells.length; i += 7) weeks.push(cells.slice(i, i + 7));
+  const weeks: Date[][] = [];
+  let cursor = firstMonday;
+  while (cursor.getTime() <= lastSunday.getTime()) {
+    weeks.push(Array.from({ length: 7 }, (_, i) => addDays(cursor, i)));
+    cursor = addDays(cursor, 7);
+  }
   return weeks;
+}
+
+/** ISO-8601 veckonummer (måndag = veckans start, vecka 1 innehåller årets första torsdag). */
+function getISOWeek(date: Date): number {
+  const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+  const dayNum = (d.getUTCDay() + 6) % 7;
+  d.setUTCDate(d.getUTCDate() - dayNum + 3);
+  const firstThursday = new Date(Date.UTC(d.getUTCFullYear(), 0, 4));
+  const firstThursdayDayNum = (firstThursday.getUTCDay() + 6) % 7;
+  firstThursday.setUTCDate(firstThursday.getUTCDate() - firstThursdayDayNum + 3);
+  return 1 + Math.round((d.getTime() - firstThursday.getTime()) / (7 * 24 * 3600 * 1000));
+}
+
+/** "08:00" → "8:00" — matchar hur bytestiden visas i originalappen. */
+function formatSwitchHourShort(switchHour: string): string {
+  const [h, m] = switchHour.split(":");
+  return `${Number(h)}:${m}`;
 }
 
 /** "2026-8-27" — nyckel för att gruppera aktiviteter/ändringar per dag. */
@@ -416,9 +596,27 @@ function segmentDayFor(instant: Date, switchHour: string): Date {
   return instant < boundary ? addDays(midnight, -1) : midnight;
 }
 
-/** Hur stor andel (%) av dygnet som ligger FÖRE bytestiden. */
-function switchHourPct(switchHour: string): number {
-  const [h, m] = switchHour.split(":").map(Number);
-  const minutes = (h ?? 12) * 60 + (m ?? 0);
-  return Math.min(100, Math.max(0, (minutes / 1440) * 100));
+// ---------------------------------------------------------------------------
+// Ikoner (inline SVG — inget ikonbibliotek i projektet ännu)
+// ---------------------------------------------------------------------------
+
+function EditCalendarIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <rect x="3" y="4" width="18" height="17" rx="2" />
+      <path d="M3 9h18" />
+      <path d="M16 15.5 18.5 13 20 14.5 17.5 17H16v-1.5Z" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
+function SettingsIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h10M18 18h2" strokeLinecap="round" />
+      <circle cx="16" cy="6" r="2" />
+      <circle cx="8" cy="12" r="2" />
+      <circle cx="16" cy="18" r="2" />
+    </svg>
+  );
 }
