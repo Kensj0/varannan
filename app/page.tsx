@@ -53,6 +53,7 @@ import CycleSetupScreen from "../components/onboarding/CycleSetupScreen";
 import WaitingForParentScreen from "../components/onboarding/WaitingForParentScreen";
 import AddFirstChildScreen from "../components/onboarding/AddFirstChildScreen";
 import { createInvite, addChild, saveCustodyCycle } from "../lib/onboardingClient";
+import { PENDING_PARTNER_ID } from "../types/schema";
 
 const PARENT_COLORS = ["bg-rose-500", "bg-sky-500"];
 
@@ -132,23 +133,19 @@ export default function HomePage() {
     );
   }
 
-  if (parents.length < 2) {
-    return (
-      <WaitingForParentScreen
-        teamName={team?.name}
-        onCreateInvite={() => createInvite(teamId!)}
-        onSignOut={signOutUser}
-      />
-    );
-  }
-
+  // Schemat kan sättas upp solo, innan andra föräldern anslutit — de block
+  // som tillhör hen pekar då tillfälligt på platshållaren PENDING_PARTNER_ID.
+  // Den ersätts automatiskt med partnerns riktiga uid när inbjudan
+  // accepteras, så detta steg får INTE vänta på att parents.length === 2.
   if (!cycle) {
+    const self = parents[0] ?? { id: user!.uid, name: user?.displayName ?? "Du" };
+    const partner = parents[1] ?? { id: PENDING_PARTNER_ID, name: "Andra föräldern" };
     return (
       <CycleSetupScreen
         childName={activeChild.name}
         parents={[
-          { id: parents[0].id, name: parents[0].name },
-          { id: parents[1].id, name: parents[1].name },
+          { id: self.id, name: self.name },
+          { id: partner.id, name: partner.name },
         ]}
         onSave={async (blocks, cycleStartDate, switchHour) => {
           await saveCustodyCycle({
@@ -157,9 +154,22 @@ export default function HomePage() {
             blocks,
             cycleStartDate,
             switchHour,
-            referenceParentId: parents[0].id,
+            referenceParentId: self.id,
           });
         }}
+      />
+    );
+  }
+
+  // Schemat finns (ev. med platshållare väntande på partnern), men själva
+  // vardagsanvändningen — chatt, byten, ställning — kräver att båda
+  // föräldrarna faktiskt finns, så den väntar tills partnern anslutit.
+  if (parents.length < 2) {
+    return (
+      <WaitingForParentScreen
+        teamName={team?.name}
+        onCreateInvite={() => createInvite(teamId!)}
+        onSignOut={signOutUser}
       />
     );
   }

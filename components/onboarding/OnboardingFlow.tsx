@@ -1,34 +1,55 @@
 "use client";
 
 import { useState } from "react";
+import CustodyCycleBuilder, { CycleParent } from "./CustodyCycleBuilder";
+import { CustodyCycleBlock, PENDING_PARTNER_ID } from "../../types/schema";
 
-type Step = "team" | "child" | "invite";
+type Step = "team" | "child" | "cycle" | "invite";
 
 interface OnboardingFlowProps {
   currentUserName: string;
+  currentUserUid: string;
   onCreateTeam: (teamName: string) => Promise<{ teamId: string }>;
   onAddChild: (teamId: string, name: string, birthYear?: number) => Promise<{ childId: string }>;
+  onSetupCycle: (
+    teamId: string,
+    childId: string,
+    blocks: CustodyCycleBlock[],
+    cycleStartDate: string,
+    switchHour: string
+  ) => Promise<void>;
   onCreateInvite: (teamId: string) => Promise<{ code: string; shareUrl: string }>;
   onFinish: () => void;
   /** Om användaren redan hunnit skapa familj/barn innan hen avbröt. */
   resumeTeamId?: string | null;
-  resumeHasChild?: boolean;
+  resumeChildId?: string | null;
+  resumeHasCycle?: boolean;
 }
 
 /**
- * Wizard: Skapa familj → Lägg till barn → Bjud in andra föräldern.
+ * Wizard: Skapa familj → Lägg till barn → Sätt upp schema → Bjud in andra
+ * föräldern.
  *
- * OBS ordningen: boendeschemat sätts INTE här. Ett schema pekar på båda
- * föräldrarnas uid:n, och andra föräldern finns inte förrän hen accepterat
- * inbjudan. Cykeln sätts därför upp efteråt, av CycleSetupScreen, när båda
- * är på plats — och då kan båda vara med och bestämma den, vilket är
- * rimligare för ett schema som rör dem lika mycket.
+ * Schemat kan sättas upp SOLO, innan den andra föräldern finns — de block
+ * som "tillhör" den föräldern pekar tillfälligt på platshållaren
+ * PENDING_PARTNER_ID istället för ett riktigt uid. Så fort inbjudan
+ * accepteras byts platshållaren automatiskt ut mot partnerns riktiga uid
+ * (se acceptParentInvite i lib/onboarding.ts) — schemat behöver alltså
+ * aldrig byggas om, bara "aktiveras" när partnern ansluter.
  */
 export default function OnboardingFlow(props: OnboardingFlowProps) {
   const [step, setStep] = useState<Step>(
-    props.resumeTeamId ? (props.resumeHasChild ? "invite" : "child") : "team"
+    props.resumeTeamId
+      ? props.resumeChildId
+        ? props.resumeHasCycle
+          ? "invite"
+          : "cycle"
+        : "child"
+      : "team"
   );
   const [teamId, setTeamId] = useState<string | null>(props.resumeTeamId ?? null);
+  const [childId, setChildId] = useState<string | null>(props.resumeChildId ?? null);
+  const [childName, setChildName] = useState<string>("");
   const [invite, setInvite] = useState<{ code: string; shareUrl: string } | null>(null);
 
   return (
@@ -48,7 +69,21 @@ export default function OnboardingFlow(props: OnboardingFlowProps) {
       {step === "child" && teamId && (
         <ChildStep
           onNext={async (name, birthYear) => {
-            await props.onAddChild(teamId, name, birthYear);
+            const result = await props.onAddChild(teamId, name, birthYear);
+            setChildId(result.childId);
+            setChildName(name);
+            setStep("cycle");
+          }}
+        />
+      )}
+
+      {step === "cycle" && teamId && childId && (
+        <CycleStep
+          childName={childName || "barnet"}
+          currentUserName={props.currentUserName}
+          currentUserUid={props.currentUserUid}
+          onSave={async (blocks, cycleStartDate, switchHour) => {
+            await props.onSetupCycle(teamId, childId, blocks, cycleStartDate, switchHour);
             setStep("invite");
           }}
         />
@@ -72,7 +107,7 @@ export default function OnboardingFlow(props: OnboardingFlowProps) {
 // ---------------------------------------------------------------------------
 
 function ProgressDots({ step }: { step: Step }) {
-  const order: Step[] = ["team", "child", "invite"];
+  const order: Step[] = ["team", "child", "cycle", "invite"];
   const index = order.indexOf(step);
   return (
     <div className="mb-8 flex justify-center gap-2">
@@ -167,6 +202,51 @@ function ChildStep({ onNext }: { onNext: (name: string, birthYear?: number) => P
   );
 }
 
+function CycleStep({
+  childName,
+  currentUserName,
+  currentUserUid,
+  onSave,
+}: {
+  childName: string;
+  currentUserName: string;
+  currentUserUid: string;
+  onSave: (blocks: CustodyCycleBlock[], cycleStartDate: string, switchHour: string) => Promise<void>;
+}) {
+  const [error, setError] = useState<string | null>(null);
+
+  // Andra föräldern finns inte än — schemat byggs med en platshållare som
+  // automatiskt ersätts av hens riktiga uid när inbjudan accepteras.
+  const parents: [CycleParent, CycleParent] = [
+    { id: currentUserUid, name: currentUserName },
+    { id: PENDING_PARTNER_ID, name: "Andra föräldern" },
+  ];
+
+  return (
+    <div>
+      <p className="mb-1 text-sm font-semibold uppercase tracking-wide text-rose-500">Nästan klart</p>
+      <h1 className="mb-2 text-2xl font-bold text-stone-800">Sätt upp schemat</h1>
+      <p className="mb-6 text-stone-500">
+        Ni kan sätta upp schemat redan nu — den andra föräldern kan bjudas in senare och schemat aktiveras
+        automatiskt när hen ansluter.
+      </p>
+      {error && <p className="mb-3 text-sm text-rose-600">{error}</p>}
+      <CustodyCycleBuilder
+        childName={childName}
+        parents={parents}
+        submitLabel="Spara och fortsätt"
+        onSave={async (blocks, cycleStartDate, switchHour) => {
+          try {
+            await onSave(blocks, cycleStartDate, switchHour);
+          } catch {
+            setError("Kunde inte spara schemat. Försök igen.");
+          }
+        }}
+      />
+    </div>
+  );
+}
+
 function InviteStep({
   invite,
   onCreateInvite,
@@ -207,7 +287,7 @@ function InviteStep({
     <div>
       <h1 className="mb-2 text-2xl font-bold text-stone-800">Bjud in andra föräldern</h1>
       <p className="mb-6 text-stone-500">
-        Boendeschemat sätts upp när ni båda är med, så ni kan bestämma det tillsammans.
+        Schemat är redan sparat och aktiveras automatiskt så fort hen ansluter.
       </p>
 
       {invite ? (
