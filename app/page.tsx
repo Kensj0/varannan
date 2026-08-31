@@ -25,6 +25,7 @@ import {
   respondToShiftRequest,
   proposeShiftRequestBatch,
   respondToShiftRequestBatch,
+  atSwitchHour,
 } from "../lib/calendarActions";
 import { sendChatMessage } from "../lib/chatActions";
 import {
@@ -431,7 +432,8 @@ export default function HomePage() {
             childId: activeChild.id,
             requestedBy: user!.uid,
             takingOverParentId,
-            startAt: date,
+            // Bytet sker vid schemats bytestid, inte midnatt.
+            startAt: atSwitchHour(date, cycle.switchHour),
           });
         }}
         onProposeShiftBatch={async (changes) => {

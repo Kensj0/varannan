@@ -123,14 +123,14 @@ function parseSwitchHour(switchHour: string): { hours: number; minutes: number }
 }
 
 /** Datumet vid bytestiden en given kalenderdag, t.ex. 27 aug 12:00. */
-function atSwitchHour(date: Date, switchHour: string): Date {
+export function atSwitchHour(date: Date, switchHour: string): Date {
   const { hours, minutes } = parseSwitchHour(switchHour);
   const d = new Date(date);
   d.setHours(hours, minutes, 0, 0);
   return d;
 }
 
-function addDays(date: Date, days: number): Date {
+export function addDays(date: Date, days: number): Date {
   const d = new Date(date);
   d.setDate(d.getDate() + days);
   return d;
