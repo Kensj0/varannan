@@ -4,6 +4,7 @@ import { useMemo, useRef, useState } from "react";
 import { CustodyCycleDoc, ShiftRequestDoc, EventDoc } from "../types/schema";
 import { getScheduledParentForDate } from "../lib/custodyCycle";
 import { expandEvents, EventOccurrence } from "../lib/recurrence";
+import { atSwitchHour, addDays } from "../lib/calendarActions";
 import DayActionModal from "./DayActionModal";
 
 interface ParentMeta {
@@ -36,6 +37,7 @@ interface CalendarViewProps {
 
 const WEEKDAY_LABELS = ["M", "T", "O", "T", "F", "L", "S"];
 const LONG_PRESS_MS = 500;
+const ONE_MINUTE_MS = 60 * 1000;
 
 export default function CalendarView({
   monthDate,
@@ -50,12 +52,16 @@ export default function CalendarView({
 }: CalendarViewProps) {
   const [activeDay, setActiveDay] = useState<Date | null>(null);
   const [parentA, parentB] = parents;
+  const switchHour = cycle.switchHour;
 
-  // ---- Ändringsläge: håll in en dag för att gå in, tryck fler dagar för
-  // att måla om dem, "förskjut" flyttar hela urvalet en dag, "Skicka
-  // förslag" skickar allt som EN batch-förfrågan till andra föräldern. ----
+  // ---- Ändringsläge: håll in en dag för att gå in. "Förskjut" flyttar
+  // HELA det synliga schemat (varje dag) ett dygn i taget — inte bara
+  // enskilt markerade dagar. Man kan också trycka på enskilda dagar för
+  // att rätta dem ytterligare ovanpå förskjutningen. "Skicka förslag"
+  // skickar alla dagar som faktiskt ändrats som EN samlad batch. ----
   const [editMode, setEditMode] = useState(false);
-  const [pendingChanges, setPendingChanges] = useState<Map<string, DayChange>>(new Map());
+  const [shiftOffsetDays, setShiftOffsetDays] = useState(0);
+  const [dayOverrides, setDayOverrides] = useState<Map<string, DayChange>>(new Map());
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -82,45 +88,60 @@ export default function CalendarView({
     return map;
   }, [events, monthDate]);
 
-  function parentFor(day: Date): ParentMeta {
-    // Godkända shiftRequests trumfar den fasta cykeln för de dagar de täcker.
-    const override = approvedShiftRequests.find((r) => isDateWithinShift(day, r));
-    const parentId = override ? override.takingOverParentId : getScheduledParentForDate(cycle, atNoon(day)).parentId;
+  function parentMetaFor(parentId: string): ParentMeta {
     return parents.find((p) => p.id === parentId) ?? parents[0];
   }
 
-  function displayParentFor(day: Date): ParentMeta {
-    const pending = pendingChanges.get(dayKey(day));
-    if (!pending) return parentFor(day);
-    return parents.find((p) => p.id === pending.takingOverParentId) ?? parents[0];
+  /** Vem som HAR ansvaret vid en given tidpunkt enligt fasta cykeln + godkända byten. */
+  function originalParentAt(instant: Date): ParentMeta {
+    const override = approvedShiftRequests.find((r) => isInstantWithinShift(instant, r));
+    const parentId = override ? override.takingOverParentId : getScheduledParentForDate(cycle, instant).parentId;
+    return parentMetaFor(parentId);
+  }
+
+  /**
+   * Vem som SKA visas vid en given tidpunkt i ändringsläget: en
+   * uttrycklig dagrättelse (dayOverrides) vinner, annars den
+   * förskjutna versionen av det ursprungliga schemat.
+   */
+  function previewParentAt(instant: Date): ParentMeta {
+    const segDay = segmentDayFor(instant, switchHour);
+    const explicit = dayOverrides.get(dayKey(segDay));
+    if (explicit) return parentMetaFor(explicit.takingOverParentId);
+    return originalParentAt(addDays(instant, -shiftOffsetDays));
+  }
+
+  function displayParentAt(instant: Date): ParentMeta {
+    return editMode ? previewParentAt(instant) : originalParentAt(instant);
+  }
+
+  /** Förälder för dagens EFTERMIDDAG (dagens "segment", från bytestiden och framåt). */
+  function afternoonParent(day: Date, preview: boolean): ParentMeta {
+    const instant = atSwitchHour(day, switchHour);
+    return preview ? previewParentAt(instant) : originalParentAt(instant);
+  }
+
+  /** Förälder för dagens MORGON (gårdagens segment, som varar fram till bytestiden). */
+  function morningParent(day: Date, preview: boolean): ParentMeta {
+    const instant = new Date(atSwitchHour(day, switchHour).getTime() - ONE_MINUTE_MS);
+    return preview ? previewParentAt(instant) : originalParentAt(instant);
   }
 
   function toggleDay(day: Date) {
+    const instant = atSwitchHour(day, switchHour);
+    const original = originalParentAt(addDays(instant, -shiftOffsetDays)).id;
+    const currentPreview = previewParentAt(instant).id;
+    const next = currentPreview === parentA.id ? parentB.id : parentA.id;
     const key = dayKey(day);
-    const original = parentFor(day).id;
-    const current = pendingChanges.get(key)?.takingOverParentId ?? original;
-    const next = current === parentA.id ? parentB.id : parentA.id;
 
-    setPendingChanges((prev) => {
+    setDayOverrides((prev) => {
       const copy = new Map(prev);
       if (next === original) {
-        // Tillbaka till hur det redan var — inget att skicka för den dagen.
         copy.delete(key);
       } else {
         copy.set(key, { date: day, takingOverParentId: next });
       }
       return copy;
-    });
-  }
-
-  function shiftPendingChanges(direction: -1 | 1) {
-    setPendingChanges((prev) => {
-      const next = new Map<string, DayChange>();
-      for (const change of prev.values()) {
-        const shifted = addDays(change.date, direction);
-        next.set(dayKey(shifted), { date: shifted, takingOverParentId: change.takingOverParentId });
-      }
-      return next;
     });
   }
 
@@ -142,7 +163,6 @@ export default function CalendarView({
 
   function handleDayClick(day: Date) {
     if (longPressFired.current) {
-      // Långtrycket redan hanterade den här interaktionen.
       longPressFired.current = false;
       return;
     }
@@ -155,15 +175,36 @@ export default function CalendarView({
 
   function exitEditMode() {
     setEditMode(false);
-    setPendingChanges(new Map());
+    setShiftOffsetDays(0);
+    setDayOverrides(new Map());
     setSubmitError(null);
   }
+
+  const visibleDays = useMemo(() => weeks.flat().filter((d): d is Date => d !== null), [weeks]);
+
+  // Vilka dagar som faktiskt skiljer sig från originalschemat just nu
+  // (förskjutning + enskilda rättelser tillsammans) — det här är exakt
+  // det som skickas när man trycker "Skicka förslag".
+  const pendingChangesSummary = useMemo(() => {
+    if (!editMode) return [] as DayChange[];
+    const changes: DayChange[] = [];
+    for (const day of visibleDays) {
+      const instant = atSwitchHour(day, switchHour);
+      const original = originalParentAt(instant).id;
+      const preview = previewParentAt(instant).id;
+      if (original !== preview) {
+        changes.push({ date: day, takingOverParentId: preview });
+      }
+    }
+    return changes;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editMode, visibleDays, shiftOffsetDays, dayOverrides, switchHour, cycle, approvedShiftRequests]);
 
   async function submitChanges() {
     setSubmitting(true);
     setSubmitError(null);
     try {
-      await onProposeShiftBatch(Array.from(pendingChanges.values()));
+      await onProposeShiftBatch(pendingChangesSummary);
       exitEditMode();
     } catch {
       setSubmitError("Kunde inte skicka förslaget. Försök igen.");
@@ -182,23 +223,23 @@ export default function CalendarView({
       {editMode && (
         <div className="flex items-center justify-between border-t border-rose-100 bg-rose-50 px-5 py-2">
           <p className="text-xs font-semibold text-rose-600">
-            Ändringsläge — tryck på dagar för att byta förälder
+            Ändringsläge — tryck på dagar för att rätta, eller förskjut hela schemat
           </p>
           <div className="flex items-center gap-1">
             <button
-              onClick={() => shiftPendingChanges(-1)}
-              disabled={pendingChanges.size === 0}
-              aria-label="Förskjut en dag bakåt"
-              className="rounded-full bg-white px-2 py-1 text-rose-500 shadow-sm disabled:opacity-30"
+              onClick={() => setShiftOffsetDays((d) => d - 1)}
+              aria-label="Förskjut hela schemat en dag bakåt"
+              className="rounded-full bg-white px-2 py-1 text-rose-500 shadow-sm"
             >
               ←
             </button>
-            <span className="px-1 text-[11px] font-semibold uppercase text-rose-400">Förskjut</span>
+            <span className="px-1 text-[11px] font-semibold uppercase text-rose-400">
+              Förskjut{shiftOffsetDays !== 0 ? ` (${shiftOffsetDays > 0 ? "+" : ""}${shiftOffsetDays})` : ""}
+            </span>
             <button
-              onClick={() => shiftPendingChanges(1)}
-              disabled={pendingChanges.size === 0}
-              aria-label="Förskjut en dag framåt"
-              className="rounded-full bg-white px-2 py-1 text-rose-500 shadow-sm disabled:opacity-30"
+              onClick={() => setShiftOffsetDays((d) => d + 1)}
+              aria-label="Förskjut hela schemat en dag framåt"
+              className="rounded-full bg-white px-2 py-1 text-rose-500 shadow-sm"
             >
               →
             </button>
@@ -217,8 +258,12 @@ export default function CalendarView({
       <div className="grid grid-cols-7">
         {weeks.flat().map((day, i) => {
           if (!day) return <div key={i} className="h-24 border border-stone-50" />;
-          const meta = displayParentFor(day);
-          const isPending = pendingChanges.has(dayKey(day));
+
+          const morning = morningParent(day, editMode);
+          const afternoon = afternoonParent(day, editMode);
+          const isChanged =
+            editMode &&
+            (morning.id !== morningParent(day, false).id || afternoon.id !== afternoonParent(day, false).id);
           const isToday = isSameDay(day, new Date());
           const dayEvents = eventsByDay.get(dayKey(day)) ?? [];
 
@@ -230,13 +275,19 @@ export default function CalendarView({
               onPointerLeave={cancelLongPress}
               onPointerCancel={cancelLongPress}
               onClick={() => handleDayClick(day)}
-              className={`relative h-24 border p-1.5 text-left align-top transition hover:bg-stone-50 ${
-                isPending ? "border-rose-300 ring-2 ring-inset ring-rose-300" : "border-stone-50"
-              } ${isToday && !isPending ? "ring-2 ring-inset ring-rose-400" : ""}`}
+              className={`relative h-24 overflow-hidden border p-1.5 text-left align-top transition hover:opacity-90 ${
+                isChanged ? "border-rose-300 ring-2 ring-inset ring-rose-300" : "border-stone-50"
+              } ${isToday && !isChanged ? "ring-2 ring-inset ring-rose-400" : ""}`}
             >
-              <span className="text-sm font-semibold text-stone-700">{day.getDate()}</span>
+              {/* Halvdags-bakgrund: bytet sker vid switchHour, inte midnatt. */}
+              <div className="absolute inset-0 flex flex-col">
+                <div className={`${morning.color} opacity-25`} style={{ height: `${switchHourPct(switchHour)}%` }} />
+                <div className={`${afternoon.color} flex-1 opacity-25`} />
+              </div>
 
-              <span className="mt-0.5 block space-y-0.5">
+              <span className="relative text-sm font-semibold text-stone-700">{day.getDate()}</span>
+
+              <span className="relative mt-0.5 block space-y-0.5">
                 {dayEvents.slice(0, 2).map((occurrence) => (
                   <span
                     key={occurrence.occurrenceId}
@@ -252,12 +303,19 @@ export default function CalendarView({
                 )}
               </span>
 
-              <span
-                className={`absolute inset-x-1 bottom-1.5 truncate rounded-full px-2 py-0.5 text-[10px] font-semibold text-white ${meta.color} ${
-                  isPending ? "outline outline-2 outline-white" : ""
-                }`}
-              >
-                {meta.name}
+              <span className="absolute inset-x-1 bottom-1.5 flex gap-0.5">
+                <span
+                  title={`Morgon (till ${switchHour}): ${morning.name}`}
+                  className={`flex-1 truncate rounded-full px-1.5 py-0.5 text-[9px] font-semibold text-white ${morning.color}`}
+                >
+                  {morning.name}
+                </span>
+                <span
+                  title={`Från ${switchHour}: ${afternoon.name}`}
+                  className={`flex-1 truncate rounded-full px-1.5 py-0.5 text-[9px] font-semibold text-white ${afternoon.color}`}
+                >
+                  {afternoon.name}
+                </span>
               </span>
             </button>
           );
@@ -271,8 +329,11 @@ export default function CalendarView({
           </button>
           <div className="flex-1" />
           {submitError && <p className="text-xs text-rose-600">{submitError}</p>}
+          {pendingChangesSummary.length > 0 && (
+            <span className="text-xs text-stone-400">{pendingChangesSummary.length} ändrade dagar</span>
+          )}
           <button
-            disabled={pendingChanges.size === 0 || submitting}
+            disabled={pendingChangesSummary.length === 0 || submitting}
             onClick={submitChanges}
             className="rounded-full bg-rose-500 px-5 py-2 text-sm font-semibold text-white disabled:opacity-40"
           >
@@ -285,8 +346,10 @@ export default function CalendarView({
         <DayActionModal
           date={activeDay}
           childName={childName}
-          otherParent={parents.find((p) => p.id !== parentFor(activeDay).id) ?? parents[1]}
-          scheduledParent={parentFor(activeDay)}
+          otherParent={
+            parents.find((p) => p.id !== afternoonParent(activeDay, false).id) ?? parents[1]
+          }
+          scheduledParent={afternoonParent(activeDay, false)}
           cycle={cycle}
           onClose={() => setActiveDay(null)}
           onCreateActivity={(date, title, recurring) => {
@@ -331,26 +394,31 @@ function dayKey(date: Date): string {
   return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
 }
 
-function atNoon(date: Date): Date {
-  const d = new Date(date);
-  d.setHours(12, 0, 0, 0);
-  return d;
-}
-
-function addDays(date: Date, days: number): Date {
-  const d = new Date(date);
-  d.setDate(d.getDate() + days);
-  return d;
-}
-
 function isSameDay(a: Date, b: Date): boolean {
   return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
 }
 
-function isDateWithinShift(day: Date, request: ShiftRequestDoc): boolean {
+function isInstantWithinShift(instant: Date, request: ShiftRequestDoc): boolean {
   const start = new Date(request.startAt.seconds * 1000);
   const end = request.endAt ? new Date(request.endAt.seconds * 1000) : null;
-  const noon = atNoon(day);
-  if (end) return noon >= start && noon < end;
-  return noon >= start; // öppen tills nästa ordinarie byte hanteras vid render av override-listan
+  if (end) return instant >= start && instant < end;
+  return instant >= start;
+}
+
+/**
+ * Vilken "segment-dag" en tidpunkt hör till: dygnet [switchHour(D),
+ * switchHour(D+1)) hör till D. En tidpunkt före dagens switchHour hör
+ * alltså till FÖREGÅENDE dags segment.
+ */
+function segmentDayFor(instant: Date, switchHour: string): Date {
+  const midnight = new Date(instant.getFullYear(), instant.getMonth(), instant.getDate());
+  const boundary = atSwitchHour(midnight, switchHour);
+  return instant < boundary ? addDays(midnight, -1) : midnight;
+}
+
+/** Hur stor andel (%) av dygnet som ligger FÖRE bytestiden. */
+function switchHourPct(switchHour: string): number {
+  const [h, m] = switchHour.split(":").map(Number);
+  const minutes = (h ?? 12) * 60 + (m ?? 0);
+  return Math.min(100, Math.max(0, (minutes / 1440) * 100));
 }
