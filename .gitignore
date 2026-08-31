@@ -7,3 +7,10 @@ functions/lib/
 .firebase/
 *.tsbuildinfo
 public/firebase-messaging-sw.js
+
+# Skyddar mot att ett manuellt/felaktigt tsc-kommando (utan rätt outDir)
+# lämnar kompilerade .js-filer bredvid källkoden i lib/ eller types/ —
+# webpack kan då plocka upp den gamla .js-filen istället för .ts-filen,
+# vilket gav "not exported"-varningar och en trasig prod-build tidigare.
+lib/*.js
+types/*.js
