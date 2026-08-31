@@ -20,14 +20,14 @@ import { createFamilyTeam, createInvite, addChild, saveCustodyCycle } from "../.
  * har lyssnarna. Tidigare låg den logiken bara som en återvändsgränd
  * med en utloggningsknapp.
  *
- * Undantag: /join/[code] hanterar sitt eget flöde, eftersom man kan bli
+ * Undantag: /join hanterar sitt eget flöde, eftersom man kan bli
  * inbjuden innan man har ett konto.
  */
 export default function AuthGate({ children }: { children: ReactNode }) {
   const { user, userDoc, loading, refreshUserDoc } = useAuth();
   const pathname = usePathname();
 
-  if (pathname?.startsWith("/join/")) {
+  if (pathname === "/join") {
     return <>{children}</>;
   }
 

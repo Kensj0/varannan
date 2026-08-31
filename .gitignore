@@ -6,3 +6,4 @@ out/
 functions/lib/
 .firebase/
 *.tsbuildinfo
+public/firebase-messaging-sw.js

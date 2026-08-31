@@ -1,18 +1,25 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
-import { useAuth } from "../../../lib/auth/AuthProvider";
-import LoginForm from "../../../components/auth/LoginForm";
-import { acceptInvite } from "../../../lib/onboardingClient";
+import { Suspense, useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useAuth } from "../../lib/auth/AuthProvider";
+import LoginForm from "../../components/auth/LoginForm";
+import { acceptInvite } from "../../lib/onboardingClient";
 
 type Status = "checking" | "confirm-switch" | "accepting" | "success" | "error";
 
 /**
- * app/join/[code]/page.tsx
- * ------------------------
- * Länken från InviteStep (t.ex. https://varannan.app/join/AB12CD).
- * AuthGate släpper igenom /join/* utan att köra sin vanliga
+ * app/join/page.tsx
+ * ------------------
+ * Länken från InviteStep (t.ex. https://varannan.app/join?code=AB12CD).
+ * Ligger på en statisk path med koden som query-param istället för en
+ * dynamisk route-segment (/join/[code]) — det senare kräver att Next.js
+ * känner till alla giltiga koder vid byggtillfället (annars går det inte
+ * att göra en statisk export), vilket inte är möjligt eftersom koder
+ * skapas i realtid. Sidan är redan helt klientrenderad, så det påverkar
+ * inte flödet — bara URL-formen.
+ *
+ * AuthGate släpper igenom /join utan att köra sin vanliga
  * login/onboarding-gating (se components/auth/AuthGate.tsx), så den
  * här sidan äger hela flödet själv:
  *
@@ -21,14 +28,22 @@ type Status = "checking" | "confirm-switch" | "accepting" | "success" | "error";
  *   3. Inloggad, inget team → acceptera direkt.
  */
 export default function JoinPage() {
-  const params = useParams<{ code: string }>();
+  return (
+    <Suspense fallback={<Centered>Laddar…</Centered>}>
+      <JoinPageInner />
+    </Suspense>
+  );
+}
+
+function JoinPageInner() {
+  const searchParams = useSearchParams();
   const router = useRouter();
   const { user, userDoc, loading, refreshUserDoc } = useAuth();
 
   const [status, setStatus] = useState<Status>("checking");
   const [error, setError] = useState<string | null>(null);
 
-  const code = (params.code ?? "").toUpperCase();
+  const code = (searchParams.get("code") ?? "").toUpperCase();
 
   useEffect(() => {
     if (loading || !user) return;
@@ -55,6 +70,18 @@ export default function JoinPage() {
       setStatus("error");
       setError(mapAcceptError(err));
     }
+  }
+
+  if (!code) {
+    return (
+      <Centered>
+        <h1 className="mb-2 text-xl font-bold text-stone-800">Ogiltig länk</h1>
+        <p className="mb-6 text-stone-500">Länken saknar en inbjudningskod.</p>
+        <button onClick={() => router.replace("/")} className="w-full py-2 text-sm text-stone-400">
+          Till startsidan
+        </button>
+      </Centered>
+    );
   }
 
   if (loading) {
