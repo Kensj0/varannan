@@ -37,6 +37,7 @@ export default function PackListView({
 }: PackListViewProps) {
   const [newListTitle, setNewListTitle] = useState("");
   const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
 
   // Markera listor som sedda när de visas för den andra föräldern.
   useEffect(() => {
@@ -77,6 +78,8 @@ export default function PackListView({
         ))}
       </div>
 
+      {createError && <p className="text-sm text-rose-600 mb-2">{createError}</p>}
+      
       <div className="mt-4 flex gap-2">
         <input
           value={newListTitle}
@@ -88,9 +91,15 @@ export default function PackListView({
           disabled={!newListTitle.trim() || creating}
           onClick={async () => {
             setCreating(true);
-            await onCreateList(newListTitle.trim());
-            setNewListTitle("");
-            setCreating(false);
+            setCreateError(null);
+            try {
+              await onCreateList(newListTitle.trim());
+              setNewListTitle("");
+            } catch (err) {
+              setCreateError((err instanceof Error ? err.message : "Kunde inte skapa listan"));
+            } finally {
+              setCreating(false);
+            }
           }}
           className="rounded-lg bg-rose-500 px-4 text-sm font-semibold text-white disabled:opacity-40"
         >
@@ -117,6 +126,22 @@ function PackListCard({
   onRemoveItem: (list: PackListDoc, itemId: string) => Promise<void>;
 }) {
   const [newItem, setNewItem] = useState("");
+  const [addingItem, setAddingItem] = useState(false);
+  const [addError, setAddError] = useState<string | null>(null);
+  
+  async function handleAddItem() {
+    if (!newItem.trim()) return;
+    setAddingItem(true);
+    setAddError(null);
+    try {
+      await onAddItem(list, newItem.trim());
+      setNewItem("");
+    } catch (err) {
+      setAddError(err instanceof Error ? err.message : "Kunde inte lägga till");
+    } finally {
+      setAddingItem(false);
+    }
+  }
   const packed = list.items.filter((i) => i.checked).length;
   const seenByOthers = list.seenBy.filter((uid) => uid !== currentUserId);
 
@@ -155,19 +180,28 @@ function PackListCard({
         ))}
       </ul>
 
+      {addError && <p className="text-[11px] text-rose-600 mt-2">{addError}</p>}
+      
       <div className="mt-2 flex gap-2">
         <input
           value={newItem}
           onChange={(e) => setNewItem(e.target.value)}
-          onKeyDown={async (e) => {
-            if (e.key === "Enter" && newItem.trim()) {
-              await onAddItem(list, newItem.trim());
-              setNewItem("");
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && newItem.trim() && !addingItem) {
+              void handleAddItem();
             }
           }}
+          disabled={addingItem}
           placeholder="Lägg till sak"
-          className="flex-1 rounded-lg bg-stone-50 px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-rose-400"
+          className="flex-1 rounded-lg bg-stone-50 px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-rose-400 disabled:opacity-50"
         />
+        <button
+          onClick={handleAddItem}
+          disabled={!newItem.trim() || addingItem}
+          className="rounded-lg bg-rose-500 px-3 text-sm font-semibold text-white disabled:opacity-40"
+        >
+          {addingItem ? "…" : "Lägg till"}
+        </button>
       </div>
 
       {seenByOthers.length > 0 && (
