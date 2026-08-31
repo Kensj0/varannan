@@ -66,9 +66,21 @@ import CycleSetupScreen from "../components/onboarding/CycleSetupScreen";
 import InvitePartnerBanner from "../components/onboarding/InvitePartnerBanner";
 import AddFirstChildScreen from "../components/onboarding/AddFirstChildScreen";
 import { createInvite, addChild, saveCustodyCycle } from "../lib/onboardingClient";
-import { PENDING_PARTNER_ID, DEFAULT_HANDOFF_REMINDER_PREFS } from "../types/schema";
+import {
+  PENDING_PARTNER_ID,
+  DEFAULT_HANDOFF_REMINDER_PREFS,
+  parentColorHex,
+  ParentColorId,
+} from "../types/schema";
+import {
+  buildFeedLinks,
+  getCalendarFeedToken,
+  createCalendarFeedToken,
+  updateParentColor,
+  CalendarFeedLinks,
+} from "../lib/calendarExport";
 
-const PARENT_COLORS = ["bg-rose-500", "bg-sky-500"];
+
 
 type Tab = "calendar" | "packlist" | "notes" | "todo" | "info" | "accounts" | "chat";
 
@@ -118,6 +130,7 @@ export default function HomePage() {
     if (!user) return;
     await updateHandoffReminderPrefs(user.uid, prefs);
   }
+
   const teamId = userDoc?.teamId ?? null;
 
   const { data: team } = useTeam(teamId);
@@ -129,6 +142,38 @@ export default function HomePage() {
 
   // Välj första barnet automatiskt så fort listan laddats.
   const activeChildId = selectedChildId ?? children[0]?.id ?? null;
+
+  // Prenumerationslänken (ICS) hämtas lat: bara när teamet och barnet är
+  // kända, och bara om ett token redan skapats — annars får man knappen
+  // "Skapa prenumerationslänk" i inställningspanelen istället.
+  const [feedToken, setFeedToken] = useState<string | null>(null);
+  useEffect(() => {
+    if (!teamId || !activeChildId) return;
+    let cancelled = false;
+    getCalendarFeedToken(teamId, activeChildId)
+      .then((token) => {
+        if (!cancelled) setFeedToken(token);
+      })
+      .catch(() => {
+        /* saknad länk är inget fel — knappen visas istället */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [teamId, activeChildId]);
+
+  const feedLinks: CalendarFeedLinks | null =
+    teamId && activeChildId && feedToken ? buildFeedLinks(teamId, activeChildId, feedToken) : null;
+
+  async function handleCreateFeed() {
+    if (!teamId || !activeChildId) return;
+    setFeedToken(await createCalendarFeedToken(teamId, activeChildId));
+  }
+
+  async function handleSelectColor(colorId: ParentColorId) {
+    if (!teamId) return;
+    await updateParentColor(teamId, colorId);
+  }
   const activeChild = children.find((c) => c.id === activeChildId) ?? null;
 
   const { data: cycle } = useCustodyCycle(teamId, activeChildId);
@@ -153,7 +198,7 @@ export default function HomePage() {
       name:
         team?.parentProfiles?.[id]?.displayName ??
         (id === user?.uid ? user?.displayName ?? "Du" : "Andra föräldern"),
-      color: PARENT_COLORS[i % PARENT_COLORS.length],
+      color: parentColorHex(team?.parentProfiles?.[id]?.colorId, i),
     }));
     // Andra föräldern har inte anslutit än — fyll ut med en platshållare
     // så resten av vyn (färger, "otherParentId" m.m.) alltid kan anta att
@@ -162,7 +207,7 @@ export default function HomePage() {
       real.push({
         id: PENDING_PARTNER_ID,
         name: "Väntar på inbjudan",
-        color: PARENT_COLORS[real.length % PARENT_COLORS.length],
+        color: parentColorHex(undefined, real.length),
       });
     }
     return real;
@@ -462,6 +507,13 @@ export default function HomePage() {
         onEnablePush={enablePushNotifications}
         reminderPrefs={reminderPrefs}
         onUpdateReminderPrefs={handleUpdateReminderPrefs}
+        myColorId={team?.parentProfiles?.[user!.uid]?.colorId}
+        onSelectColor={handleSelectColor}
+        otherParentColorHex={
+          (parents.find((p) => p.id !== user!.uid) ?? parents[1]).color
+        }
+        feedLinks={feedLinks}
+        onCreateFeed={handleCreateFeed}
       />
       </>
       )}

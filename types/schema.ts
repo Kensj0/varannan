@@ -63,6 +63,35 @@ export interface TeamParentProfile {
   uid: string;
   displayName: string;
   avatarUrl?: string;
+  /**
+   * Vald schemafärg (id ur PARENT_PALETTE). Saknas = fall tillbaka på
+   * platsens standardfärg, så gamla team fortsätter se ut som förut.
+   */
+  colorId?: ParentColorId;
+}
+
+/**
+ * Sex färger att välja mellan för föräldrarnas scheman. Hexvärdena är
+ * Google Calendars egna kalenderfärger, så att ett exporterat/prenumererat
+ * schema ser likadant ut i appen som i Google Calendar.
+ */
+export const PARENT_PALETTE = [
+  { id: "tomato", label: "Tomat", hex: "#D50000" },
+  { id: "tangerine", label: "Mandarin", hex: "#F4511E" },
+  { id: "banana", label: "Banan", hex: "#F6BF26" },
+  { id: "basil", label: "Basilika", hex: "#0B8043" },
+  { id: "peacock", label: "Påfågel", hex: "#039BE5" },
+  { id: "grape", label: "Vindruva", hex: "#8E24AA" },
+] as const;
+
+export type ParentColorId = (typeof PARENT_PALETTE)[number]["id"];
+
+/** Förvald färg per plats i parentIds, när ingen egen färg valts. */
+export const DEFAULT_PARENT_COLOR_IDS: ParentColorId[] = ["tomato", "peacock"];
+
+export function parentColorHex(colorId: ParentColorId | undefined, fallbackIndex: number): string {
+  const id = colorId ?? DEFAULT_PARENT_COLOR_IDS[fallbackIndex % DEFAULT_PARENT_COLOR_IDS.length];
+  return (PARENT_PALETTE.find((c) => c.id === id) ?? PARENT_PALETTE[0]).hex;
 }
 
 export interface TeamDoc {
@@ -78,6 +107,11 @@ export interface TeamDoc {
    */
   parentProfiles: Record<string, TeamParentProfile>;
   childIds: string[];
+  /**
+   * Hemliga prenumerationstoken per barn för ICS-flödet (se
+   * functions/src/calendarFeed.ts). Skrivs bara av Cloud Functions.
+   */
+  calendarFeedTokens?: Record<string /* childId */, string>;
   createdAt: FirestoreTimestamp;
   createdBy: string;
 }

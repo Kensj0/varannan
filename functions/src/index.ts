@@ -48,6 +48,7 @@ import { createOnboardingAdapter } from "./onboardingAdapter";
 import { sendPushToUser, sendPushToUsers } from "./notifications";
 
 export { sendHandoffReminders } from "./handoffReminders";
+export { calendarFeed, createCalendarFeedToken, setParentColor } from "./calendarFeed";
 
 admin.initializeApp();
 const db = admin.firestore();
