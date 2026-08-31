@@ -55,6 +55,9 @@ import {
   deleteChildAccount,
 } from "../lib/childInfoActions";
 import CalendarView from "../components/CalendarView";
+import BottomNav, { AppSection } from "../components/BottomNav";
+import SubTabs from "../components/SubTabs";
+import SettingsView from "../components/SettingsView";
 import BalanceCard from "../components/BalanceCard";
 import PendingShiftRequests from "../components/PendingShiftRequests";
 import ChatView from "../components/ChatView";
@@ -84,20 +87,22 @@ import {
 
 
 
-type Tab = "calendar" | "packlist" | "notes" | "todo" | "info" | "accounts" | "chat";
+type ListSubTab = "packlist" | "notes" | "todo";
+type InfoSubTab = "childinfo" | "accounts";
 
-const TAB_LABELS: Record<Tab, string> = {
-  calendar: "Kalender",
-  packlist: "Packlista",
-  notes: "Notes",
-  todo: "Todo",
-  info: "Barninfo",
-  accounts: "Konton",
-  chat: "Chatt",
-};
+const LIST_SUB_TABS: { id: ListSubTab; label: string }[] = [
+  { id: "packlist", label: "Packlista" },
+  { id: "notes", label: "Notes" },
+  { id: "todo", label: "Todo" },
+];
+
+const INFO_SUB_TABS: { id: InfoSubTab; label: string }[] = [
+  { id: "childinfo", label: "Barninfo" },
+  { id: "accounts", label: "Konton" },
+];
 
 export default function HomePage() {
-  const { user, userDoc, signOutUser } = useAuth();
+  const { user, userDoc, signOutUser, resetPassword } = useAuth();
 
   // Push-notiser: fråga om lov och visa en banderoll om pushar som
   // kommer in medan fliken redan är öppen (då visar inte webbläsaren
@@ -140,7 +145,9 @@ export default function HomePage() {
 
   const [selectedChildId, setSelectedChildId] = useState<string | null>(null);
   const [monthDate, setMonthDate] = useState(() => new Date());
-  const [tab, setTab] = useState<Tab>("calendar");
+  const [section, setSection] = useState<AppSection>("calendar");
+  const [listSubTab, setListSubTab] = useState<ListSubTab>("packlist");
+  const [infoSubTab, setInfoSubTab] = useState<InfoSubTab>("childinfo");
 
   // Välj första barnet automatiskt så fort listan laddats.
   const activeChildId = selectedChildId ?? children[0]?.id ?? null;
@@ -285,8 +292,10 @@ export default function HomePage() {
 
   const otherParentId = parents.find((p) => p.id !== balance?.referenceParentId)?.id ?? parents[1].id;
 
+  const showChildChips = children.length > 1 && section !== "chat" && section !== "settings";
+
   return (
-    <main className="mx-auto max-w-md px-4 py-6">
+    <div className="fixed inset-0 flex flex-col bg-stone-50">
       {pushToast && (
         <div className="fixed left-1/2 top-3 z-50 w-[calc(100%-2rem)] max-w-sm -translate-x-1/2 rounded-xl bg-stone-800 px-4 py-3 text-white shadow-lg">
           <p className="text-sm font-semibold">{pushToast.title}</p>
@@ -294,245 +303,263 @@ export default function HomePage() {
         </div>
       )}
 
-      <header className="mb-4 flex items-center justify-between">
-        <h1 className="text-xl font-bold text-stone-800">Varannan</h1>
-        <button onClick={signOutUser} className="text-sm text-stone-400 hover:text-rose-500">
-          Logga ut
-        </button>
+      <header className="shrink-0 border-b border-stone-200 bg-white px-4 pt-3 pb-2">
+        <div className="mx-auto flex w-full max-w-md items-center justify-between">
+          <h1 className="text-lg font-bold text-stone-800">Varannan</h1>
+          <span className="text-xs text-stone-400">{activeChild.name}s schema</span>
+        </div>
+
+        {showChildChips && (
+          <div className="mx-auto mt-2 flex w-full max-w-md gap-2 overflow-x-auto">
+            {children.map((child) => (
+              <button
+                key={child.id}
+                onClick={() => setSelectedChildId(child.id)}
+                className={`whitespace-nowrap rounded-full px-3 py-1 text-xs font-medium ${
+                  child.id === activeChildId ? "bg-rose-500 text-white" : "bg-stone-100 text-stone-600"
+                }`}
+              >
+                {child.name}
+              </button>
+            ))}
+          </div>
+        )}
       </header>
 
-      {pushPermission === "default" && (
-        <button
-          onClick={enablePushNotifications}
-          className="mb-4 w-full rounded-xl bg-sky-50 px-4 py-3 text-left text-sm font-medium text-sky-700 hover:bg-sky-100"
-        >
-          Aktivera notiser för byten och inbjudningar →
-        </button>
-      )}
+      <div className="mx-auto flex w-full max-w-md flex-1 flex-col overflow-hidden">
+        {(pushPermission === "default" || !hasPartner) && (
+          <div className="shrink-0 px-4 pt-3">
+            {pushPermission === "default" && (
+              <button
+                onClick={enablePushNotifications}
+                className="mb-3 w-full rounded-xl bg-sky-50 px-4 py-3 text-left text-sm font-medium text-sky-700 hover:bg-sky-100"
+              >
+                Aktivera notiser för byten och inbjudningar →
+              </button>
+            )}
+            {!hasPartner && (
+              <InvitePartnerBanner teamName={team?.name} onCreateInvite={() => createInvite(teamId!)} />
+            )}
+          </div>
+        )}
 
-      {!hasPartner && (
-        <InvitePartnerBanner teamName={team?.name} onCreateInvite={() => createInvite(teamId!)} />
-      )}
+        {section === "chat" ? (
+          <div className="flex flex-1 flex-col overflow-hidden px-4 py-3">
+            <ChatView
+              messages={chatMessages}
+              currentUserId={user!.uid}
+              parentNames={parentNames}
+              shiftRequestsById={allShiftRequests}
+              childName={activeChild.name}
+              onSend={async (text) => {
+                await sendChatMessage({ teamId: teamId!, senderId: user!.uid, text });
+              }}
+            />
+          </div>
+        ) : (
+          <div className="flex-1 overflow-y-auto px-4 py-3">
+            {section === "lists" && (
+              <>
+                <SubTabs tabs={LIST_SUB_TABS} active={listSubTab} onChange={(id) => setListSubTab(id as ListSubTab)} />
 
-      <nav className="mb-4 flex gap-1 overflow-x-auto rounded-full bg-white p-1">
-        {(Object.keys(TAB_LABELS) as Tab[]).map((t) => (
-          <button
-            key={t}
-            onClick={() => setTab(t)}
-            className={`flex-1 whitespace-nowrap rounded-full px-3 py-2 text-sm font-semibold transition ${
-              tab === t ? "bg-rose-500 text-white" : "text-stone-500"
-            }`}
-          >
-            {TAB_LABELS[t]}
-          </button>
-        ))}
-      </nav>
+                {listSubTab === "packlist" && (
+                  <PackListView
+                    lists={packLists}
+                    currentUserId={user!.uid}
+                    parentNames={parentNames}
+                    childName={activeChild.name}
+                    nextOrdinaryHandoff={getNextOrdinaryHandoff(cycle, new Date())}
+                    onCreateList={async (title) => {
+                      await createPackList({
+                        teamId: teamId!,
+                        childId: activeChild.id,
+                        title,
+                        createdBy: user!.uid,
+                      });
+                    }}
+                    onAddItem={(list, name) => addPackListItem(teamId!, list, name)}
+                    onToggleItem={(list, itemId) => togglePackListItem(teamId!, list, itemId, user!.uid)}
+                    onRemoveItem={(list, itemId) => removePackListItem(teamId!, list, itemId)}
+                    onMarkSeen={(listId) => markPackListSeen(teamId!, listId, user!.uid)}
+                    onDeleteList={(listId) => deletePackList(teamId!, listId)}
+                  />
+                )}
 
-      {children.length > 1 && tab !== "notes" && tab !== "todo" && tab !== "chat" && (
-        <div className="mb-4 flex gap-2 overflow-x-auto">
-          {children.map((child) => (
-            <button
-              key={child.id}
-              onClick={() => setSelectedChildId(child.id)}
-              className={`whitespace-nowrap rounded-full px-4 py-1.5 text-sm font-medium ${
-                child.id === activeChildId ? "bg-rose-500 text-white" : "bg-white text-stone-600"
-              }`}
-            >
-              {child.name}
-            </button>
-          ))}
-        </div>
-      )}
+                {listSubTab === "notes" && (
+                  <NotesView
+                    notes={notes}
+                    parentNames={parentNames}
+                    onCreate={async (title, content) => {
+                      await createNote({ teamId: teamId!, title, content, createdBy: user!.uid });
+                    }}
+                    onUpdate={(noteId, patch) => updateNote(teamId!, noteId, patch)}
+                    onDelete={(noteId) => deleteNote(teamId!, noteId)}
+                  />
+                )}
 
-      {tab === "chat" && (
-        <div className="h-[70vh] overflow-hidden rounded-2xl bg-stone-50">
-          <ChatView
-            messages={chatMessages}
-            currentUserId={user!.uid}
-            parentNames={parentNames}
-            shiftRequestsById={allShiftRequests}
-            childName={activeChild.name}
-            onSend={async (text) => {
-              await sendChatMessage({ teamId: teamId!, senderId: user!.uid, text });
-            }}
-          />
-        </div>
-      )}
+                {listSubTab === "todo" && (
+                  <TodoView
+                    todos={todos}
+                    currentUserId={user!.uid}
+                    parentNames={parentNames}
+                    onCreate={async (title) => {
+                      await createTodo({ teamId: teamId!, title, createdBy: user!.uid });
+                    }}
+                    onToggle={(todo) => toggleTodo(teamId!, todo, user!.uid)}
+                    onArchive={(todoId) => archiveTodo(teamId!, todoId)}
+                  />
+                )}
+              </>
+            )}
 
-      {tab === "packlist" && (
-        <PackListView
-          lists={packLists}
-          currentUserId={user!.uid}
-          parentNames={parentNames}
-          childName={activeChild.name}
-          nextOrdinaryHandoff={getNextOrdinaryHandoff(cycle, new Date())}
-          onCreateList={async (title) => {
-            await createPackList({
-              teamId: teamId!,
-              childId: activeChild.id,
-              title,
-              createdBy: user!.uid,
-            });
-          }}
-          onAddItem={(list, name) => addPackListItem(teamId!, list, name)}
-          onToggleItem={(list, itemId) => togglePackListItem(teamId!, list, itemId, user!.uid)}
-          onRemoveItem={(list, itemId) => removePackListItem(teamId!, list, itemId)}
-          onMarkSeen={(listId) => markPackListSeen(teamId!, listId, user!.uid)}
-          onDeleteList={(listId) => deletePackList(teamId!, listId)}
-        />
-      )}
+            {section === "info" && (
+              <>
+                <SubTabs tabs={INFO_SUB_TABS} active={infoSubTab} onChange={(id) => setInfoSubTab(id as InfoSubTab)} />
 
-      {tab === "notes" && (
-        <NotesView
-          notes={notes}
-          parentNames={parentNames}
-          onCreate={async (title, content) => {
-            await createNote({ teamId: teamId!, title, content, createdBy: user!.uid });
-          }}
-          onUpdate={(noteId, patch) => updateNote(teamId!, noteId, patch)}
-          onDelete={(noteId) => deleteNote(teamId!, noteId)}
-        />
-      )}
+                {infoSubTab === "childinfo" && (
+                  <ChildInfoView
+                    childName={activeChild.name}
+                    info={childInfo}
+                    onSave={(patch) => updateChildInfo(teamId!, activeChild.id, patch, user!.uid)}
+                  />
+                )}
 
-      {tab === "todo" && (
-        <TodoView
-          todos={todos}
-          currentUserId={user!.uid}
-          parentNames={parentNames}
-          onCreate={async (title) => {
-            await createTodo({ teamId: teamId!, title, createdBy: user!.uid });
-          }}
-          onToggle={(todo) => toggleTodo(teamId!, todo, user!.uid)}
-          onArchive={(todoId) => archiveTodo(teamId!, todoId)}
-        />
-      )}
+                {infoSubTab === "accounts" && (
+                  <AccountsView
+                    accounts={childAccounts}
+                    parentNames={parentNames}
+                    onCreate={async (service, username, pinOrNote) => {
+                      await createChildAccount({
+                        teamId: teamId!,
+                        childId: activeChild.id,
+                        service,
+                        username,
+                        pinOrNote,
+                        addedBy: user!.uid,
+                      });
+                    }}
+                    onUpdate={(accountId, patch) => updateChildAccount(teamId!, activeChild.id, accountId, patch)}
+                    onDelete={(accountId) => deleteChildAccount(teamId!, activeChild.id, accountId)}
+                  />
+                )}
+              </>
+            )}
 
-      {tab === "info" && (
-        <ChildInfoView
-          childName={activeChild.name}
-          info={childInfo}
-          onSave={(patch) => updateChildInfo(teamId!, activeChild.id, patch, user!.uid)}
-        />
-      )}
+            {section === "settings" && (
+              <SettingsView
+                displayName={user?.displayName ?? "Du"}
+                email={user?.email ?? null}
+                onResetPassword={resetPassword}
+                onSignOut={signOutUser}
+              />
+            )}
 
-      {tab === "accounts" && (
-        <AccountsView
-          accounts={childAccounts}
-          parentNames={parentNames}
-          onCreate={async (service, username, pinOrNote) => {
-            await createChildAccount({
-              teamId: teamId!,
-              childId: activeChild.id,
-              service,
-              username,
-              pinOrNote,
-              addedBy: user!.uid,
-            });
-          }}
-          onUpdate={(accountId, patch) => updateChildAccount(teamId!, activeChild.id, accountId, patch)}
-          onDelete={(accountId) => deleteChildAccount(teamId!, activeChild.id, accountId)}
-        />
-      )}
+            {section === "calendar" && (
+              <>
+                {balance && (
+                  <div className="mb-4">
+                    <BalanceCard balance={balance} parentNames={parentNames} otherParentId={otherParentId} />
+                  </div>
+                )}
 
-      {tab === "calendar" && (
-      <>
-      {balance && (
-        <div className="mb-4">
-          <BalanceCard balance={balance} parentNames={parentNames} otherParentId={otherParentId} />
-        </div>
-      )}
+                {pendingShifts.length > 0 && (
+                  <div className="mb-4">
+                    <PendingShiftRequests
+                      requests={pendingShifts}
+                      currentUserId={user!.uid}
+                      parentNames={parentNames}
+                      childName={activeChild.name}
+                      onRespond={async (shiftRequestId, decision) => {
+                        await respondToShiftRequest({
+                          teamId: teamId!,
+                          childId: activeChild.id,
+                          shiftRequestId,
+                          decision,
+                        });
+                      }}
+                      onRespondBatch={async (batchId, decision) => {
+                        await respondToShiftRequestBatch({
+                          teamId: teamId!,
+                          childId: activeChild.id,
+                          batchId,
+                          decision,
+                        });
+                      }}
+                    />
+                  </div>
+                )}
 
-      {pendingShifts.length > 0 && (
-        <div className="mb-4">
-          <PendingShiftRequests
-            requests={pendingShifts}
-            currentUserId={user!.uid}
-            parentNames={parentNames}
-            childName={activeChild.name}
-            onRespond={async (shiftRequestId, decision) => {
-              await respondToShiftRequest({
-                teamId: teamId!,
-                childId: activeChild.id,
-                shiftRequestId,
-                decision,
-              });
-            }}
-            onRespondBatch={async (batchId, decision) => {
-              await respondToShiftRequestBatch({
-                teamId: teamId!,
-                childId: activeChild.id,
-                batchId,
-                decision,
-              });
-            }}
-          />
-        </div>
-      )}
+                <CalendarView
+                  monthDate={monthDate}
+                  onChangeMonth={setMonthDate}
+                  childId={activeChild.id}
+                  childName={activeChild.name}
+                  cycle={cycle}
+                  parents={[parents[0], parents[1]]}
+                  approvedShiftRequests={approvedShifts}
+                  events={events.filter((e) => !e.childId || e.childId === activeChild.id)}
+                  currentUserId={user!.uid}
+                  onCreateActivity={async (date, title, recurring) => {
+                    // Aktiviteten läggs kl 13:00–14:00 som standard, samma
+                    // förval som i originalappens "Ny aktivitet"-dialog.
+                    const startAt = new Date(date);
+                    startAt.setHours(13, 0, 0, 0);
+                    const endAt = new Date(startAt.getTime() + 60 * 60 * 1000);
 
-      <CalendarView
-        monthDate={monthDate}
-        onChangeMonth={setMonthDate}
-        childId={activeChild.id}
-        childName={activeChild.name}
-        cycle={cycle}
-        parents={[parents[0], parents[1]]}
-        approvedShiftRequests={approvedShifts}
-        events={events.filter((e) => !e.childId || e.childId === activeChild.id)}
-        currentUserId={user!.uid}
-        onCreateActivity={async (date, title, recurring) => {
-          // Aktiviteten läggs kl 13:00–14:00 som standard, samma
-          // förval som i originalappens "Ny aktivitet"-dialog.
-          const startAt = new Date(date);
-          startAt.setHours(13, 0, 0, 0);
-          const endAt = new Date(startAt.getTime() + 60 * 60 * 1000);
+                    await createEvent({
+                      teamId: teamId!,
+                      childId: activeChild.id,
+                      title: title || "Ny aktivitet",
+                      startAt,
+                      endAt,
+                      recurrence: recurring
+                        ? { frequency: "weekly", interval: 1, byWeekday: [startAt.getDay()] }
+                        : undefined,
+                      createdBy: user!.uid,
+                    });
+                  }}
+                  onProposeShift={async (date, takingOverParentId) => {
+                    await proposeShiftRequest({
+                      teamId: teamId!,
+                      childId: activeChild.id,
+                      requestedBy: user!.uid,
+                      takingOverParentId,
+                      // Bytet sker vid schemats bytestid, inte midnatt.
+                      startAt: atSwitchHour(date, cycle.switchHour),
+                    });
+                  }}
+                  onProposeShiftBatch={async (changes) => {
+                    await proposeShiftRequestBatch({
+                      teamId: teamId!,
+                      childId: activeChild.id,
+                      requestedBy: user!.uid,
+                      switchHour: cycle.switchHour,
+                      changes,
+                    });
+                  }}
+                  pushPermission={pushPermission}
+                  onEnablePush={enablePushNotifications}
+                  reminderPrefs={reminderPrefs}
+                  onUpdateReminderPrefs={handleUpdateReminderPrefs}
+                  myColorId={team?.parentProfiles?.[user!.uid]?.colorId}
+                  onSelectColor={handleSelectColor}
+                  otherParentColorHex={
+                    (parents.find((p) => p.id !== user!.uid) ?? parents[1]).color
+                  }
+                  feedLinks={feedLinks ? feedLinks[user!.uid] : null}
+                  onCreateFeed={handleCreateFeed}
+                  onChangeSwitchHour={handleChangeSwitchHour}
+                />
+              </>
+            )}
+          </div>
+        )}
+      </div>
 
-          await createEvent({
-            teamId: teamId!,
-            childId: activeChild.id,
-            title: title || "Ny aktivitet",
-            startAt,
-            endAt,
-            recurrence: recurring
-              ? { frequency: "weekly", interval: 1, byWeekday: [startAt.getDay()] }
-              : undefined,
-            createdBy: user!.uid,
-          });
-        }}
-        onProposeShift={async (date, takingOverParentId) => {
-          await proposeShiftRequest({
-            teamId: teamId!,
-            childId: activeChild.id,
-            requestedBy: user!.uid,
-            takingOverParentId,
-            // Bytet sker vid schemats bytestid, inte midnatt.
-            startAt: atSwitchHour(date, cycle.switchHour),
-          });
-        }}
-        onProposeShiftBatch={async (changes) => {
-          await proposeShiftRequestBatch({
-            teamId: teamId!,
-            childId: activeChild.id,
-            requestedBy: user!.uid,
-            switchHour: cycle.switchHour,
-            changes,
-          });
-        }}
-        pushPermission={pushPermission}
-        onEnablePush={enablePushNotifications}
-        reminderPrefs={reminderPrefs}
-        onUpdateReminderPrefs={handleUpdateReminderPrefs}
-        myColorId={team?.parentProfiles?.[user!.uid]?.colorId}
-        onSelectColor={handleSelectColor}
-        otherParentColorHex={
-          (parents.find((p) => p.id !== user!.uid) ?? parents[1]).color
-        }
-        feedLinks={feedLinks ? feedLinks[user!.uid] : null}
-        onCreateFeed={handleCreateFeed}
-        onChangeSwitchHour={handleChangeSwitchHour}
-      />
-      </>
-      )}
-    </main>
+      <div className="mx-auto w-full max-w-md shrink-0">
+        <BottomNav active={section} onChange={setSection} />
+      </div>
+    </div>
   );
 }
 
