@@ -74,7 +74,7 @@ import {
 } from "../types/schema";
 import {
   buildFeedLinks,
-  getCalendarFeedToken,
+  getCalendarFeedTokens,
   createCalendarFeedToken,
   updateParentColor,
   CalendarFeedLinks,
@@ -143,32 +143,7 @@ export default function HomePage() {
   // Välj första barnet automatiskt så fort listan laddats.
   const activeChildId = selectedChildId ?? children[0]?.id ?? null;
 
-  // Prenumerationslänken (ICS) hämtas lat: bara när teamet och barnet är
-  // kända, och bara om ett token redan skapats — annars får man knappen
-  // "Skapa prenumerationslänk" i inställningspanelen istället.
-  const [feedToken, setFeedToken] = useState<string | null>(null);
-  useEffect(() => {
-    if (!teamId || !activeChildId) return;
-    let cancelled = false;
-    getCalendarFeedToken(teamId, activeChildId)
-      .then((token) => {
-        if (!cancelled) setFeedToken(token);
-      })
-      .catch(() => {
-        /* saknad länk är inget fel — knappen visas istället */
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [teamId, activeChildId]);
 
-  const feedLinks: CalendarFeedLinks | null =
-    teamId && activeChildId && feedToken ? buildFeedLinks(teamId, activeChildId, feedToken) : null;
-
-  async function handleCreateFeed() {
-    if (!teamId || !activeChildId) return;
-    setFeedToken(await createCalendarFeedToken(teamId, activeChildId));
-  }
 
   async function handleSelectColor(colorId: ParentColorId) {
     if (!teamId) return;
@@ -213,6 +188,38 @@ export default function HomePage() {
     return real;
   }, [team, user]);
 
+  // Prenumerationslänkarna (ICS) — två stycken, en per förälder. Hämtas lat
+  // bara när teamet, barnet och den andra föräldern är kända.
+  const [feedLinks, setFeedLinks] = useState<Record<string, CalendarFeedLinks> | null>(null);
+  useEffect(() => {
+    if (!teamId || !activeChildId || !parents[1]?.id) return;
+    let cancelled = false;
+    getCalendarFeedTokens(teamId, activeChildId)
+      .then((tokens) => {
+        if (cancelled) return;
+        const links: Record<string, CalendarFeedLinks> = {};
+        for (const [parentId, token] of Object.entries(tokens)) {
+          links[parentId] = buildFeedLinks(teamId, activeChildId, parentId, token);
+        }
+        setFeedLinks(links);
+      })
+      .catch(() => {
+        /* saknad länk är inget fel — knappen visas istället */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [teamId, activeChildId, parents]);
+
+  async function handleCreateFeed() {
+    if (!teamId || !activeChildId || !parents[1]?.id) return;
+    const tokens = await createCalendarFeedToken(teamId, activeChildId);
+    const links: Record<string, CalendarFeedLinks> = {};
+    for (const [parentId, token] of Object.entries(tokens)) {
+      links[parentId] = buildFeedLinks(teamId, activeChildId, parentId, token);
+    }
+    setFeedLinks(links);
+  }
   const parentNames = useMemo(
     () => Object.fromEntries(parents.map((p) => [p.id, p.name])),
     [parents]
@@ -512,7 +519,9 @@ export default function HomePage() {
         otherParentColorHex={
           (parents.find((p) => p.id !== user!.uid) ?? parents[1]).color
         }
-        feedLinks={feedLinks}
+        feedLinks={feedLinks ? feedLinks[user!.uid] : null}
+        otherFeedLink={feedLinks ? feedLinks[parents.find((p) => p.id !== user!.uid)?.id || ""] : null}
+        otherParentName={parents.find((p) => p.id !== user!.uid)?.name || ""}
         onCreateFeed={handleCreateFeed}
       />
       </>

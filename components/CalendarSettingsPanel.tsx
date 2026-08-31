@@ -22,6 +22,8 @@ interface CalendarSettingsPanelProps {
   /** null tills en prenumerationslänk skapats. */
   feedLinks: CalendarFeedLinks | null;
   onCreateFeed: () => Promise<void>;
+  otherFeedLink?: CalendarFeedLinks | null;
+  otherParentName?: string;
 }
 
 export default function CalendarSettingsPanel({
@@ -38,6 +40,8 @@ export default function CalendarSettingsPanel({
   otherParentColorHex,
   feedLinks,
   onCreateFeed,
+  otherFeedLink,
+  otherParentName,
 }: CalendarSettingsPanelProps) {
   const [creatingFeed, setCreatingFeed] = useState(false);
   const [feedError, setFeedError] = useState<string | null>(null);
@@ -144,40 +148,52 @@ export default function CalendarSettingsPanel({
         {!feedLinks ? (
           <>
             <p className="mb-2 text-[11px] leading-snug text-stone-400">
-              Skapar en prenumerationslänk som håller din vanliga kalender uppdaterad automatiskt.
+              Skapar prenumerationslänkar som håller din och den andra förälderns kalender uppdaterade automatiskt — var sin länk, var sin färg i Google Calendar.
             </p>
             <button
               onClick={handleCreateFeed}
               disabled={creatingFeed}
               className="w-full rounded-lg bg-stone-50 px-3 py-2 text-sm font-medium text-stone-700 hover:bg-stone-100 disabled:opacity-50"
             >
-              {creatingFeed ? "Skapar…" : "Skapa prenumerationslänk"}
+              {creatingFeed ? "Skapar…" : "Skapa prenumerationslänkar"}
             </button>
           </>
         ) : (
           <>
-            <div className="space-y-1.5">
+            <p className="mb-2 text-[11px] font-medium text-stone-700">Din schemalänk:</p>
+            <div className="mb-3 space-y-1.5">
               <FeedLink href={feedLinks.google} label="Google Kalender" />
               <FeedLink href={feedLinks.apple} label="iPhone / Apple Kalender" />
               <FeedLink href={feedLinks.outlook} label="Outlook / Microsoft" />
             </div>
 
+            {otherFeedLink && (
+              <>
+                <p className="mb-2 text-[11px] font-medium text-stone-700">{otherParentName}s schemalänk:</p>
+                <div className="mb-3 space-y-1.5">
+                  <FeedLink href={otherFeedLink.google} label="Google Kalender" />
+                  <FeedLink href={otherFeedLink.apple} label="iPhone / Apple Kalender" />
+                  <FeedLink href={otherFeedLink.outlook} label="Outlook / Microsoft" />
+                </div>
+              </>
+            )}
+
             <button
               onClick={copyIcsUrl}
-              className="mt-2 w-full rounded-lg border border-stone-200 px-3 py-2 text-sm text-stone-600 hover:bg-stone-50"
+              className="w-full rounded-lg border border-stone-200 px-3 py-2 text-sm text-stone-600 hover:bg-stone-50"
             >
-              {copied ? "Kopierad!" : "Kopiera ICS-länk"}
+              {copied ? "Kopierad!" : "Kopiera min ICS-länk"}
             </button>
 
             <p className="mt-2 text-[11px] leading-snug text-stone-400">
-              Vem som helst med länken kan läsa schemat. Skapa en ny länk för att återkalla den gamla.
+              Vem som helst med länken kan läsa schemat. Skapa nya länker för att återkalla de gamla.
             </p>
             <button
               onClick={handleCreateFeed}
               disabled={creatingFeed}
               className="mt-1 text-[11px] font-medium text-rose-500 hover:underline disabled:opacity-50"
             >
-              {creatingFeed ? "Skapar…" : "Skapa ny länk (återkallar den gamla)"}
+              {creatingFeed ? "Skapar…" : "Skapa nya länker"}
             </button>
           </>
         )}

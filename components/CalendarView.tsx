@@ -49,6 +49,8 @@ interface CalendarViewProps {
   otherParentColorHex: string;
   feedLinks: CalendarFeedLinks | null;
   onCreateFeed: () => Promise<void>;
+  otherFeedLink?: CalendarFeedLinks | null;
+  otherParentName?: string;
 }
 
 const WEEKDAY_LABELS = ["M", "T", "O", "T", "F", "L", "S"];
@@ -75,6 +77,8 @@ export default function CalendarView({
   otherParentColorHex,
   feedLinks,
   onCreateFeed,
+  otherFeedLink,
+  otherParentName,
 }: CalendarViewProps) {
   const [activeDay, setActiveDay] = useState<Date | null>(null);
   const [parentA, parentB] = parents;
@@ -257,6 +261,8 @@ export default function CalendarView({
             otherParentColorHex={otherParentColorHex}
             feedLinks={feedLinks}
             onCreateFeed={onCreateFeed}
+            otherFeedLink={otherFeedLink}
+            otherParentName={otherParentName}
           />
         )}
       </header>
