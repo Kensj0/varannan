@@ -9,15 +9,29 @@ interface BalanceCardProps {
   otherParentId: string;
 }
 
-/** Motsvarar konceptet "Ställning" — antal dagar en förälder ligger plus. */
+/**
+ * Motsvarar konceptet "Ställning" — antal dagar en förälder ligger plus.
+ * Medvetet hållen på en enda rad: schemavyn ska rymmas på en mobilskärm
+ * utan att man behöver skrolla för att se hela månaden.
+ */
 export default function BalanceCard({ balance, parentNames, otherParentId }: BalanceCardProps) {
   const label = formatBalanceLabel(balance, parentNames, otherParentId);
   const isEven = balance.balanceDays === 0;
 
   return (
-    <div className={`rounded-2xl px-5 py-4 shadow-sm ${isEven ? "bg-stone-100" : "bg-emerald-50"}`}>
-      <p className="text-xs font-semibold uppercase tracking-wide text-stone-400">Ställning</p>
-      <p className={`mt-1 text-lg font-bold ${isEven ? "text-stone-600" : "text-emerald-700"}`}>{label}</p>
+    <div
+      className={`flex items-center justify-between gap-3 rounded-xl px-4 py-2 shadow-sm ${
+        isEven ? "bg-stone-100" : "bg-emerald-50"
+      }`}
+    >
+      <span className="text-[10px] font-semibold uppercase tracking-wide text-stone-400">
+        Ställning
+      </span>
+      <span
+        className={`truncate text-sm font-bold ${isEven ? "text-stone-600" : "text-emerald-700"}`}
+      >
+        {label}
+      </span>
     </div>
   );
 }
