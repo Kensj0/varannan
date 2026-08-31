@@ -30,12 +30,11 @@ export async function createPackList(args: {
   createdBy: string;
 }): Promise<string> {
   const ref = doc(collection(db, `teams/${args.teamId}/packLists`));
-  const packList: PackListDoc = {
+  const packList: any = {
     id: ref.id,
     teamId: args.teamId,
     childId: args.childId,
     title: args.title,
-    linkedShiftRequestId: args.linkedShiftRequestId,
     items: (args.items ?? []).map((name, i) => ({
       id: `${Date.now()}-${i}`,
       name,
@@ -45,6 +44,9 @@ export async function createPackList(args: {
     createdAt: Timestamp.now() as any,
     updatedAt: Timestamp.now() as any,
   };
+  if (args.linkedShiftRequestId) {
+    packList.linkedShiftRequestId = args.linkedShiftRequestId;
+  }
   await setDoc(ref, packList);
   return ref.id;
 }
