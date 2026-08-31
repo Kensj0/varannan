@@ -435,11 +435,17 @@ inbjudan.
 `shareUrl` var hårdkodad till `https://varannan.app/join/...`. Nu skickar
 klienten `window.location.origin`, som servern validerar mot
 `ALLOWED_APP_ORIGINS` — annars kunde en angripare få appen att generera
-inbjudningslänkar mot en phishing-domän. Sätt variabeln vid deploy:
+inbjudningslänkar mot en phishing-domän. Variabeln sätts via en `.env`-fil
+i `functions/` (2:a generationens funktioner läser inte längre
+`firebase functions:config:set`, den är avvecklad):
 
 ```bash
-firebase functions:config:set app.origins="https://ert-projekt.web.app"
+# functions/.env
+ALLOWED_APP_ORIGINS=https://ert-projekt.web.app,https://ert-projekt.firebaseapp.com
 ```
+
+Deploya Cloud Functions efter varje ändring i `.env` — den läses in vid
+byggtillfället, inte i realtid.
 
 ### Förbättringar i cykelbyggaren
 
