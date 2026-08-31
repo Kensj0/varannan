@@ -30,6 +30,9 @@ jobs:
       - name: Installera root-beroenden
         run: npm ci
 
+      - name: Installera functions-beroenden
+        run: npm ci --prefix functions
+
       - name: Skapa .env.local från GitHub Secrets
         run: |
           cat > .env.local << EOF
