@@ -14,3 +14,4 @@ public/firebase-messaging-sw.js
 # vilket gav "not exported"-varningar och en trasig prod-build tidigare.
 lib/*.js
 types/*.js
+functions/.env
