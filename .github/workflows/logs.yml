@@ -33,21 +33,31 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Hämta loggar
+      - name: Hämta loggar via Cloud Logging
         env:
           GOOGLE_APPLICATION_CREDENTIALS: /tmp/gcp-key.json
         run: |
           mkdir -p diagnostics
+          gcloud auth activate-service-account --key-file=/tmp/gcp-key.json
+          gcloud config set project varannan-familj
+
+          # "firebase functions:log" blandar in audit-poster från varje
+          # deploy, som snabbt tränger undan de faktiska körningarna.
+          # Cloud Logging-filtret nedan tar bara körningsloggar (Cloud Run-
+          # revisioner, dit gen2-funktioner skriver) och hoppar över audit.
+          FILTER='resource.type="cloud_run_revision" AND severity>=DEFAULT'
           if [ -n "${{ github.event.inputs.function }}" ]; then
-            firebase functions:log \
-              --only "${{ github.event.inputs.function }}" \
-              -n "${{ github.event.inputs.lines }}" \
-              --project varannan-familj > diagnostics/functions-log.txt 2>&1 || true
-          else
-            firebase functions:log -n "${{ github.event.inputs.lines }}" \
-              --project varannan-familj > diagnostics/functions-log.txt 2>&1 || true
+            SVC=$(echo "${{ github.event.inputs.function }}" | tr "[:upper:]" "[:lower:]")
+            FILTER="$FILTER AND resource.labels.service_name=\"$SVC\""
           fi
-          tail -40 diagnostics/functions-log.txt
+
+          gcloud logging read "$FILTER" \
+            --limit="${{ github.event.inputs.lines }}" \
+            --format="value(timestamp, severity, resource.labels.service_name, textPayload, jsonPayload.message)" \
+            > diagnostics/functions-log.txt 2>&1 || true
+
+          echo "--- senaste raderna ---"
+          head -40 diagnostics/functions-log.txt
 
       # Loggen committas till grenen "diagnostics" så den går att läsa via
       # git. Körningsloggarna i Actions ligger bakom en separat domän som
