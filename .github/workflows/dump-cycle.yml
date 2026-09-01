@@ -27,7 +27,7 @@ jobs:
           GOOGLE_APPLICATION_CREDENTIALS: /tmp/gcp-key.json
         run: |
           mkdir -p diagnostics
-          cat > /tmp/dump.js << 'EOF'
+          cat > dump.js << 'EOF'
           const admin = require("firebase-admin");
           admin.initializeApp({ projectId: "varannan-familj" });
           const db = admin.firestore();
@@ -65,7 +65,7 @@ jobs:
             process.exit(1);
           });
           EOF
-          node /tmp/dump.js > diagnostics/cycle.txt 2>&1 || true
+          node dump.js > diagnostics/cycle.txt 2>&1 || true
           cat diagnostics/cycle.txt
 
       - name: Publicera på grenen diagnostics
@@ -73,6 +73,7 @@ jobs:
           git config user.name "varannan-bot"
           git config user.email "bot@varannan.local"
           git checkout -B diagnostics
+          rm -f dump.js
           git add -f diagnostics/cycle.txt
           git commit -m "Cykeldump $(date -u +%Y-%m-%dT%H:%M:%SZ)" || exit 0
           git push -f origin diagnostics
