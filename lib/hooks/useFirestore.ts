@@ -17,6 +17,7 @@ import {
   CustodyCycleDoc,
   DayBalanceDoc,
   ShiftRequestDoc,
+  BalanceRequestDoc,
   EventDoc,
   TeamDoc,
   ChatMessageDoc,
@@ -195,6 +196,38 @@ export function useAllShiftRequests(
     );
     return unsub;
   }, [teamId]);
+
+  return state;
+}
+
+/** Väntande justeringar av ställningen för ett barn. */
+export function usePendingBalanceRequests(
+  teamId: string | null | undefined,
+  childId: string | null | undefined
+): ListenerState<BalanceRequestDoc[]> {
+  const [state, setState] = useState<ListenerState<BalanceRequestDoc[]>>({
+    data: [],
+    loading: true,
+    error: null,
+  });
+
+  useEffect(() => {
+    if (!teamId || !childId) {
+      setState({ data: [], loading: false, error: null });
+      return;
+    }
+    const q = query(
+      collection(db, `teams/${teamId}/children/${childId}/balanceRequests`),
+      where("status", "==", "pending")
+    );
+    const unsub = onSnapshot(
+      q,
+      (snap) =>
+        setState({ data: snap.docs.map((d) => d.data() as BalanceRequestDoc), loading: false, error: null }),
+      (error) => setState({ data: [], loading: false, error })
+    );
+    return unsub;
+  }, [teamId, childId]);
 
   return state;
 }

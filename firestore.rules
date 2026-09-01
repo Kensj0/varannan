@@ -67,6 +67,16 @@ service cloud.firestore {
           // transaktionen) — aldrig direkt av klienten.
           allow write: if false;
         }
+        match /dayBalanceHistory/{docId} {
+          allow read: if isTeamMember(teamId);
+          allow write: if false;
+        }
+        match /balanceRequests/{docId} {
+          allow read: if isTeamMember(teamId);
+          // Skapas och besvaras via callables, så att ingen kan skriva
+          // om ställningen ensidigt genom att godkänna sin egen begäran.
+          allow write: if false;
+        }
       }
 
       match /events/{eventId} {

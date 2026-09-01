@@ -15,6 +15,7 @@ import {
   useDayBalance,
   useApprovedShiftRequests,
   usePendingShiftRequests,
+  usePendingBalanceRequests,
   useAllShiftRequests,
   useEventsForMonth,
   useChatMessages,
@@ -31,6 +32,8 @@ import {
   proposeShiftRequestBatch,
   respondToShiftRequestBatch,
   clearApprovedShiftsFrom,
+  proposeBalanceAdjustment,
+  respondToBalanceAdjustment,
   atSwitchHour,
 } from "../lib/calendarActions";
 import { sendChatMessage } from "../lib/chatActions";
@@ -170,6 +173,7 @@ export default function HomePage() {
   const { data: balance } = useDayBalance(teamId, activeChildId);
   const { data: approvedShifts } = useApprovedShiftRequests(teamId, activeChildId);
   const { data: pendingShifts } = usePendingShiftRequests(teamId, activeChildId);
+  const { data: pendingBalanceRequests } = usePendingBalanceRequests(teamId, activeChildId);
   const { data: events } = useEventsForMonth(teamId, monthDate);
   const { data: allShiftRequests } = useAllShiftRequests(teamId);
   const { data: chatMessages } = useChatMessages(teamId);
@@ -586,7 +590,28 @@ export default function HomePage() {
               <>
                 {balance && (
                   <div className="mb-3">
-                    <BalanceCard balance={balance} parentNames={parentNames} otherParentId={otherParentId} />
+                    <BalanceCard
+                      balance={balance}
+                      parentNames={parentNames}
+                      otherParentId={otherParentId}
+                      currentUserId={user!.uid}
+                      pendingRequests={pendingBalanceRequests}
+                      onPropose={async (deltaDays) => {
+                        await proposeBalanceAdjustment({
+                          teamId: teamId!,
+                          childId: activeChild.id,
+                          deltaDays,
+                        });
+                      }}
+                      onRespond={async (requestId, decision) => {
+                        await respondToBalanceAdjustment({
+                          teamId: teamId!,
+                          childId: activeChild.id,
+                          requestId,
+                          decision,
+                        });
+                      }}
+                    />
                   </div>
                 )}
 
