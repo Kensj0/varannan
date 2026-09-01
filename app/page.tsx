@@ -30,6 +30,7 @@ import {
   respondToShiftRequest,
   proposeShiftRequestBatch,
   respondToShiftRequestBatch,
+  clearApprovedShiftsFrom,
   atSwitchHour,
 } from "../lib/calendarActions";
 import { sendChatMessage } from "../lib/chatActions";
@@ -207,6 +208,13 @@ export default function HomePage() {
   // förälder på alla dagar. Byt ut den mot partnerns riktiga uid en gång.
   const repairAttempted = useRef(false);
   const [editingStructure, setEditingStructure] = useState(false);
+  // Efter att grundschemat sparats: fråga vad som ska hända med godkända
+  // avvikelser framåt. De beskriver undantag från ett schema som inte
+  // längre gäller, så att behålla dem är ett aktivt val — inte en default.
+  const [pendingCycleChange, setPendingCycleChange] = useState<{
+    fromDate: string;
+    affected: number;
+  } | null>(null);
   useEffect(() => {
     if (repairAttempted.current) return;
     if (!teamId || !cycle) return;
@@ -278,6 +286,55 @@ export default function HomePage() {
   // som tillhör hen pekar då tillfälligt på platshållaren PENDING_PARTNER_ID.
   // Den ersätts automatiskt med partnerns riktiga uid när inbjudan
   // accepteras, så detta steg får INTE vänta på att parents.length === 2.
+  // Uppföljningsfrågan efter att grundschemat gjorts om. Ligger före
+  // editingStructure-grenen så att den visas när byggaren stängts.
+  if (pendingCycleChange && activeChild) {
+    const { fromDate, affected } = pendingCycleChange;
+    return (
+      <div className="mx-auto flex min-h-screen max-w-sm flex-col justify-center px-6">
+        <h1 className="mb-2 text-2xl font-bold text-stone-800">Grundschemat är sparat</h1>
+        <p className="mb-6 text-stone-500">
+          Det finns {affected} godkänd{affected === 1 ? "" : "a"} ändring
+          {affected === 1 ? "" : "ar"} från och med {fromDate}. De gjordes mot det gamla schemat — vill du
+          behålla dem?
+        </p>
+
+        <button
+          onClick={() => setPendingCycleChange(null)}
+          className="mb-3 w-full rounded-2xl bg-white p-4 text-left shadow-sm"
+        >
+          <span className="block font-semibold text-stone-800">Behåll dem</span>
+          <span className="mt-1 block text-sm text-stone-500">
+            Dagarna ligger kvar som undantag ovanpå det nya schemat, och ställningen är oförändrad.
+          </span>
+        </button>
+
+        <button
+          onClick={async () => {
+            try {
+              await clearApprovedShiftsFrom({
+                teamId: teamId!,
+                childId: activeChild.id,
+                fromDate,
+              });
+            } catch (err) {
+              console.error("[clearApprovedShiftsFrom] misslyckades:", err);
+            } finally {
+              setPendingCycleChange(null);
+            }
+          }}
+          className="mb-4 w-full rounded-2xl bg-white p-4 text-left shadow-sm"
+        >
+          <span className="block font-semibold text-stone-800">Ta bort dem</span>
+          <span className="mt-1 block text-sm text-stone-500">
+            Schemat följer det nya mönstret rakt av. Ställningen justeras tillbaka med lika mycket som
+            ändringarna gav. Dagar som redan passerat rörs inte.
+          </span>
+        </button>
+      </div>
+    );
+  }
+
   // "Ändra grundschema" från Inställningar. Samma byggare som i
   // onboarding, men förifylld med nuvarande cykel. Bara custodyCycle
   // skrivs om — aktiviteter och godkända bytesdagar ligger i egna
@@ -320,6 +377,15 @@ export default function HomePage() {
               referenceParentId: self.id,
             });
             setEditingStructure(false);
+
+            // Fråga bara när det finns något att ta ställning till.
+            const cutoff = new Date(`${cycleStartDate}T00:00:00`).getTime();
+            const affected = approvedShifts.filter(
+              (r) => r.startAt.seconds * 1000 >= cutoff
+            ).length;
+            if (affected > 0) {
+              setPendingCycleChange({ fromDate: cycleStartDate, affected });
+            }
           }}
         />
       </div>

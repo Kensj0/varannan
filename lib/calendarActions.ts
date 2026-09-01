@@ -204,6 +204,16 @@ export async function proposeShiftRequestBatch(args: {
 }
 
 /** Godkänn eller avböj en hel grupp av dagändringar i ett svep. */
+export async function clearApprovedShiftsFrom(args: {
+  teamId: string;
+  childId: string;
+  fromDate: string; // "YYYY-MM-DD"
+}): Promise<{ removed: number }> {
+  const fn = httpsCallable<typeof args, { removed: number }>(functions, "clearApprovedShiftsFrom");
+  const res = await fn(args);
+  return res.data;
+}
+
 export async function respondToShiftRequestBatch(args: {
   teamId: string;
   childId: string;
