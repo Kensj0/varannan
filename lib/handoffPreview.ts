@@ -14,6 +14,30 @@
 import { CustodyCycleDoc, ShiftRequestDoc } from "../types/schema";
 import { getScheduledParentForDate } from "./custodyCycle";
 
+/**
+ * Väljer vilken godkänd avvikelse som gäller när flera överlappar samma
+ * tidpunkt. Tidigare togs helt enkelt den första i listan, vilket gjorde
+ * resultatet godtyckligt: två motsatta godkännanden för samma dag kunde
+ * ge olika svar beroende på hämtningsordning. Nu vinner den som besvarades
+ * senast — det senaste beslutet är det som gäller.
+ */
+function pickActiveShift(
+  requests: ShiftRequestDoc[],
+  instant: Date
+): ShiftRequestDoc | undefined {
+  let best: ShiftRequestDoc | undefined;
+  let bestAt = -Infinity;
+  for (const r of requests) {
+    if (!isInstantWithinShift(instant, r)) continue;
+    const at = r.respondedAt?.seconds ?? r.createdAt?.seconds ?? 0;
+    if (at >= bestAt) {
+      bestAt = at;
+      best = r;
+    }
+  }
+  return best;
+}
+
 function isInstantWithinShift(instant: Date, request: ShiftRequestDoc): boolean {
   const start = new Date(request.startAt.seconds * 1000);
   const end = request.endAt ? new Date(request.endAt.seconds * 1000) : null;
@@ -27,7 +51,7 @@ export function resolveResponsibleParent(
   approvedShiftRequests: ShiftRequestDoc[],
   instant: Date
 ): string {
-  const override = approvedShiftRequests.find((r) => isInstantWithinShift(instant, r));
+  const override = pickActiveShift(approvedShiftRequests, instant);
   return override ? override.takingOverParentId : getScheduledParentForDate(cycle, instant).parentId;
 }
 
