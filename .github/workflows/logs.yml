@@ -45,7 +45,11 @@ jobs:
           # deploy, som snabbt tränger undan de faktiska körningarna.
           # Cloud Logging-filtret nedan tar bara körningsloggar (Cloud Run-
           # revisioner, dit gen2-funktioner skriver) och hoppar över audit.
-          FILTER='resource.type="cloud_run_revision" AND severity>=DEFAULT'
+          # Hoppa över instansstart/hälsokontroller — de säger inget om
+          # varför ett anrop misslyckas och tränger undan de rader som gör det.
+          FILTER='resource.type="cloud_run_revision"
+            AND NOT textPayload:"Starting new instance"
+            AND NOT textPayload:"STARTUP TCP probe"'
           if [ -n "${{ github.event.inputs.function }}" ]; then
             SVC=$(echo "${{ github.event.inputs.function }}" | tr "[:upper:]" "[:lower:]")
             FILTER="$FILTER AND resource.labels.service_name=\"$SVC\""
@@ -53,7 +57,7 @@ jobs:
 
           gcloud logging read "$FILTER" \
             --limit="${{ github.event.inputs.lines }}" \
-            --format="value(timestamp, severity, resource.labels.service_name, textPayload, jsonPayload.message)" \
+            --format="value(timestamp, severity, resource.labels.service_name, httpRequest.status, textPayload, jsonPayload.message, protoPayload.status.message)" \
             > diagnostics/functions-log.txt 2>&1 || true
 
           echo "--- senaste raderna ---"
