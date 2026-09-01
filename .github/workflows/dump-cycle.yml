@@ -60,6 +60,22 @@ jobs:
                 console.log("  blocks:", JSON.stringify(d.blocks));
                 const total = (d.blocks || []).reduce((s, b) => s + b.days, 0);
                 console.log("  total dagar:", total);
+
+                const reqs = await db
+                  .collection(`teams/${team.id}/shiftRequests`)
+                  .where("childId", "==", child.id)
+                  .get();
+                console.log(`  shiftRequests: ${reqs.size} st`);
+                const rows = reqs.docs
+                  .map((r) => r.data())
+                  .sort((a, b) => (a.startAt?.seconds ?? 0) - (b.startAt?.seconds ?? 0));
+                for (const r of rows) {
+                  const s = r.startAt ? new Date(r.startAt.seconds * 1000).toISOString() : "?";
+                  const e = r.endAt ? new Date(r.endAt.seconds * 1000).toISOString() : "(till nästa byte)";
+                  console.log(
+                    `    ${r.status.padEnd(9)} ${s} -> ${e}  tar över: ${r.takingOverParentId} delta: ${r.balanceDeltaDays}`
+                  );
+                }
               }
             }
             process.exit(0);
