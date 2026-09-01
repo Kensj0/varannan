@@ -32,7 +32,10 @@ export default function BalanceCard({
   onRespond,
 }: BalanceCardProps) {
   const [open, setOpen] = useState(false);
-  const [delta, setDelta] = useState(1);
+  // Räknaren visar den NYA ställningen, inte förändringen. Att kvitta
+  // till jämnt läge är det vanligaste önskemålet, och med en delta-räknare
+  // gick det inte att uttrycka: 0 betydde "ändra ingenting".
+  const [target, setTarget] = useState(balance.balanceDays);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -41,6 +44,8 @@ export default function BalanceCard({
   const pending = pendingRequests[0] ?? null;
   const interactive = !!onPropose;
 
+  const delta = target - balance.balanceDays;
+
   async function submit() {
     if (!onPropose || delta === 0) return;
     setBusy(true);
@@ -48,7 +53,6 @@ export default function BalanceCard({
     try {
       await onPropose(delta);
       setOpen(false);
-      setDelta(1);
     } catch (err) {
       const code = (err as { code?: string })?.code ?? "";
       const message = (err as { message?: string })?.message ?? "";
@@ -122,22 +126,22 @@ export default function BalanceCard({
 
       {open && !pending && (
         <div className="mt-2 rounded-xl bg-white px-4 py-3 shadow-sm">
-          <p className="text-sm text-stone-600">Föreslå en justering av ställningen.</p>
+          <p className="text-sm text-stone-600">Föreslå en ny ställning.</p>
 
           <div className="mt-3 flex items-center justify-center gap-5">
             <button
-              onClick={() => setDelta((d) => d - 1)}
+              onClick={() => setTarget((t) => t - 1)}
               className="h-10 w-10 rounded-full bg-stone-100 text-xl font-bold text-stone-600"
               aria-label="Minska"
             >
               −
             </button>
-            <span className="min-w-[3.5rem] text-center text-2xl font-bold text-stone-800">
-              {delta > 0 ? "+" : ""}
-              {delta}
+            <span className="min-w-[4rem] text-center text-2xl font-bold text-stone-800">
+              {target > 0 ? "+" : ""}
+              {target}
             </span>
             <button
-              onClick={() => setDelta((d) => d + 1)}
+              onClick={() => setTarget((t) => t + 1)}
               className="h-10 w-10 rounded-full bg-stone-100 text-xl font-bold text-stone-600"
               aria-label="Öka"
             >
@@ -146,15 +150,22 @@ export default function BalanceCard({
           </div>
 
           <p className="mt-2 text-center text-xs text-stone-400">
-            Plus betyder att {parentNames[balance.referenceParentId] ?? "referensföräldern"} ligger fler
-            dagar plus.
+            {target === 0
+              ? "Jämnt läge — inga dagar att kvitta."
+              : `${target > 0 ? parentNames[balance.referenceParentId] ?? "Referensföräldern" : parentNames[otherParentId] ?? "Andra föräldern"} ligger ${Math.abs(target)} dag${Math.abs(target) === 1 ? "" : "ar"} plus.`}
+          </p>
+          <p className="mt-1 text-center text-xs text-stone-400">
+            {delta === 0 ? "Samma som nu." : `Ändring: ${delta > 0 ? "+" : ""}${delta}`}
           </p>
 
           {error && <p className="mt-2 text-sm text-rose-600">{error}</p>}
 
           <div className="mt-3 flex gap-2">
             <button
-              onClick={() => setOpen(false)}
+              onClick={() => {
+                setOpen(false);
+                setTarget(balance.balanceDays);
+              }}
               className="flex-1 rounded-full border border-stone-300 py-2 text-sm font-medium text-stone-600"
             >
               Avbryt
