@@ -55,6 +55,9 @@ interface CalendarViewProps {
   onSelectColor: (colorId: ParentColorId) => Promise<void>;
   otherParentColorHex: string;
   feedLinks: CalendarFeedLinks | null;
+  /** Andra förälderns dagar som separat flöde — se CalendarSettingsPanel. */
+  otherFeedLinks?: CalendarFeedLinks | null;
+  otherParentName?: string;
   onCreateFeed: () => Promise<void>;
   onChangeSwitchHour: (hh: string, mm: string) => Promise<void>;
 }
@@ -62,6 +65,8 @@ interface CalendarViewProps {
 const WEEKDAY_LABELS = ["M", "T", "O", "T", "F", "L", "S"];
 const LONG_PRESS_MS = 500;
 const ONE_MINUTE_MS = 60 * 1000;
+/** Total lucka vid en bytespunkt; halva dras in från vardera stapeln. */
+const BAR_GAP_PX = 6;
 const SHOW_WEEK_NUMBERS_KEY = "varannan:showWeekNumbers";
 
 export default function CalendarView({
@@ -84,6 +89,8 @@ export default function CalendarView({
   onSelectColor,
   otherParentColorHex,
   feedLinks,
+  otherFeedLinks,
+  otherParentName,
   onCreateFeed,
   onChangeSwitchHour,
 }: CalendarViewProps) {
@@ -335,6 +342,8 @@ export default function CalendarView({
             onSelectColor={onSelectColor}
             otherParentColorHex={otherParentColorHex}
             feedLinks={feedLinks}
+            otherFeedLinks={otherFeedLinks}
+            otherParentName={otherParentName}
             onCreateFeed={onCreateFeed}
             switchHour={switchHour}
             onChangeSwitchHour={onChangeSwitchHour}
@@ -501,16 +510,18 @@ export default function CalendarView({
                   className="absolute inset-y-0 flex items-center justify-center overflow-hidden px-1"
                   style={{
                     background: bar.parent.color,
-                    left: `${(bar.from / 7) * 100}%`,
-                    width: `${((bar.to - bar.from) / 7) * 100}%`,
+                    // Luften dras IN i stapeln i stället för att läggas som
+                    // marginal. En marginal förskjuter en absolut positionerad
+                    // ruta utan att krympa den, så stapeln sköt 3px förbi sitt
+                    // slut och åt upp nästa lucka — därav de ojämna avstånden.
+                    left: `calc(${(bar.from / 7) * 100}% + ${bar.roundedStart ? BAR_GAP_PX / 2 : 0}px)`,
+                    width: `calc(${((bar.to - bar.from) / 7) * 100}% - ${
+                      (bar.roundedStart ? BAR_GAP_PX / 2 : 0) + (bar.roundedEnd ? BAR_GAP_PX / 2 : 0)
+                    }px)`,
                     borderTopLeftRadius: bar.roundedStart ? 6 : 0,
                     borderBottomLeftRadius: bar.roundedStart ? 6 : 0,
                     borderTopRightRadius: bar.roundedEnd ? 6 : 0,
                     borderBottomRightRadius: bar.roundedEnd ? 6 : 0,
-                    // Luft i varje bytespunkt så att de två halvorna läses
-                    // som två block som möts, inte ett enda långt fält.
-                    marginLeft: bar.roundedStart ? 3 : 0,
-                    marginRight: bar.roundedEnd ? 3 : 0,
                   }}
                 >
                   <span className="truncate text-[11px] font-semibold leading-none text-white">
@@ -533,14 +544,14 @@ export default function CalendarView({
                     className="absolute inset-y-0 flex items-center justify-center overflow-hidden px-1 opacity-30"
                     style={{
                       background: bar.parent.color,
-                      left: `${(bar.from / 7) * 100}%`,
-                      width: `${((bar.to - bar.from) / 7) * 100}%`,
+                      left: `calc(${(bar.from / 7) * 100}% + ${bar.roundedStart ? BAR_GAP_PX / 2 : 0}px)`,
+                      width: `calc(${((bar.to - bar.from) / 7) * 100}% - ${
+                        (bar.roundedStart ? BAR_GAP_PX / 2 : 0) + (bar.roundedEnd ? BAR_GAP_PX / 2 : 0)
+                      }px)`,
                       borderTopLeftRadius: bar.roundedStart ? 5 : 0,
                       borderBottomLeftRadius: bar.roundedStart ? 5 : 0,
                       borderTopRightRadius: bar.roundedEnd ? 5 : 0,
                       borderBottomRightRadius: bar.roundedEnd ? 5 : 0,
-                      marginLeft: bar.roundedStart ? 3 : 0,
-                      marginRight: bar.roundedEnd ? 3 : 0,
                     }}
                   >
                     <span className="truncate text-[10px] font-medium leading-none text-white">

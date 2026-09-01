@@ -34,10 +34,31 @@ export interface CalendarFeedLinks {
   outlook: string;
 }
 
-export function buildFeedLinks(teamId: string, childId: string, parentId: string, token: string): CalendarFeedLinks {
+export interface FeedScope {
+  /**
+   * Bara den här förälderns dagar. Google Kalender färgar per KALENDER,
+   * inte per händelse — ett flöde med båda föräldrarnas block kan därför
+   * bara visas i en färg. Med ett flöde per förälder kan de färgas var
+   * för sig. Utelämnad = båda föräldrarna, som tidigare.
+   */
+  onlyParentId?: string;
+  /** Sätt false för det andra flödet, så aktiviteter inte dubbleras. */
+  includeActivities?: boolean;
+}
+
+export function buildFeedLinks(
+  teamId: string,
+  childId: string,
+  parentId: string,
+  token: string,
+  scope: FeedScope = {}
+): CalendarFeedLinks {
+  const extra =
+    (scope.onlyParentId ? `&only=${encodeURIComponent(scope.onlyParentId)}` : "") +
+    (scope.includeActivities === false ? "&activities=0" : "");
   const ics = `${FEED_BASE}?team=${encodeURIComponent(teamId)}&child=${encodeURIComponent(
     childId
-  )}&parent=${encodeURIComponent(parentId)}&token=${encodeURIComponent(token)}`;
+  )}&parent=${encodeURIComponent(parentId)}&token=${encodeURIComponent(token)}${extra}`;
   const webcal = ics.replace(/^https?:\/\//, "webcal://");
   const encoded = encodeURIComponent(ics);
 
