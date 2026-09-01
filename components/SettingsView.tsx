@@ -15,6 +15,13 @@ interface SettingsViewProps {
   hasPartner: boolean;
   teamName?: string;
   onCreateInvite: () => Promise<{ code: string; shareUrl: string }>;
+  /**
+   * Öppnar cykelbyggaren för att göra om grundschemat. Utelämnas när det
+   * inte går att ändra än (inget barn valt, eller andra föräldern har
+   * inte anslutit — blocken pekar på uid:n och kan inte byggas mot en
+   * platshållare).
+   */
+  onEditStructure?: () => void;
 }
 
 /**
@@ -32,6 +39,7 @@ export default function SettingsView({
   hasPartner,
   teamName,
   onCreateInvite,
+  onEditStructure,
 }: SettingsViewProps) {
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState(false);
@@ -69,6 +77,23 @@ export default function SettingsView({
           <div className="[&>*]:!mb-0">
             <InvitePartnerBanner teamName={teamName} onCreateInvite={onCreateInvite} />
           </div>
+        </div>
+      )}
+
+      {/* Struktur — gör om grundschemat i samma byggare som i onboarding. */}
+      {onEditStructure && (
+        <div className="rounded-2xl bg-white p-4 shadow-sm">
+          <p className="text-xs font-semibold uppercase tracking-wide text-stone-400">Struktur</p>
+          <p className="mt-2 text-sm text-stone-500">
+            Ändra grundschemat — vem som har barnet vilka dagar, och när bytet sker. Inlagda aktiviteter
+            och godkända bytesdagar påverkas inte.
+          </p>
+          <button
+            onClick={onEditStructure}
+            className="mt-3 w-full rounded-full bg-stone-800 py-2.5 text-sm font-semibold text-white hover:bg-stone-700"
+          >
+            Ändra grundschema
+          </button>
         </div>
       )}
 

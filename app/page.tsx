@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "../lib/auth/AuthProvider";
 import {
   requestAndSavePushToken,
@@ -58,6 +58,7 @@ import CalendarView from "../components/CalendarView";
 import BottomNav, { AppSection } from "../components/BottomNav";
 import SubTabs from "../components/SubTabs";
 import SettingsView from "../components/SettingsView";
+import CustodyCycleBuilder from "../components/onboarding/CustodyCycleBuilder";
 import BalanceCard from "../components/BalanceCard";
 import PendingShiftRequests from "../components/PendingShiftRequests";
 import ChatView from "../components/ChatView";
@@ -68,7 +69,7 @@ import ChildInfoView from "../components/ChildInfoView";
 import AccountsView from "../components/AccountsView";
 import CycleSetupScreen from "../components/onboarding/CycleSetupScreen";
 import AddFirstChildScreen from "../components/onboarding/AddFirstChildScreen";
-import { createInvite, addChild, saveCustodyCycle } from "../lib/onboardingClient";
+import { createInvite, addChild, saveCustodyCycle, repairPendingPartner } from "../lib/onboardingClient";
 import {
   PENDING_PARTNER_ID,
   DEFAULT_HANDOFF_REMINDER_PREFS,
@@ -201,6 +202,23 @@ export default function HomePage() {
     return real;
   }, [team, user]);
 
+  // Självläkning: team som anslöts innan listChildIds-buggen fixades har
+  // kvar PENDING_PARTNER_ID i schemat, vilket gör att kalendern visar EN
+  // förälder på alla dagar. Byt ut den mot partnerns riktiga uid en gång.
+  const repairAttempted = useRef(false);
+  const [editingStructure, setEditingStructure] = useState(false);
+  useEffect(() => {
+    if (repairAttempted.current) return;
+    if (!teamId || !cycle) return;
+    if ((team?.parentIds?.length ?? 0) < 2) return;
+    if (!cycle.blocks?.some((b) => b.parentId === PENDING_PARTNER_ID)) return;
+
+    repairAttempted.current = true;
+    repairPendingPartner(teamId).catch((err) => {
+      console.error("[repairPendingPartner] misslyckades:", err);
+    });
+  }, [teamId, cycle, team]);
+
   // Prenumerationslänkarna (ICS) — två stycken, en per förälder. Hämtas lat
   // bara när teamet, barnet och den andra föräldern är kända.
   const [feedLinks, setFeedLinks] = useState<Record<string, CalendarFeedLinks> | null>(null);
@@ -260,6 +278,46 @@ export default function HomePage() {
   // som tillhör hen pekar då tillfälligt på platshållaren PENDING_PARTNER_ID.
   // Den ersätts automatiskt med partnerns riktiga uid när inbjudan
   // accepteras, så detta steg får INTE vänta på att parents.length === 2.
+  // "Ändra grundschema" från Inställningar. Samma byggare som i
+  // onboarding, men förifylld med nuvarande cykel. Bara custodyCycle
+  // skrivs om — aktiviteter och godkända bytesdagar ligger i egna
+  // dokument och rörs inte.
+  if (editingStructure && activeChild && cycle) {
+    const self = parents[0] ?? { id: user!.uid, name: user?.displayName ?? "Du" };
+    const partner = parents[1] ?? { id: PENDING_PARTNER_ID, name: "Andra föräldern" };
+    return (
+      <div className="mx-auto max-w-md px-4 py-6">
+        <h1 className="mb-1 text-2xl font-bold text-stone-800">Ändra grundschema</h1>
+        <p className="mb-6 text-sm text-stone-500">
+          Aktiviteter och godkända bytesdagar påverkas inte.
+        </p>
+        <CustodyCycleBuilder
+          childName={activeChild.name}
+          parents={[
+            { id: self.id, name: self.name },
+            { id: partner.id, name: partner.name },
+          ]}
+          initialBlocks={cycle.blocks}
+          initialStartDate={cycle.cycleStartDate}
+          initialSwitchHour={cycle.switchHour}
+          submitLabel="Spara ändringar"
+          onCancel={() => setEditingStructure(false)}
+          onSave={async (blocks, cycleStartDate, switchHour) => {
+            await saveCustodyCycle({
+              teamId: teamId!,
+              childId: activeChild.id,
+              blocks,
+              cycleStartDate,
+              switchHour,
+              referenceParentId: self.id,
+            });
+            setEditingStructure(false);
+          }}
+        />
+      </div>
+    );
+  }
+
   if (!cycle) {
     const self = parents[0] ?? { id: user!.uid, name: user?.displayName ?? "Du" };
     const partner = parents[1] ?? { id: PENDING_PARTNER_ID, name: "Andra föräldern" };
@@ -435,6 +493,9 @@ export default function HomePage() {
                 hasPartner={hasPartner}
                 teamName={team?.name}
                 onCreateInvite={() => createInvite(teamId!)}
+                onEditStructure={
+                  hasPartner && activeChild && cycle ? () => setEditingStructure(true) : undefined
+                }
               />
             )}
 

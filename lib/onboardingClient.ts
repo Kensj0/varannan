@@ -1,5 +1,5 @@
 import { httpsCallable } from "firebase/functions";
-import { doc, setDoc, collection } from "firebase/firestore";
+import { doc, setDoc, collection, updateDoc, arrayUnion } from "firebase/firestore";
 import { functions, db } from "./firebase";
 import { CustodyCycleBlock, ChildDoc } from "../types/schema";
 
@@ -31,6 +31,12 @@ export async function acceptInvite(code: string): Promise<{ teamId: string }> {
   return res.data;
 }
 
+export async function repairPendingPartner(teamId: string): Promise<{ repaired: number }> {
+  const fn = httpsCallable<{ teamId: string }, { repaired: number }>(functions, "repairPendingPartner");
+  const res = await fn({ teamId });
+  return res.data;
+}
+
 export async function addChild(teamId: string, name: string, birthYear?: number): Promise<{ childId: string }> {
   const ref = doc(collection(db, `teams/${teamId}/children`));
   const childDoc: ChildDoc = {
@@ -44,6 +50,10 @@ export async function addChild(teamId: string, name: string, birthYear?: number)
     ...(birthYear !== undefined ? { birthYear } : {}),
   };
   await setDoc(ref, childDoc);
+  // Håll team.childIds i synk. sendHandoffReminders läser det fältet för
+  // att veta vilka barn som finns, så utan detta skickades aldrig några
+  // överlämningspåminnelser för barn som lagts till från klienten.
+  await updateDoc(doc(db, `teams/${teamId}`), { childIds: arrayUnion(ref.id) });
   return { childId: ref.id };
 }
 
