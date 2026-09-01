@@ -1,0 +1,65 @@
+name: Laga invoker-behörighet
+
+# approveshiftrequestbatch saknade IAM-bindningen som släpper in anrop
+# (allUsers + roles/run.invoker), medan alla andra callables hade den.
+# Cloud Run avvisade därför anropen med 403 innan containern startade:
+# inget syntes i funktionsloggarna, och klienten fick "functions/internal".
+#
+# Att invoker är "allUsers" är normalt för callables — själva
+# behörighetskontrollen görs inne i funktionen via request.auth, och varje
+# funktion här avvisar oinloggade anrop och icke-medlemmar explicit.
+on:
+  workflow_dispatch:
+    inputs:
+      service:
+        description: "Vilken Cloud Run-tjänst (gemener)"
+        required: true
+        default: "approveshiftrequestbatch"
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Skriv Google service account-nyckel till fil
+        run: echo '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}' > /tmp/gcp-key.json
+
+      - name: Lägg tillbaka invoker-bindningen
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: /tmp/gcp-key.json
+        run: |
+          mkdir -p diagnostics
+          gcloud auth activate-service-account --key-file=/tmp/gcp-key.json
+          gcloud config set project varannan-familj
+
+          {
+            echo "=== FÖRE ==="
+            gcloud run services get-iam-policy "${{ github.event.inputs.service }}" \
+              --region us-central1 --format=json 2>&1 || true
+
+            echo "=== SÄTTER allUsers/run.invoker ==="
+            gcloud run services add-iam-policy-binding "${{ github.event.inputs.service }}" \
+              --region us-central1 \
+              --member="allUsers" \
+              --role="roles/run.invoker" 2>&1 || true
+
+            echo "=== EFTER ==="
+            gcloud run services get-iam-policy "${{ github.event.inputs.service }}" \
+              --region us-central1 --format=json 2>&1 || true
+          } > diagnostics/iam-fix.txt
+
+          cat diagnostics/iam-fix.txt
+
+      - name: Publicera på grenen diagnostics
+        run: |
+          git config user.name "varannan-bot"
+          git config user.email "bot@varannan.local"
+          git checkout -B diagnostics
+          git add -f diagnostics/iam-fix.txt
+          git commit -m "IAM-fix $(date -u +%Y-%m-%dT%H:%M:%SZ)" || exit 0
+          git push -f origin diagnostics
