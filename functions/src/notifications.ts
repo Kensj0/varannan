@@ -7,7 +7,27 @@ import * as admin from "firebase-admin";
  * webbläsardata rensad) — annars växer listan bara och skickandet blir
  * långsammare och långsammare över tid.
  */
+/**
+ * Skickar en push. Kastar ALDRIG vidare — notiser är sidoeffekter och
+ * körs efter att den egentliga handlingen redan committats. Ett fel från
+ * FCM (ogiltig token, API-kvot, nätverk) fällde tidigare hela den
+ * anropande callablen med "INTERNAL", så användaren fick ett felmeddelande
+ * trots att ändringen faktiskt sparats.
+ */
 export async function sendPushToUser(
+  db: admin.firestore.Firestore,
+  uid: string,
+  notification: { title: string; body: string },
+  data?: Record<string, string>
+): Promise<void> {
+  try {
+    await sendPushToUserOrThrow(db, uid, notification, data);
+  } catch (err) {
+    console.error(`[sendPushToUser] kunde inte skicka till ${uid}:`, err);
+  }
+}
+
+async function sendPushToUserOrThrow(
   db: admin.firestore.Firestore,
   uid: string,
   notification: { title: string; body: string },

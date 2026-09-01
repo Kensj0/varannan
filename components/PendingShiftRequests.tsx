@@ -64,8 +64,15 @@ export default function PendingShiftRequests({
       } else {
         await onRespond(group.items[0].id, decision);
       }
-    } catch {
-      setError("Kunde inte skicka svaret. Försök igen.");
+    } catch (err) {
+      console.error("[PendingShiftRequests] svar misslyckades:", err);
+      // Visa serverns egen text när den finns — den skiljer på "redan
+      // hanterad", "din egen förfrågan" och riktiga fel, som kräver
+      // helt olika åtgärder från användaren.
+      const code = (err as { code?: string })?.code ?? "";
+      const message = (err as { message?: string })?.message ?? "";
+      const detail = [code, message].filter(Boolean).join(": ");
+      setError(detail ? `Kunde inte skicka svaret. ${detail}` : "Kunde inte skicka svaret. Försök igen.");
     } finally {
       setBusyKey(null);
     }
