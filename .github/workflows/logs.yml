@@ -15,6 +15,10 @@ on:
         description: "Antal rader"
         required: false
         default: "80"
+      severity:
+        description: "Lägsta allvarlighetsgrad (DEFAULT/WARNING/ERROR)"
+        required: false
+        default: "DEFAULT"
 
 permissions:
   # Krävs för att kunna pusha loggen till grenen "diagnostics".
@@ -47,7 +51,7 @@ jobs:
           # revisioner, dit gen2-funktioner skriver) och hoppar över audit.
           # Hoppa över instansstart/hälsokontroller — de säger inget om
           # varför ett anrop misslyckas och tränger undan de rader som gör det.
-          FILTER='resource.type="cloud_run_revision"
+          FILTER='resource.type="cloud_run_revision" AND severity>=${{ github.event.inputs.severity }}
             AND NOT textPayload:"Starting new instance"
             AND NOT textPayload:"STARTUP TCP probe"'
           if [ -n "${{ github.event.inputs.function }}" ]; then
