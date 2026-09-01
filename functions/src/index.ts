@@ -321,6 +321,144 @@ export const clearApprovedShiftsFrom = onCall(async (request) => {
   return { removed, balanceAdjusted: true };
 });
 
+/**
+ * Begär en justering av ställningen utan att flytta specifika dagar.
+ * Skapar bara förfrågan — inget skrivs till dayBalance förrän motparten
+ * godkänner, av samma skäl som för dagbyten: ställningen är en
+ * överenskommelse mellan två personer, inte ett värde någon sätter själv.
+ */
+export const proposeBalanceAdjustment = onCall(async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) throw new HttpsError("unauthenticated", "Du måste vara inloggad.");
+
+  const { teamId, childId, deltaDays, note } = request.data as {
+    teamId: string;
+    childId: string;
+    deltaDays: number;
+    note?: string;
+  };
+
+  if (!Number.isInteger(deltaDays) || deltaDays === 0) {
+    throw new HttpsError("invalid-argument", "Antalet dagar måste vara ett heltal skilt från noll.");
+  }
+  if (Math.abs(deltaDays) > 60) {
+    throw new HttpsError("invalid-argument", "Justeringen är orimligt stor.");
+  }
+
+  const teamSnap = await db.doc(`teams/${teamId}`).get();
+  if (!teamSnap.exists) throw new HttpsError("not-found", "Team saknas.");
+  const parentIds: string[] = teamSnap.data()?.parentIds ?? [];
+  if (!parentIds.includes(uid)) throw new HttpsError("permission-denied", "Du är inte medlem i teamet.");
+  if (parentIds.length < 2) {
+    throw new HttpsError("failed-precondition", "Den andra föräldern har inte anslutit än.");
+  }
+
+  const ref = db.collection(`teams/${teamId}/children/${childId}/balanceRequests`).doc();
+  await ref.set({
+    id: ref.id,
+    teamId,
+    childId,
+    requestedBy: uid,
+    deltaDays,
+    ...(note ? { note } : {}),
+    status: "pending",
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+
+  const others = parentIds.filter((p) => p !== uid);
+  const requesterName = teamSnap.data()?.parentProfiles?.[uid]?.displayName ?? "Andra föräldern";
+  await sendPushToUsers(db, others, {
+    title: "Förslag om ändrad ställning",
+    body: `${requesterName} föreslår en justering på ${Math.abs(deltaDays)} dag${
+      Math.abs(deltaDays) === 1 ? "" : "ar"
+    }.`,
+  });
+
+  return { id: ref.id };
+});
+
+/** Godkänner eller avböjer en begärd justering av ställningen. */
+export const respondToBalanceAdjustment = onCall(async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) throw new HttpsError("unauthenticated", "Du måste vara inloggad.");
+
+  const { teamId, childId, requestId, decision } = request.data as {
+    teamId: string;
+    childId: string;
+    requestId: string;
+    decision: "approved" | "declined";
+  };
+  if (!["approved", "declined"].includes(decision)) {
+    throw new HttpsError("invalid-argument", "decision måste vara 'approved' eller 'declined'.");
+  }
+
+  const teamRef = db.doc(`teams/${teamId}`);
+  const reqRef = db.doc(`teams/${teamId}/children/${childId}/balanceRequests/${requestId}`);
+  const balanceRef = db.doc(`teams/${teamId}/children/${childId}/dayBalance/main`);
+
+  let notifyRequestedBy: string | null = null;
+  let responderName = "Andra föräldern";
+
+  await db.runTransaction(async (tx) => {
+    const [teamSnap, reqSnap, balanceSnap] = await Promise.all([
+      tx.get(teamRef),
+      tx.get(reqRef),
+      tx.get(balanceRef),
+    ]);
+
+    if (!teamSnap.exists) throw new HttpsError("not-found", "Team saknas.");
+    const parentIds: string[] = teamSnap.data()!.parentIds ?? [];
+    if (!parentIds.includes(uid)) throw new HttpsError("permission-denied", "Du är inte medlem i teamet.");
+    if (!reqSnap.exists) throw new HttpsError("not-found", "Förfrågan saknas.");
+
+    const req = reqSnap.data() as { status: string; requestedBy: string; deltaDays: number };
+    if (req.status !== "pending") throw new HttpsError("failed-precondition", "Förfrågan är redan hanterad.");
+    if (req.requestedBy === uid) {
+      throw new HttpsError("permission-denied", "Du kan inte godkänna din egen förfrågan.");
+    }
+
+    notifyRequestedBy = req.requestedBy;
+    responderName = teamSnap.data()?.parentProfiles?.[uid]?.displayName ?? responderName;
+
+    tx.update(reqRef, {
+      status: decision,
+      respondedBy: uid,
+      respondedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
+    if (decision !== "approved") return;
+    if (!balanceSnap.exists) throw new HttpsError("not-found", "Ingen ställning initierad för barnet.");
+
+    const balance = balanceSnap.data() as DayBalanceDoc;
+    const newBalance = balance.balanceDays + req.deltaDays;
+    tx.set(balanceRef, {
+      ...balance,
+      balanceDays: newBalance,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
+    const historyRef = db.collection(`teams/${teamId}/children/${childId}/dayBalanceHistory`).doc();
+    tx.set(historyRef, {
+      id: historyRef.id,
+      childId,
+      shiftRequestId: "",
+      deltaDays: req.deltaDays,
+      balanceAfter: newBalance,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      note: "Manuell justering av ställningen",
+    });
+  });
+
+  if (notifyRequestedBy) {
+    await sendPushToUser(db, notifyRequestedBy, {
+      title: decision === "approved" ? "Ställningen ändrades" : "Justeringen avböjdes",
+      body: `${responderName} ${decision === "approved" ? "godkände" : "avböjde"} förslaget om ställningen.`,
+    });
+  }
+
+  return { ok: true };
+});
+
 export const acceptInvite = onCall(async (request) => {
   const uid = request.auth?.uid;
   if (!uid) throw new HttpsError("unauthenticated", "Du måste vara inloggad.");

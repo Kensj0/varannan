@@ -75,13 +75,19 @@ export interface TeamParentProfile {
  * Google Calendars egna kalenderfärger, så att ett exporterat/prenumererat
  * schema ser likadant ut i appen som i Google Calendar.
  */
+/**
+ * Mjukare toner än Google Calendars grundfärger. De ursprungliga
+ * (#D50000, #039BE5 …) är gjorda för små punkter, och blir tunga när de
+ * fyller breda staplar över hela kalendern. Dessa är ett par snäpp
+ * ljusare men behåller samma kulörer, så vit text fortfarande läses.
+ */
 export const PARENT_PALETTE = [
-  { id: "tomato", label: "Tomat", hex: "#D50000" },
-  { id: "tangerine", label: "Mandarin", hex: "#F4511E" },
-  { id: "banana", label: "Banan", hex: "#F6BF26" },
-  { id: "basil", label: "Basilika", hex: "#0B8043" },
-  { id: "peacock", label: "Påfågel", hex: "#039BE5" },
-  { id: "grape", label: "Vindruva", hex: "#8E24AA" },
+  { id: "tomato", label: "Tomat", hex: "#E8615E" },
+  { id: "tangerine", label: "Mandarin", hex: "#F58A5B" },
+  { id: "banana", label: "Banan", hex: "#EBC15C" },
+  { id: "basil", label: "Basilika", hex: "#4FA97B" },
+  { id: "peacock", label: "Påfågel", hex: "#6FB3E8" },
+  { id: "grape", label: "Vindruva", hex: "#A87BC7" },
 ] as const;
 
 export type ParentColorId = (typeof PARENT_PALETTE)[number]["id"];
@@ -264,6 +270,28 @@ export interface DayBalanceDoc {
   referenceParentId: string;
   lastShiftRequestId?: string;
   updatedAt: FirestoreTimestamp;
+}
+
+/**
+ * /children/{childId}/balanceRequests/{id}
+ *
+ * En begäran om att justera ställningen utan att flytta specifika dagar —
+ * t.ex. när föräldrarna kommit överens muntligt om att kvitta några dagar.
+ * Kräver motpartens godkännande, precis som ett dagbyte, eftersom
+ * ställningen annars skulle kunna skrivas om ensidigt.
+ */
+export interface BalanceRequestDoc {
+  id: string;
+  teamId: string;
+  childId: string;
+  requestedBy: string;
+  /** Signerat mot referensföräldern, samma konvention som DayBalanceDoc. */
+  deltaDays: number;
+  note?: string;
+  status: ShiftRequestStatus;
+  respondedBy?: string;
+  respondedAt?: FirestoreTimestamp;
+  createdAt: FirestoreTimestamp;
 }
 
 /** Append-only historik, användbar för "Ställning"-vyns detaljlista. */

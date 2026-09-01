@@ -507,10 +507,10 @@ export default function CalendarView({
                     borderBottomLeftRadius: bar.roundedStart ? 6 : 0,
                     borderTopRightRadius: bar.roundedEnd ? 6 : 0,
                     borderBottomRightRadius: bar.roundedEnd ? 6 : 0,
-                    // 1px luft i varje bytespunkt så att de två halvorna läses
+                    // Luft i varje bytespunkt så att de två halvorna läses
                     // som två block som möts, inte ett enda långt fält.
-                    marginLeft: bar.roundedStart ? 1 : 0,
-                    marginRight: bar.roundedEnd ? 1 : 0,
+                    marginLeft: bar.roundedStart ? 3 : 0,
+                    marginRight: bar.roundedEnd ? 3 : 0,
                   }}
                 >
                   <span className="truncate text-[11px] font-semibold leading-none text-white">
@@ -539,8 +539,8 @@ export default function CalendarView({
                       borderBottomLeftRadius: bar.roundedStart ? 5 : 0,
                       borderTopRightRadius: bar.roundedEnd ? 5 : 0,
                       borderBottomRightRadius: bar.roundedEnd ? 5 : 0,
-                      marginLeft: bar.roundedStart ? 1 : 0,
-                      marginRight: bar.roundedEnd ? 1 : 0,
+                      marginLeft: bar.roundedStart ? 3 : 0,
+                      marginRight: bar.roundedEnd ? 3 : 0,
                     }}
                   >
                     <span className="truncate text-[10px] font-medium leading-none text-white">

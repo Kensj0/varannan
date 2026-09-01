@@ -204,6 +204,27 @@ export async function proposeShiftRequestBatch(args: {
 }
 
 /** Godkänn eller avböj en hel grupp av dagändringar i ett svep. */
+export async function proposeBalanceAdjustment(args: {
+  teamId: string;
+  childId: string;
+  deltaDays: number;
+  note?: string;
+}): Promise<{ id: string }> {
+  const fn = httpsCallable<typeof args, { id: string }>(functions, "proposeBalanceAdjustment");
+  const res = await fn(args);
+  return res.data;
+}
+
+export async function respondToBalanceAdjustment(args: {
+  teamId: string;
+  childId: string;
+  requestId: string;
+  decision: "approved" | "declined";
+}): Promise<void> {
+  const fn = httpsCallable(functions, "respondToBalanceAdjustment");
+  await fn(args);
+}
+
 export async function clearApprovedShiftsFrom(args: {
   teamId: string;
   childId: string;
