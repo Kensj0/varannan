@@ -1,0 +1,51 @@
+name: Kolla IAM för callable-funktioner
+
+# Diagnostik. Ett callable-anrop som saknar "allUsers" som run.invoker
+# avvisas av Cloud Run INNAN containern startar — anropet syns då aldrig
+# i funktionens loggar, och klientens Firebase-SDK rapporterar det som
+# "functions/internal" eftersom svaret varken är JSON eller CORS-tillåtet.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  iam:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Skriv Google service account-nyckel till fil
+        run: echo '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}' > /tmp/gcp-key.json
+
+      - name: Jämför invoker-behörigheter
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: /tmp/gcp-key.json
+        run: |
+          mkdir -p diagnostics
+          gcloud auth activate-service-account --key-file=/tmp/gcp-key.json
+          gcloud config set project varannan-familj
+
+          {
+            for SVC in acceptinvite createinvite approveshiftrequest \
+                       approveshiftrequestbatch savecustodycycle repairpendingpartner; do
+              echo "=== $SVC ==="
+              gcloud run services get-iam-policy "$SVC" \
+                --region us-central1 --format=json 2>&1 \
+                | grep -E '"members"|allUsers|role|ERROR' || echo "(ingen policy hittad)"
+              echo
+            done
+          } > diagnostics/iam.txt 2>&1
+
+          cat diagnostics/iam.txt
+
+      - name: Publicera på grenen diagnostics
+        run: |
+          git config user.name "varannan-bot"
+          git config user.email "bot@varannan.local"
+          git checkout -B diagnostics
+          git add -f diagnostics/iam.txt
+          git commit -m "IAM $(date -u +%Y-%m-%dT%H:%M:%SZ)" || exit 0
+          git push -f origin diagnostics
