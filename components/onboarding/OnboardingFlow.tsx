@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import CustodyCycleBuilder, { CycleParent } from "./CustodyCycleBuilder";
-import { CustodyCycleBlock, PENDING_PARTNER_ID } from "../../types/schema";
+import { CustodyCycleBlock, PENDING_PARTNER_ID, parentColorHex } from "../../types/schema";
 
 type Step = "team" | "child" | "cycle" | "invite";
 
@@ -218,8 +218,8 @@ function CycleStep({
   // Andra föräldern finns inte än — schemat byggs med en platshållare som
   // automatiskt ersätts av hens riktiga uid när inbjudan accepteras.
   const parents: [CycleParent, CycleParent] = [
-    { id: currentUserUid, name: currentUserName },
-    { id: PENDING_PARTNER_ID, name: "Andra föräldern" },
+    { id: currentUserUid, name: currentUserName, color: parentColorHex(undefined, 0) },
+    { id: PENDING_PARTNER_ID, name: "Andra föräldern", color: parentColorHex(undefined, 1) },
   ];
 
   return (

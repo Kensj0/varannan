@@ -12,7 +12,8 @@ import {
   updateProfile,
   sendPasswordResetEmail,
 } from "firebase/auth";
-import { auth } from "../firebase";
+import { auth, db } from "../firebase";
+import { doc, updateDoc } from "firebase/firestore";
 import { ensureUserDocument } from "./ensureUserDocument";
 import { UserDoc } from "../../types/schema";
 
@@ -25,6 +26,8 @@ interface AuthContextValue {
   signInWithGoogle: () => Promise<void>;
   resetPassword: (email: string) => Promise<void>;
   signOutUser: () => Promise<void>;
+  /** Byter visningsnamn i både Auth och users/{uid}. */
+  updateDisplayName: (name: string) => Promise<void>;
   /** Kalla efter t.ex. createFamilyTeam-callable lyckats, så UI:t uppdateras utan omladdning. */
   refreshUserDoc: () => Promise<void>;
 }
@@ -81,9 +84,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await signOut(auth);
   }
 
+  /**
+   * Skriver namnet både till Firebase Auth och till users/{uid}. Det
+   * senare är det som faktiskt syns för den andra föräldern:
+   * syncDisplayNameToTeam-triggern speglar users/{uid}.displayName till
+   * teams/{id}.parentProfiles, som kalendern läser namnen från.
+   */
+  async function updateDisplayName(name: string) {
+    const trimmed = name.trim();
+    if (!trimmed) throw new Error("Namnet kan inte vara tomt.");
+    if (!auth.currentUser) throw new Error("Du måste vara inloggad.");
+
+    await updateProfile(auth.currentUser, { displayName: trimmed });
+    await updateDoc(doc(db, "users", auth.currentUser.uid), { displayName: trimmed });
+
+    // Auth-objektet muteras på plats, så React ser ingen ny referens —
+    // tvinga fram en omrendering så namnet uppdateras direkt i UI:t.
+    setUser({ ...auth.currentUser } as User);
+    await refreshUserDoc();
+  }
+
   return (
     <AuthContext.Provider
-      value={{ user, userDoc, loading, signUpWithEmail, signInWithEmail, signInWithGoogle, resetPassword, signOutUser, refreshUserDoc }}
+      value={{ user, userDoc, loading, signUpWithEmail, signInWithEmail, signInWithGoogle, resetPassword, signOutUser, updateDisplayName, refreshUserDoc }}
     >
       {children}
     </AuthContext.Provider>

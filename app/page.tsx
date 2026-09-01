@@ -102,7 +102,7 @@ const INFO_SUB_TABS: { id: InfoSubTab; label: string }[] = [
 ];
 
 export default function HomePage() {
-  const { user, userDoc, signOutUser, resetPassword } = useAuth();
+  const { user, userDoc, signOutUser, resetPassword, updateDisplayName } = useAuth();
 
   // Push-notiser: fråga om lov och visa en banderoll om pushar som
   // kommer in medan fliken redan är öppen (då visar inte webbläsaren
@@ -283,8 +283,16 @@ export default function HomePage() {
   // skrivs om — aktiviteter och godkända bytesdagar ligger i egna
   // dokument och rörs inte.
   if (editingStructure && activeChild && cycle) {
-    const self = parents[0] ?? { id: user!.uid, name: user?.displayName ?? "Du" };
-    const partner = parents[1] ?? { id: PENDING_PARTNER_ID, name: "Andra föräldern" };
+    const self = parents[0] ?? {
+      id: user!.uid,
+      name: user?.displayName ?? "Du",
+      color: parentColorHex(undefined, 0),
+    };
+    const partner = parents[1] ?? {
+      id: PENDING_PARTNER_ID,
+      name: "Andra föräldern",
+      color: parentColorHex(undefined, 1),
+    };
     return (
       <div className="mx-auto max-w-md px-4 py-6">
         <h1 className="mb-1 text-2xl font-bold text-stone-800">Ändra grundschema</h1>
@@ -294,8 +302,8 @@ export default function HomePage() {
         <CustodyCycleBuilder
           childName={activeChild.name}
           parents={[
-            { id: self.id, name: self.name },
-            { id: partner.id, name: partner.name },
+            { id: self.id, name: self.name, color: self.color },
+            { id: partner.id, name: partner.name, color: partner.color },
           ]}
           initialBlocks={cycle.blocks}
           initialStartDate={cycle.cycleStartDate}
@@ -319,14 +327,22 @@ export default function HomePage() {
   }
 
   if (!cycle) {
-    const self = parents[0] ?? { id: user!.uid, name: user?.displayName ?? "Du" };
-    const partner = parents[1] ?? { id: PENDING_PARTNER_ID, name: "Andra föräldern" };
+    const self = parents[0] ?? {
+      id: user!.uid,
+      name: user?.displayName ?? "Du",
+      color: parentColorHex(undefined, 0),
+    };
+    const partner = parents[1] ?? {
+      id: PENDING_PARTNER_ID,
+      name: "Andra föräldern",
+      color: parentColorHex(undefined, 1),
+    };
     return (
       <CycleSetupScreen
         childName={activeChild.name}
         parents={[
-          { id: self.id, name: self.name },
-          { id: partner.id, name: partner.name },
+          { id: self.id, name: self.name, color: self.color },
+          { id: partner.id, name: partner.name, color: partner.color },
         ]}
         onSave={async (blocks, cycleStartDate, switchHour) => {
           await saveCustodyCycle({
@@ -493,6 +509,7 @@ export default function HomePage() {
                 hasPartner={hasPartner}
                 teamName={team?.name}
                 onCreateInvite={() => createInvite(teamId!)}
+                onUpdateDisplayName={updateDisplayName}
                 onEditStructure={
                   hasPartner && activeChild && cycle ? () => setEditingStructure(true) : undefined
                 }
