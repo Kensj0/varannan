@@ -44,42 +44,125 @@ export function getScheduledParentForDate(cycle: CustodyCycleDoc, at: Date): Cyc
   if (cycleLengthDays <= 0) {
     throw new Error("Cykeln måste ha minst ett block med days > 0");
   }
-  const cycleLengthMs = cycleLengthDays * MS_PER_DAY;
 
-  const anchorMs = resolveCycleAnchorMs(cycle);
+  const timeZone = cycle.timezone || "Europe/Stockholm";
+  const [switchH, switchM] = cycle.switchHour.split(":").map(Number);
 
-  // Hur långt in i cykeln (i ms) befinner vi oss, modulo cykelns längd.
-  // Hanterar även datum FÖRE cycleStartDate korrekt via positiv modulo.
-  const elapsed = at.getTime() - anchorMs;
-  const offsetInCycle = ((elapsed % cycleLengthMs) + cycleLengthMs) % cycleLengthMs;
-  const cycleBaseMs = anchorMs + (elapsed - offsetInCycle);
+  // Räkna i KALENDERDAGAR, inte i fasta 24-timmarssteg. Ett dygn är inte
+  // alltid 86 400 000 ms: vid sommartidsomställningen är det 23 eller 25
+  // timmar. Tidigare adderades block som fasta ms från ett ankare, vilket
+  // gjorde att bytespunkten gled en timme i lokal tid efter varje
+  // omställning (08:00 blev 07:00 på vintern). Då hamnade morgonsamplingen
+  // — switchHour minus en minut — på fel sida om gränsen, bytesdagarna
+  // slutade upptäckas, och kalendern ritade hela veckor i en färg.
+  const wall = getZonedParts(at, timeZone);
 
-  let cursorMs = 0;
+  // Ett "cykeldygn" löper från switchHour till switchHour. Är klockan före
+  // bytestiden tillhör tidpunkten alltså föregående dygns block.
+  const beforeSwitch =
+    wall.hour < switchH || (wall.hour === switchH && wall.minute < switchM);
+  const effectiveDayNumber = daysFromCivil(wall.year, wall.month, wall.day) - (beforeSwitch ? 1 : 0);
+
+  const [startY, startM, startD] = cycle.cycleStartDate.split("-").map(Number);
+  const anchorDayNumber = daysFromCivil(startY, startM, startD);
+
+  const dayIndex = effectiveDayNumber - anchorDayNumber;
+  const offsetInCycle = ((dayIndex % cycleLengthDays) + cycleLengthDays) % cycleLengthDays;
+  const cycleBaseDayNumber = effectiveDayNumber - offsetInCycle;
+
+  let cursorDays = 0;
   for (let i = 0; i < cycle.blocks.length; i++) {
-    const blockLengthMs = cycle.blocks[i].days * MS_PER_DAY;
-    if (offsetInCycle < cursorMs + blockLengthMs) {
-      const segmentStartMs = cycleBaseMs + cursorMs;
+    const blockDays = cycle.blocks[i].days;
+    if (offsetInCycle < cursorDays + blockDays) {
+      const startDayNumber = cycleBaseDayNumber + cursorDays;
       return {
         parentId: cycle.blocks[i].parentId,
         blockIndex: i,
-        segmentStart: new Date(segmentStartMs),
-        segmentEnd: new Date(segmentStartMs + blockLengthMs),
+        segmentStart: new Date(switchInstantForDayNumber(startDayNumber, switchH, switchM, timeZone)),
+        segmentEnd: new Date(
+          switchInstantForDayNumber(startDayNumber + blockDays, switchH, switchM, timeZone)
+        ),
       };
     }
-    cursorMs += blockLengthMs;
+    cursorDays += blockDays;
   }
 
-  // Ska aldrig nås (offsetInCycle < cycleLengthMs garanterar en träff ovan),
+  // Ska aldrig nås (offsetInCycle < cycleLengthDays garanterar en träff ovan),
   // men TypeScript vill ha en retur.
   const lastIndex = cycle.blocks.length - 1;
-  const lastLengthMs = cycle.blocks[lastIndex].days * MS_PER_DAY;
-  const lastStartMs = cycleBaseMs + cycleLengthMs - lastLengthMs;
+  const lastDays = cycle.blocks[lastIndex].days;
+  const lastStartDayNumber = cycleBaseDayNumber + cycleLengthDays - lastDays;
   return {
     parentId: cycle.blocks[lastIndex].parentId,
     blockIndex: lastIndex,
-    segmentStart: new Date(lastStartMs),
-    segmentEnd: new Date(lastStartMs + lastLengthMs),
+    segmentStart: new Date(switchInstantForDayNumber(lastStartDayNumber, switchH, switchM, timeZone)),
+    segmentEnd: new Date(
+      switchInstantForDayNumber(lastStartDayNumber + lastDays, switchH, switchM, timeZone)
+    ),
   };
+}
+
+/** Väggklockans delar i en given tidszon för en absolut tidpunkt. */
+function getZonedParts(
+  instant: Date,
+  timeZone: string
+): { year: number; month: number; day: number; hour: number; minute: number } {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    hour12: false,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).formatToParts(instant);
+  const get = (type: string) => Number(parts.find((p) => p.type === type)!.value);
+  return {
+    year: get("year"),
+    month: get("month"),
+    day: get("day"),
+    hour: get("hour") % 24,
+    minute: get("minute"),
+  };
+}
+
+/**
+ * Dagnummer för ett civildatum (Howard Hinnants days_from_civil). Ren
+ * heltalsaritmetik utan Date-objekt, så den är helt opåverkad av tidszoner
+ * och sommartid — poängen med hela omskrivningen.
+ */
+function daysFromCivil(year: number, month: number, day: number): number {
+  const y = year - (month <= 2 ? 1 : 0);
+  const era = Math.floor((y >= 0 ? y : y - 399) / 400);
+  const yoe = y - era * 400;
+  const doy = Math.floor((153 * (month + (month > 2 ? -3 : 9)) + 2) / 5) + day - 1;
+  const doe = yoe * 365 + Math.floor(yoe / 4) - Math.floor(yoe / 100) + doy;
+  return era * 146097 + doe - 719468;
+}
+
+/** Omvändningen: dagnummer → civildatum. */
+function civilFromDays(dayNumber: number): { year: number; month: number; day: number } {
+  const z = dayNumber + 719468;
+  const era = Math.floor((z >= 0 ? z : z - 146096) / 146097);
+  const doe = z - era * 146097;
+  const yoe = Math.floor((doe - Math.floor(doe / 1460) + Math.floor(doe / 36524) - Math.floor(doe / 146096)) / 365);
+  const y = yoe + era * 400;
+  const doy = doe - (365 * yoe + Math.floor(yoe / 4) - Math.floor(yoe / 100));
+  const mp = Math.floor((5 * doy + 2) / 153);
+  const d = doy - Math.floor((153 * mp + 2) / 5) + 1;
+  const m = mp + (mp < 10 ? 3 : -9);
+  return { year: y + (m <= 2 ? 1 : 0), month: m, day: d };
+}
+
+/** Absolut tidpunkt för switchHour på ett givet dagnummer, i rätt tidszon. */
+function switchInstantForDayNumber(
+  dayNumber: number,
+  switchH: number,
+  switchM: number,
+  timeZone: string
+): number {
+  const { year, month, day } = civilFromDays(dayNumber);
+  return zonedWallClockToMs(year, month - 1, day, switchH, switchM, timeZone);
 }
 
 /**

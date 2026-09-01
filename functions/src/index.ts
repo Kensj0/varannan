@@ -207,6 +207,38 @@ export const repairPendingPartner = onCall(async (request) => {
  * och att sudda dem skulle skriva om historien och göra ställningen fel
  * åt andra hållet.
  */
+/**
+ * Godkända avvikelser som överlappar en period. Två motsatta godkännanden
+ * för samma dag gör schemat tvetydigt — kalendern kan bara visa en av dem,
+ * och vilken blev tidigare godtyckligt. Därför avvisas ett godkännande som
+ * krockar med en redan godkänd avvikelse.
+ */
+async function findOverlappingApproved(
+  teamId: string,
+  childId: string,
+  startMs: number,
+  endMs: number | null,
+  excludeIds: string[]
+): Promise<admin.firestore.QueryDocumentSnapshot[]> {
+  const snap = await db
+    .collection(`teams/${teamId}/shiftRequests`)
+    .where("childId", "==", childId)
+    .where("status", "==", "approved")
+    .get();
+
+  return snap.docs.filter((d) => {
+    if (excludeIds.includes(d.id)) return false;
+    const data = d.data();
+    const s = (data.startAt?.seconds ?? 0) * 1000;
+    const e = data.endAt ? data.endAt.seconds * 1000 : null;
+    // Öppna perioder ("till nästa ordinarie byte") räknas som pågående
+    // från sin start och framåt.
+    const overlapEnd = endMs ?? Infinity;
+    const otherEnd = e ?? Infinity;
+    return s < overlapEnd && otherEnd > startMs;
+  });
+}
+
 export const clearApprovedShiftsFrom = onCall(async (request) => {
   const uid = request.auth?.uid;
   if (!uid) throw new HttpsError("unauthenticated", "Du måste vara inloggad.");
@@ -397,6 +429,19 @@ export const approveShiftRequest = onCall(async (request) => {
   let notifyRequestedBy: string | null = null;
   let responderName = "Andra föräldern";
 
+  const preSnap = await requestRef.get();
+  const preData = preSnap.data() as ShiftRequestDoc | undefined;
+  const overlapping =
+    decision === "approved" && preData
+      ? await findOverlappingApproved(
+          teamId,
+          childId,
+          preData.startAt.seconds * 1000,
+          preData.endAt ? preData.endAt.seconds * 1000 : null,
+          [shiftRequestId]
+        )
+      : [];
+
   await db.runTransaction(async (tx) => {
     const [teamSnap, requestSnap] = await Promise.all([tx.get(teamRef), tx.get(requestRef)]);
 
@@ -418,6 +463,13 @@ export const approveShiftRequest = onCall(async (request) => {
 
     notifyRequestedBy = shiftRequest.requestedBy;
     responderName = teamSnap.data()?.parentProfiles?.[uid]?.displayName ?? responderName;
+
+    if (decision === "approved" && overlapping.length > 0) {
+      throw new HttpsError(
+        "failed-precondition",
+        "Perioden krockar med en ändring som redan är godkänd. Avböj den ena först."
+      );
+    }
 
     if (decision === "declined") {
       tx.update(requestRef, {
@@ -506,6 +558,33 @@ export const approveShiftRequestBatch = onCall(async (request) => {
   let notifyRequestedBy: string | null = null;
   let responderName = "Andra föräldern";
   let dayCount = 0;
+
+  // Överlappskoll före transaktionen, av samma skäl som i
+  // approveShiftRequest: en batch som krockar med redan godkända dagar
+  // skulle göra schemat tvetydigt.
+  if (decision === "approved") {
+    const preBatch = await db
+      .collection(`teams/${teamId}/shiftRequests`)
+      .where("batchId", "==", batchId)
+      .get();
+    const batchIds = preBatch.docs.map((d) => d.id);
+    for (const d of preBatch.docs) {
+      const data = d.data() as ShiftRequestDoc;
+      const clash = await findOverlappingApproved(
+        teamId,
+        childId,
+        data.startAt.seconds * 1000,
+        data.endAt ? data.endAt.seconds * 1000 : null,
+        batchIds
+      );
+      if (clash.length > 0) {
+        throw new HttpsError(
+          "failed-precondition",
+          "En eller flera dagar krockar med en ändring som redan är godkänd. Avböj den ena först."
+        );
+      }
+    }
+  }
 
   await db.runTransaction(async (tx) => {
     const teamSnap = await tx.get(teamRef);
