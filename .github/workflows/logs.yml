@@ -26,15 +26,33 @@ jobs:
       - name: Skriv Google service account-nyckel till fil
         run: echo '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}' > /tmp/gcp-key.json
 
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Hämta loggar
         env:
           GOOGLE_APPLICATION_CREDENTIALS: /tmp/gcp-key.json
         run: |
+          mkdir -p diagnostics
           if [ -n "${{ github.event.inputs.function }}" ]; then
             firebase functions:log \
               --only "${{ github.event.inputs.function }}" \
               -n "${{ github.event.inputs.lines }}" \
-              --project varannan-familj
+              --project varannan-familj > diagnostics/functions-log.txt 2>&1 || true
           else
-            firebase functions:log -n "${{ github.event.inputs.lines }}" --project varannan-familj
+            firebase functions:log -n "${{ github.event.inputs.lines }}" \
+              --project varannan-familj > diagnostics/functions-log.txt 2>&1 || true
           fi
+          tail -40 diagnostics/functions-log.txt
+
+      # Loggen committas till grenen "diagnostics" så den går att läsa via
+      # git. Körningsloggarna i Actions ligger bakom en separat domän som
+      # inte alltid är åtkomlig. Egen gren, för att inte skräpa ner main.
+      - name: Publicera loggen på grenen diagnostics
+        run: |
+          git config user.name "varannan-bot"
+          git config user.email "bot@varannan.local"
+          git checkout -B diagnostics
+          git add -f diagnostics/functions-log.txt
+          git commit -m "Loggar $(date -u +%Y-%m-%dT%H:%M:%SZ)" || exit 0
+          git push -f origin diagnostics
