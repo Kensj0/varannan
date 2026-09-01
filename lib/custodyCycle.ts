@@ -47,58 +47,53 @@ export function getScheduledParentForDate(cycle: CustodyCycleDoc, at: Date): Cyc
 
   const timeZone = cycle.timezone || "Europe/Stockholm";
   const [switchH, switchM] = cycle.switchHour.split(":").map(Number);
+  const [startY, startMo, startD] = cycle.cycleStartDate.split("-").map(Number);
 
-  // Räkna i KALENDERDAGAR, inte i fasta 24-timmarssteg. Ett dygn är inte
-  // alltid 86 400 000 ms: vid sommartidsomställningen är det 23 eller 25
-  // timmar. Tidigare adderades block som fasta ms från ett ankare, vilket
-  // gjorde att bytespunkten gled en timme i lokal tid efter varje
-  // omställning (08:00 blev 07:00 på vintern). Då hamnade morgonsamplingen
-  // — switchHour minus en minut — på fel sida om gränsen, bytesdagarna
-  // slutade upptäckas, och kalendern ritade hela veckor i en färg.
-  const wall = getZonedParts(at, timeZone);
+  // Räkna i VÄGGKLOCKSDAGAR, inte i fasta 24-timmarssteg. Ett dygn är
+  // inte alltid 24 timmar: vid övergången till/från sommartid är det 23
+  // respektive 25. Med fast ms-aritmetik gled blockgränserna därför en
+  // timme vid varje omställning (08:00 blev 07:00 efter 25 oktober), och
+  // då hamnade "morgonen" (switchHour minus en minut) på samma sida om
+  // gränsen som eftermiddagen. Bytesdagar slutade upptäckas helt, och
+  // kalendern ritade hela veckor i en färg.
+  const parts = getZonedParts(at, timeZone);
+  let dayNumber = daysFromCivil(parts.year, parts.month, parts.day);
+  // Före dagens bytestid tillhör man fortfarande föregående dygns block.
+  if (parts.hour * 60 + parts.minute < switchH * 60 + switchM) {
+    dayNumber -= 1;
+  }
 
-  // Ett "cykeldygn" löper från switchHour till switchHour. Är klockan före
-  // bytestiden tillhör tidpunkten alltså föregående dygns block.
-  const beforeSwitch =
-    wall.hour < switchH || (wall.hour === switchH && wall.minute < switchM);
-  const effectiveDayNumber = daysFromCivil(wall.year, wall.month, wall.day) - (beforeSwitch ? 1 : 0);
+  const startDayNumber = daysFromCivil(startY, startMo, startD);
+  const diff = dayNumber - startDayNumber;
+  const offsetInCycle = ((diff % cycleLengthDays) + cycleLengthDays) % cycleLengthDays;
 
-  const [startY, startM, startD] = cycle.cycleStartDate.split("-").map(Number);
-  const anchorDayNumber = daysFromCivil(startY, startM, startD);
-
-  const dayIndex = effectiveDayNumber - anchorDayNumber;
-  const offsetInCycle = ((dayIndex % cycleLengthDays) + cycleLengthDays) % cycleLengthDays;
-  const cycleBaseDayNumber = effectiveDayNumber - offsetInCycle;
-
-  let cursorDays = 0;
+  let cursor = 0;
   for (let i = 0; i < cycle.blocks.length; i++) {
     const blockDays = cycle.blocks[i].days;
-    if (offsetInCycle < cursorDays + blockDays) {
-      const startDayNumber = cycleBaseDayNumber + cursorDays;
+    if (offsetInCycle < cursor + blockDays) {
+      const segmentStartDay = dayNumber - (offsetInCycle - cursor);
       return {
         parentId: cycle.blocks[i].parentId,
         blockIndex: i,
-        segmentStart: new Date(switchInstantForDayNumber(startDayNumber, switchH, switchM, timeZone)),
+        segmentStart: new Date(switchInstantForDayNumber(segmentStartDay, switchH, switchM, timeZone)),
         segmentEnd: new Date(
-          switchInstantForDayNumber(startDayNumber + blockDays, switchH, switchM, timeZone)
+          switchInstantForDayNumber(segmentStartDay + blockDays, switchH, switchM, timeZone)
         ),
       };
     }
-    cursorDays += blockDays;
+    cursor += blockDays;
   }
 
-  // Ska aldrig nås (offsetInCycle < cycleLengthDays garanterar en träff ovan),
+  // Ska aldrig nås (offsetInCycle < cycleLengthDays garanterar en träff),
   // men TypeScript vill ha en retur.
   const lastIndex = cycle.blocks.length - 1;
   const lastDays = cycle.blocks[lastIndex].days;
-  const lastStartDayNumber = cycleBaseDayNumber + cycleLengthDays - lastDays;
+  const lastStartDay = dayNumber - (offsetInCycle - (cycleLengthDays - lastDays));
   return {
     parentId: cycle.blocks[lastIndex].parentId,
     blockIndex: lastIndex,
-    segmentStart: new Date(switchInstantForDayNumber(lastStartDayNumber, switchH, switchM, timeZone)),
-    segmentEnd: new Date(
-      switchInstantForDayNumber(lastStartDayNumber + lastDays, switchH, switchM, timeZone)
-    ),
+    segmentStart: new Date(switchInstantForDayNumber(lastStartDay, switchH, switchM, timeZone)),
+    segmentEnd: new Date(switchInstantForDayNumber(lastStartDay + lastDays, switchH, switchM, timeZone)),
   };
 }
 
