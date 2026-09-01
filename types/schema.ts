@@ -71,23 +71,33 @@ export interface TeamParentProfile {
 }
 
 /**
- * Sex färger att välja mellan för föräldrarnas scheman. Hexvärdena är
- * Google Calendars egna kalenderfärger, så att ett exporterat/prenumererat
- * schema ser likadant ut i appen som i Google Calendar.
- */
-/**
- * Mjukare toner än Google Calendars grundfärger. De ursprungliga
- * (#D50000, #039BE5 …) är gjorda för små punkter, och blir tunga när de
- * fyller breda staplar över hela kalendern. Dessa är ett par snäpp
- * ljusare men behåller samma kulörer, så vit text fortfarande läses.
+ * Sex färger att välja mellan för föräldrarnas scheman.
+ *
+ * Varje färg har TVÅ hexvärden:
+ *  - `hex`       — mjuk, ljus ton som appen visar. Google Calendars
+ *                  grundfärger (#D50000, #039BE5 …) är gjorda för små
+ *                  punkter och blir tunga när de fyller breda staplar,
+ *                  så appen använder ett par snäpp ljusare varianter.
+ *  - `googleHex` — Google Calendars *egna, omättade* originalfärg för
+ *                  samma kulör. Skickas i ICS-flödet (calendarFeed.ts)
+ *                  som COLOR/X-APPLE-CALENDAR-COLOR, så att Apple
+ *                  Calendar och Outlook automatiskt målar prenumerationen
+ *                  i närmaste Google-motsvarighet till appens färg.
+ *
+ * Google Calendar själv ignorerar COLOR-fältet för prenumererade
+ * kalendrar (den färgar per kalender, inte per händelse, och användaren
+ * väljer färgen manuellt efter att ha prenumererat) — se kommentaren vid
+ * `only`-parametern i calendarFeed.ts. `googleHex` är alltså till för
+ * Apple/Outlook; för Google är den bara en referens ("välj ungefär den
+ * här färgen") om vi någon gång vill visa det i UI:t.
  */
 export const PARENT_PALETTE = [
-  { id: "tomato", label: "Tomat", hex: "#E8615E" },
-  { id: "tangerine", label: "Mandarin", hex: "#F58A5B" },
-  { id: "banana", label: "Banan", hex: "#EBC15C" },
-  { id: "basil", label: "Basilika", hex: "#4FA97B" },
-  { id: "peacock", label: "Påfågel", hex: "#6FB3E8" },
-  { id: "grape", label: "Vindruva", hex: "#A87BC7" },
+  { id: "tomato", label: "Tomat", hex: "#E8615E", googleHex: "#D50000" },
+  { id: "tangerine", label: "Mandarin", hex: "#F58A5B", googleHex: "#F4511E" },
+  { id: "banana", label: "Banan", hex: "#EBC15C", googleHex: "#F6BF26" },
+  { id: "basil", label: "Basilika", hex: "#4FA97B", googleHex: "#0B8043" },
+  { id: "peacock", label: "Påfågel", hex: "#6FB3E8", googleHex: "#039BE5" },
+  { id: "grape", label: "Vindruva", hex: "#A87BC7", googleHex: "#8E24AA" },
 ] as const;
 
 export type ParentColorId = (typeof PARENT_PALETTE)[number]["id"];
@@ -98,6 +108,17 @@ export const DEFAULT_PARENT_COLOR_IDS: ParentColorId[] = ["tomato", "peacock"];
 export function parentColorHex(colorId: ParentColorId | undefined, fallbackIndex: number): string {
   const id = colorId ?? DEFAULT_PARENT_COLOR_IDS[fallbackIndex % DEFAULT_PARENT_COLOR_IDS.length];
   return (PARENT_PALETTE.find((c) => c.id === id) ?? PARENT_PALETTE[0]).hex;
+}
+
+/**
+ * Google Calendars originalfärg för samma kulör som `parentColorHex`.
+ * Används av calendarFeed.ts för att sätta COLOR/X-APPLE-CALENDAR-COLOR
+ * i ICS-flödet, så Apple Calendar och Outlook målar prenumerationen i
+ * närmaste Google-motsvarighet automatiskt.
+ */
+export function parentColorGoogleHex(colorId: ParentColorId | undefined, fallbackIndex: number): string {
+  const id = colorId ?? DEFAULT_PARENT_COLOR_IDS[fallbackIndex % DEFAULT_PARENT_COLOR_IDS.length];
+  return (PARENT_PALETTE.find((c) => c.id === id) ?? PARENT_PALETTE[0]).googleHex;
 }
 
 export interface TeamDoc {
