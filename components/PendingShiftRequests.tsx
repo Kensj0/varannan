@@ -10,6 +10,12 @@ interface PendingShiftRequestsProps {
   childName: string;
   onRespond: (shiftRequestId: string, decision: "approved" | "declined") => Promise<void>;
   onRespondBatch: (batchId: string, decision: "approved" | "declined") => Promise<void>;
+  /**
+   * Hoppar kalendern till förslagets månad. Utan det syns den gula
+   * markeringen bara om man råkar bläddra dit själv — ett förslag i
+   * december är osynligt i kalendern när man står i september.
+   */
+  onShowInCalendar?: (date: Date) => void;
 }
 
 /**
@@ -28,6 +34,7 @@ export default function PendingShiftRequests({
   childName,
   onRespond,
   onRespondBatch,
+  onShowInCalendar,
 }: PendingShiftRequestsProps) {
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -88,9 +95,19 @@ export default function PendingShiftRequests({
 
         return (
           <div key={group.key} className="rounded-2xl bg-white p-4 shadow-sm">
-            <p className="text-xs font-semibold uppercase tracking-wide text-amber-500">
-              {isMultiDay ? `Förslag på ${group.items.length} ändrade dagar` : "Förfrågan om ansvar"}
-            </p>
+            <div className="flex items-baseline justify-between gap-2">
+              <p className="text-xs font-semibold uppercase tracking-wide text-amber-500">
+                {isMultiDay ? `Förslag på ${group.items.length} ändrade dagar` : "Förfrågan om ansvar"}
+              </p>
+              {onShowInCalendar && (
+                <button
+                  onClick={() => onShowInCalendar(new Date(first.startAt.seconds * 1000))}
+                  className="shrink-0 text-xs font-medium text-stone-500 underline"
+                >
+                  Visa i kalendern
+                </button>
+              )}
+            </div>
 
             {isMultiDay ? (
               <div className="mt-1 space-y-1">

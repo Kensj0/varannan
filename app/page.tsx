@@ -605,6 +605,9 @@ export default function HomePage() {
                           decision,
                         });
                       }}
+                      onShowInCalendar={(date) =>
+                        setMonthDate(new Date(date.getFullYear(), date.getMonth(), 1))
+                      }
                       onRespondBatch={async (batchId, decision) => {
                         await respondToShiftRequestBatch({
                           teamId: teamId!,
