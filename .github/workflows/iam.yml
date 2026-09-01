@@ -39,6 +39,11 @@ jobs:
             done
           } > diagnostics/iam.txt 2>&1
 
+          echo "" >> diagnostics/iam.txt
+          echo "=== ALLA DEPLOYADE CLOUD RUN-TJÄNSTER ===" >> diagnostics/iam.txt
+          gcloud run services list --region us-central1 \
+            --format="value(metadata.name)" >> diagnostics/iam.txt 2>&1
+
           cat diagnostics/iam.txt
 
       - name: Publicera på grenen diagnostics
