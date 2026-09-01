@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { CustodyCycleDoc, ShiftRequestDoc, EventDoc } from "../types/schema";
-import { getScheduledParentForDate } from "../lib/custodyCycle";
+import { getScheduledParentForDate, switchInstantForDate } from "../lib/custodyCycle";
 import { expandEvents, EventOccurrence } from "../lib/recurrence";
 import { atSwitchHour, addDays } from "../lib/calendarActions";
 import { PushPermissionState } from "../lib/pushNotifications";
@@ -138,20 +138,31 @@ export default function CalendarView({
     return originalParentAt(addDays(instant, -shiftOffsetDays));
   }
 
+  /**
+   * Bytesögonblicket för en dag, i FAMILJENS tidszon (cycle.timezone) —
+   * inte i enhetens. atSwitchHour använder webbläsarens lokala tid, så på
+   * en enhet som inte står på samma tidszon hamnade både 07:59 och 08:00
+   * på samma sida om blockgränsen. Då upptäcktes inga bytesdagar alls,
+   * och buildBars ritade hela veckan som en enda stapel.
+   */
+  function switchInstant(day: Date): Date {
+    return switchInstantForDate(cycle, dayKey(day));
+  }
+
   /** Förälder för dagens EFTERMIDDAG (från bytestiden och framåt). */
   function afternoonParent(day: Date, preview: boolean): ParentMeta {
-    const instant = atSwitchHour(day, switchHour);
+    const instant = switchInstant(day);
     return preview ? previewParentAt(instant) : originalParentAt(instant);
   }
 
   /** Förälder för dagens MORGON (gårdagens block, fram till bytestiden). */
   function morningParent(day: Date, preview: boolean): ParentMeta {
-    const instant = new Date(atSwitchHour(day, switchHour).getTime() - ONE_MINUTE_MS);
+    const instant = new Date(switchInstant(day).getTime() - ONE_MINUTE_MS);
     return preview ? previewParentAt(instant) : originalParentAt(instant);
   }
 
   function toggleDay(day: Date) {
-    const instant = atSwitchHour(day, switchHour);
+    const instant = switchInstant(day);
     const original = originalParentAt(addDays(instant, -shiftOffsetDays)).id;
     const next = previewParentAt(instant).id === parentA.id ? parentB.id : parentA.id;
     const key = dayKey(day);
@@ -201,7 +212,7 @@ export default function CalendarView({
     if (!editMode) return [] as DayChange[];
     const changes: DayChange[] = [];
     for (const day of visibleDays) {
-      const instant = atSwitchHour(day, switchHour);
+      const instant = switchInstant(day);
       const original = originalParentAt(instant).id;
       const preview = previewParentAt(instant).id;
       if (original !== preview) changes.push({ date: day, takingOverParentId: preview });
