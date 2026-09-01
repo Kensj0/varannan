@@ -234,6 +234,10 @@ export default function HomePage() {
   // Prenumerationslänkarna (ICS) — två stycken, en per förälder. Hämtas lat
   // bara när teamet, barnet och den andra föräldern är kända.
   const [feedLinks, setFeedLinks] = useState<Record<string, CalendarFeedLinks> | null>(null);
+  // Tokens sparas separat: samma token kan bygga flera flöden med olika
+  // omfattning (mina dagar / den andres dagar), vilket krävs för att kunna
+  // ge dem var sin färg i Google Kalender.
+  const [feedTokens, setFeedTokens] = useState<Record<string, string> | null>(null);
   useEffect(() => {
     if (!teamId || !activeChildId || !parents[1]?.id) return;
     let cancelled = false;
@@ -244,6 +248,7 @@ export default function HomePage() {
         for (const [parentId, token] of Object.entries(tokens)) {
           links[parentId] = buildFeedLinks(teamId, activeChildId, parentId, token);
         }
+        setFeedTokens(tokens);
         setFeedLinks(links);
       })
       .catch(() => {
@@ -261,6 +266,7 @@ export default function HomePage() {
     for (const [parentId, token] of Object.entries(tokens)) {
       links[parentId] = buildFeedLinks(teamId, activeChildId, parentId, token);
     }
+    setFeedTokens(tokens);
     setFeedLinks(links);
   }
   const parentNames = useMemo(
@@ -703,7 +709,26 @@ export default function HomePage() {
                   otherParentColorHex={
                     (parents.find((p) => p.id !== user!.uid) ?? parents[1]).color
                   }
-                  feedLinks={feedLinks ? feedLinks[user!.uid] : null}
+                  feedLinks={
+                    feedTokens?.[user!.uid] && teamId && activeChild
+                      ? buildFeedLinks(teamId, activeChild.id, user!.uid, feedTokens[user!.uid], {
+                          onlyParentId: user!.uid,
+                        })
+                      : feedLinks
+                        ? feedLinks[user!.uid]
+                        : null
+                  }
+                  otherFeedLinks={
+                    feedTokens?.[user!.uid] && teamId && activeChild && otherParentId
+                      ? buildFeedLinks(teamId, activeChild.id, user!.uid, feedTokens[user!.uid], {
+                          onlyParentId: otherParentId,
+                          // Aktiviteter ligger redan i det egna flödet —
+                          // utan detta dubbleras de när man lägger till båda.
+                          includeActivities: false,
+                        })
+                      : null
+                  }
+                  otherParentName={parentNames[otherParentId] ?? "Andra föräldern"}
                   onCreateFeed={handleCreateFeed}
                   onChangeSwitchHour={handleChangeSwitchHour}
                 />

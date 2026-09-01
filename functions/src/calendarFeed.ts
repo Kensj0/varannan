@@ -45,8 +45,12 @@ export const createCalendarFeedToken = onCall(async (request) => {
   const uid = request.auth?.uid;
   if (!uid) throw new HttpsError("unauthenticated", "Du måste vara inloggad.");
 
-  const { teamId, childId } = request.data as { teamId?: string; childId?: string };
-  if (!teamId || !childId) throw new HttpsError("invalid-argument", "teamId och childId krävs.");
+  const { teamId, childId } = request.data as {
+    teamId?: string;
+    childId?: string;
+  };
+  if (!teamId || !childId)
+    throw new HttpsError("invalid-argument", "teamId och childId krävs.");
 
   const db = admin.firestore();
   const teamRef = db.doc(`teams/${teamId}`);
@@ -54,7 +58,8 @@ export const createCalendarFeedToken = onCall(async (request) => {
   if (!teamSnap.exists) throw new HttpsError("not-found", "Teamet finns inte.");
 
   const parentIds: string[] = teamSnap.data()?.parentIds ?? [];
-  if (!parentIds.includes(uid)) throw new HttpsError("permission-denied", "Du tillhör inte teamet.");
+  if (!parentIds.includes(uid))
+    throw new HttpsError("permission-denied", "Du tillhör inte teamet.");
 
   // Generera tokens för BÅDA föräldrar (eller just denna om en inte är med än).
   const tokens: Record<string, string> = {};
@@ -63,8 +68,12 @@ export const createCalendarFeedToken = onCall(async (request) => {
   }
 
   await teamRef.set(
-    { calendarFeedTokens: Object.fromEntries(Object.entries(tokens).map(([pid, t]) => [`${childId}:${pid}`, t])) },
-    { merge: true }
+    {
+      calendarFeedTokens: Object.fromEntries(
+        Object.entries(tokens).map(([pid, t]) => [`${childId}:${pid}`, t]),
+      ),
+    },
+    { merge: true },
   );
 
   return { tokens };
@@ -79,6 +88,16 @@ export const calendarFeed = onRequest({ cors: true }, async (req, res) => {
   const childId = String(req.query.child ?? "");
   const parentId = String(req.query.parent ?? "");
   const token = String(req.query.token ?? "");
+  /**
+   * Vems dagar flödet ska innehålla. Google Kalender färgar per
+   * KALENDER, inte per händelse, så ett flöde med båda föräldrarnas
+   * block kan bara få en färg. Med "only" kan man prenumerera på en
+   * kalender per förälder och färga dem var för sig.
+   * Utelämnad = båda (oförändrat beteende för redan skapade länkar).
+   */
+  const only = req.query.only ? String(req.query.only) : null;
+  /** Aktiviteter dubbleras om man prenumererar på båda flödena. */
+  const includeActivities = String(req.query.activities ?? "1") !== "0";
 
   if (!teamId || !childId || !parentId || !token) {
     res.status(400).send("Saknar team, child, parent eller token.");
@@ -87,7 +106,8 @@ export const calendarFeed = onRequest({ cors: true }, async (req, res) => {
 
   const db = admin.firestore();
   const teamSnap = await db.doc(`teams/${teamId}`).get();
-  const expected = teamSnap.data()?.calendarFeedTokens?.[`${childId}:${parentId}`];
+  const expected =
+    teamSnap.data()?.calendarFeedTokens?.[`${childId}:${parentId}`];
 
   // Konstanttidsjämförelse så att token inte kan gissas fram tecken för tecken.
   if (!expected || !safeEqual(expected, token)) {
@@ -98,7 +118,9 @@ export const calendarFeed = onRequest({ cors: true }, async (req, res) => {
   const childSnap = await db.doc(`teams/${teamId}/children/${childId}`).get();
   const childName = childSnap.data()?.name ?? "Barnet";
 
-  const cycleSnap = await db.doc(`teams/${teamId}/children/${childId}/custodyCycle/main`).get();
+  const cycleSnap = await db
+    .doc(`teams/${teamId}/children/${childId}/custodyCycle/main`)
+    .get();
   if (!cycleSnap.exists) {
     res.status(404).send("Inget schema uppsatt för barnet.");
     return;
@@ -106,19 +128,31 @@ export const calendarFeed = onRequest({ cors: true }, async (req, res) => {
   const cycle = cycleSnap.data() as CustodyCycleDoc;
   const timezone = cycle.timezone || "Europe/Stockholm";
 
-  const profiles: Record<string, TeamParentProfile> = teamSnap.data()?.parentProfiles ?? {};
-  const nameFor = (uid: string) => profiles[uid]?.displayName ?? "Andra föräldern";
+  const profiles: Record<string, TeamParentProfile> =
+    teamSnap.data()?.parentProfiles ?? {};
+  const nameFor = (uid: string) =>
+    profiles[uid]?.displayName ?? "Andra föräldern";
 
   const shiftsSnap = await db
     .collection(`teams/${teamId}/shiftRequests`)
     .where("childId", "==", childId)
     .where("status", "==", "approved")
     .get();
-  const approvedShifts = shiftsSnap.docs.map((d) => d.data() as ShiftRequestDoc);
+  const approvedShifts = shiftsSnap.docs.map(
+    (d) => d.data() as ShiftRequestDoc,
+  );
 
   const now = new Date();
-  const rangeStart = new Date(now.getFullYear(), now.getMonth() - MONTHS_BACK, 1);
-  const rangeEnd = new Date(now.getFullYear(), now.getMonth() + MONTHS_FORWARD, 1);
+  const rangeStart = new Date(
+    now.getFullYear(),
+    now.getMonth() - MONTHS_BACK,
+    1,
+  );
+  const rangeEnd = new Date(
+    now.getFullYear(),
+    now.getMonth() + MONTHS_FORWARD,
+    1,
+  );
 
   const lines: string[] = [
     "BEGIN:VCALENDAR",
@@ -137,7 +171,11 @@ export const calendarFeed = onRequest({ cors: true }, async (req, res) => {
   let blockStart: Date | null = null;
   let blockParent: string | null = null;
 
-  for (let day = new Date(rangeStart); day < rangeEnd; day.setDate(day.getDate() + 1)) {
+  for (
+    let day = new Date(rangeStart);
+    day < rangeEnd;
+    day.setDate(day.getDate() + 1)
+  ) {
     const instant = switchInstantForDate(cycle, isoDate(day));
     const parentId = resolveResponsibleParent(cycle, approvedShifts, instant);
 
@@ -145,21 +183,23 @@ export const calendarFeed = onRequest({ cors: true }, async (req, res) => {
       blockParent = parentId;
       blockStart = instant;
     } else if (parentId !== blockParent) {
-      lines.push(
-        ...vevent({
-          uid: `custody-${childId}-${blockStart!.getTime()}@varannan`,
-          start: blockStart!,
-          end: instant,
-          summary: `${childName} hos ${nameFor(blockParent)}`,
-          timezone,
-        })
-      );
+      if (!only || blockParent === only) {
+        lines.push(
+          ...vevent({
+            uid: `custody-${childId}-${blockStart!.getTime()}@varannan`,
+            start: blockStart!,
+            end: instant,
+            summary: `${childName} hos ${nameFor(blockParent)}`,
+            timezone,
+          }),
+        );
+      }
       blockParent = parentId;
       blockStart = instant;
     }
   }
 
-  if (blockParent && blockStart) {
+  if (blockParent && blockStart && (!only || blockParent === only)) {
     lines.push(
       ...vevent({
         uid: `custody-${childId}-${blockStart.getTime()}@varannan`,
@@ -167,26 +207,28 @@ export const calendarFeed = onRequest({ cors: true }, async (req, res) => {
         end: switchInstantForDate(cycle, isoDate(rangeEnd)),
         summary: `${childName} hos ${nameFor(blockParent)}`,
         timezone,
-      })
+      }),
     );
   }
 
   // --- Aktiviteter ---
-  const eventsSnap = await db.collection(`teams/${teamId}/events`).get();
-  const events = eventsSnap.docs
-    .map((d) => ({ ...(d.data() as EventDoc), id: d.id }))
-    .filter((e) => !e.childId || e.childId === childId);
+  if (includeActivities) {
+    const eventsSnap = await db.collection(`teams/${teamId}/events`).get();
+    const events = eventsSnap.docs
+      .map((d) => ({ ...(d.data() as EventDoc), id: d.id }))
+      .filter((e) => !e.childId || e.childId === childId);
 
-  for (const occurrence of expandEvents(events, rangeStart, rangeEnd)) {
-    lines.push(
-      ...vevent({
-        uid: `event-${occurrence.eventId}-${occurrence.startAt.getTime()}@varannan`,
-        start: occurrence.startAt,
-        end: occurrence.endAt,
-        summary: occurrence.title,
-        timezone,
-      })
-    );
+    for (const occurrence of expandEvents(events, rangeStart, rangeEnd)) {
+      lines.push(
+        ...vevent({
+          uid: `event-${occurrence.eventId}-${occurrence.startAt.getTime()}@varannan`,
+          start: occurrence.startAt,
+          end: occurrence.endAt,
+          summary: occurrence.title,
+          timezone,
+        }),
+      );
+    }
   }
 
   lines.push("END:VCALENDAR");
@@ -201,7 +243,13 @@ export const calendarFeed = onRequest({ cors: true }, async (req, res) => {
 // ICS-hjälpare
 // ---------------------------------------------------------------------------
 
-function vevent(opts: { uid: string; start: Date; end: Date; summary: string; timezone: string }): string[] {
+function vevent(opts: {
+  uid: string;
+  start: Date;
+  end: Date;
+  summary: string;
+  timezone: string;
+}): string[] {
   return [
     "BEGIN:VEVENT",
     `UID:${opts.uid}`,
@@ -224,7 +272,11 @@ function isoDate(date: Date): string {
 
 /** Komma, semikolon, backslash och radbrytning är specialtecken i ICS. */
 function escapeText(text: string): string {
-  return text.replace(/\\/g, "\\\\").replace(/;/g, "\\;").replace(/,/g, "\\,").replace(/\n/g, "\\n");
+  return text
+    .replace(/\\/g, "\\\\")
+    .replace(/;/g, "\\;")
+    .replace(/,/g, "\\,")
+    .replace(/\n/g, "\\n");
 }
 
 /** RFC 5545 tillåter max 75 oktetter per rad; längre rader viks med inledande blanksteg. */
@@ -260,8 +312,12 @@ export const setParentColor = onCall(async (request) => {
   const uid = request.auth?.uid;
   if (!uid) throw new HttpsError("unauthenticated", "Du måste vara inloggad.");
 
-  const { teamId, colorId } = request.data as { teamId?: string; colorId?: string };
-  if (!teamId || !colorId) throw new HttpsError("invalid-argument", "teamId och colorId krävs.");
+  const { teamId, colorId } = request.data as {
+    teamId?: string;
+    colorId?: string;
+  };
+  if (!teamId || !colorId)
+    throw new HttpsError("invalid-argument", "teamId och colorId krävs.");
   if (!PARENT_PALETTE.some((c) => c.id === colorId)) {
     throw new HttpsError("invalid-argument", "Okänd färg.");
   }
@@ -272,8 +328,12 @@ export const setParentColor = onCall(async (request) => {
   if (!teamSnap.exists) throw new HttpsError("not-found", "Teamet finns inte.");
 
   const parentIds: string[] = teamSnap.data()?.parentIds ?? [];
-  if (!parentIds.includes(uid)) throw new HttpsError("permission-denied", "Du tillhör inte teamet.");
+  if (!parentIds.includes(uid))
+    throw new HttpsError("permission-denied", "Du tillhör inte teamet.");
 
-  await teamRef.set({ parentProfiles: { [uid]: { colorId } } }, { merge: true });
+  await teamRef.set(
+    { parentProfiles: { [uid]: { colorId } } },
+    { merge: true },
+  );
   return { ok: true };
 });

@@ -19,6 +19,9 @@ interface CalendarSettingsPanelProps {
   onSelectColor: (colorId: ParentColorId) => Promise<void>;
   otherParentColorHex: string;
   feedLinks: CalendarFeedLinks | null;
+  /** Andra förälderns dagar som ett SEPARAT flöde, så det kan få egen färg. */
+  otherFeedLinks?: CalendarFeedLinks | null;
+  otherParentName?: string;
   onCreateFeed: () => Promise<void>;
   switchHour: string;
   onChangeSwitchHour: (hh: string, mm: string) => Promise<void>;
@@ -39,6 +42,8 @@ export default function CalendarSettingsPanel({
   onSelectColor,
   otherParentColorHex,
   feedLinks,
+  otherFeedLinks,
+  otherParentName,
   onCreateFeed,
   switchHour,
   onChangeSwitchHour,
@@ -214,6 +219,18 @@ export default function CalendarSettingsPanel({
               <FeedLink href={feedLinks.google} label="Google Kalender" />
               <FeedLink href={feedLinks.apple} label="iPhone / Apple Kalender" />
               <FeedLink href={feedLinks.outlook} label="Outlook / Microsoft" />
+
+              {otherFeedLinks && (
+                <div className="mt-3 border-t border-stone-100 pt-3">
+                  <p className="mb-2 text-xs text-stone-500">
+                    Länkarna ovan innehåller bara dina dagar. Lägg till {otherParentName}s dagar som en
+                    egen kalender om du vill se båda — då kan de få var sin färg, eftersom Google färgar
+                    per kalender och inte per händelse.
+                  </p>
+                  <FeedLink href={otherFeedLinks.google} label={`${otherParentName}s dagar — Google`} />
+                  <FeedLink href={otherFeedLinks.apple} label={`${otherParentName}s dagar — Apple`} />
+                </div>
+              )}
             </div>
 
             <button
