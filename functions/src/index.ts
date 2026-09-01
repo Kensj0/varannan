@@ -197,6 +197,98 @@ export const repairPendingPartner = onCall(async (request) => {
   return { repaired };
 });
 
+/**
+ * Tar bort godkända avvikelser från och med ett datum, och backar ut
+ * deras påverkan på ställningen. Används när grundschemat görs om: de
+ * gamla avvikelserna beskriver undantag från ett schema som inte längre
+ * gäller, och deras balanceDeltaDays räknades ut mot den gamla cykeln.
+ *
+ * Bara framåt i tiden. Dagar som redan passerat har faktiskt inträffat,
+ * och att sudda dem skulle skriva om historien och göra ställningen fel
+ * åt andra hållet.
+ */
+export const clearApprovedShiftsFrom = onCall(async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) throw new HttpsError("unauthenticated", "Du måste vara inloggad.");
+
+  const { teamId, childId, fromDate } = request.data as {
+    teamId: string;
+    childId: string;
+    fromDate: string; // "YYYY-MM-DD"
+  };
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(fromDate)) {
+    throw new HttpsError("invalid-argument", "fromDate måste vara YYYY-MM-DD.");
+  }
+
+  const teamSnap = await db.doc(`teams/${teamId}`).get();
+  if (!teamSnap.exists) throw new HttpsError("not-found", "Team saknas.");
+  const parentIds: string[] = teamSnap.data()?.parentIds ?? [];
+  if (!parentIds.includes(uid)) throw new HttpsError("permission-denied", "Du är inte medlem i teamet.");
+
+  // Jämför mot dygnets början lokalt sett; en avvikelse som börjar senare
+  // samma dag som det nya schemat träder i kraft ska också bort.
+  const cutoff = admin.firestore.Timestamp.fromDate(new Date(`${fromDate}T00:00:00Z`));
+
+  const snap = await db
+    .collection(`teams/${teamId}/shiftRequests`)
+    .where("childId", "==", childId)
+    .where("status", "==", "approved")
+    .get();
+
+  const toRemove = snap.docs.filter((d) => {
+    const startAt = d.data().startAt as admin.firestore.Timestamp | undefined;
+    return startAt ? startAt.toMillis() >= cutoff.toMillis() : false;
+  });
+
+  if (toRemove.length === 0) return { removed: 0, balanceAdjusted: 0 };
+
+  const balanceRef = db.doc(`teams/${teamId}/children/${childId}/dayBalance/main`);
+
+  const removed = await db.runTransaction(async (tx) => {
+    const balanceSnap = await tx.get(balanceRef);
+    const balance = balanceSnap.exists ? (balanceSnap.data() as DayBalanceDoc) : null;
+
+    let reversedDelta = 0;
+    for (const d of toRemove) {
+      reversedDelta += (d.data().balanceDeltaDays as number | undefined) ?? 0;
+    }
+
+    for (const d of toRemove) {
+      // Markera som borttagen i stället för att radera, så att en
+      // felaktig rensning går att felsöka i efterhand.
+      tx.update(d.ref, {
+        status: "cancelled",
+        cancelledBy: uid,
+        cancelledAt: admin.firestore.FieldValue.serverTimestamp(),
+        cancelledReason: "custody_cycle_changed",
+      });
+    }
+
+    if (balance) {
+      const newBalance = balance.balanceDays - reversedDelta;
+      tx.set(balanceRef, {
+        ...balance,
+        balanceDays: newBalance,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+      const historyRef = db.collection(`teams/${teamId}/children/${childId}/dayBalanceHistory`).doc();
+      tx.set(historyRef, {
+        id: historyRef.id,
+        childId,
+        shiftRequestId: "",
+        deltaDays: -reversedDelta,
+        balanceAfter: newBalance,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        note: "Godkända ändringar rensade när grundschemat gjordes om",
+      });
+    }
+
+    return toRemove.length;
+  });
+
+  return { removed, balanceAdjusted: true };
+});
+
 export const acceptInvite = onCall(async (request) => {
   const uid = request.auth?.uid;
   if (!uid) throw new HttpsError("unauthenticated", "Du måste vara inloggad.");
