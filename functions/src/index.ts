@@ -84,6 +84,10 @@ export const setCustomSwitchHour = onCall(async (request) => {
 
 
 admin.initializeApp();
+// Skyddsnät: utan detta kastar Admin SDK:t på varje fält som råkar vara
+// `undefined`, vilket fäller hela anropet med ett obegripligt "INTERNAL"
+// istället för att bara hoppa över fältet.
+admin.firestore().settings({ ignoreUndefinedProperties: true });
 const db = admin.firestore();
 const onboardingDb = createOnboardingAdapter(db);
 
@@ -93,10 +97,16 @@ const onboardingDb = createOnboardingAdapter(db);
 
 /** Bygger den cachade profilen från auth-token — aldrig från klient-data. */
 function profileFromAuth(auth: { uid: string; token: Record<string, any> }): TeamParentProfile {
+  const avatarUrl = auth.token.picture || undefined;
   return {
     uid: auth.uid,
     displayName: auth.token.name || auth.token.email?.split("@")[0] || "Förälder",
-    avatarUrl: auth.token.picture || undefined,
+    // Fältet utelämnas helt när det saknas. Admin SDK:t kastar på ett
+    // explicit `undefined`-värde (till skillnad från webb-SDK:t), och
+    // konton som skapats med e-post/lösenord har ingen `picture` i
+    // token — det gjorde att acceptInvite föll med "INTERNAL" för alla
+    // som inte loggat in via Google.
+    ...(avatarUrl ? { avatarUrl } : {}),
   };
 }
 
