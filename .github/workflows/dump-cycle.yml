@@ -28,9 +28,12 @@ jobs:
         run: |
           mkdir -p diagnostics
           cat > dump.js << 'EOF'
-          const admin = require("firebase-admin");
-          admin.initializeApp({ projectId: "varannan-familj" });
-          const db = admin.firestore();
+          // Modulära ingångar — den namnrymdade "admin.firestore()" finns
+          // inte i alla versioner och gav "is not a function" här.
+          const { initializeApp, applicationDefault } = require("firebase-admin/app");
+          const { getFirestore } = require("firebase-admin/firestore");
+          initializeApp({ credential: applicationDefault(), projectId: "varannan-familj" });
+          const db = getFirestore();
 
           (async () => {
             const teams = await db.collection("teams").get();
