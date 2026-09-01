@@ -759,8 +759,17 @@ function formatSwitchHourShort(switchHour: string): string {
   return `${Number(h)}:${m}`;
 }
 
+/**
+ * ISO-datum (YYYY-MM-DD) i lokal tid. Måste vara ett ÄKTA ISO-datum, inte
+ * bara en unik sträng: värdet skickas till switchInstantForDate, som
+ * tolkar månaden 1-baserat. Med getMonth() (0-baserat) och utan
+ * nollutfyllnad blev 2 oktober tolkat som 2 september, så markeringen för
+ * ett förslag hamnade en månad fel.
+ */
 function dayKey(date: Date): string {
-  return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${date.getFullYear()}-${month}-${day}`;
 }
 
 function isSameDay(a: Date, b: Date): boolean {
