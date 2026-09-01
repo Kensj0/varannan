@@ -34,6 +34,12 @@ interface CalendarViewProps {
   cycle: CustodyCycleDoc;
   parents: [ParentMeta, ParentMeta];
   approvedShiftRequests: ShiftRequestDoc[];
+  /**
+   * Väntande förslag. Ritas som en gul markering med det NUVARANDE
+   * schemat spöklikt under, så att mottagaren ser vad som föreslås och
+   * vad det ersätter — utan att behöva öppna en separat lista.
+   */
+  pendingShiftRequests?: ShiftRequestDoc[];
   events: EventDoc[];
   currentUserId: string;
   onChangeMonth: (date: Date) => void;
@@ -64,6 +70,7 @@ export default function CalendarView({
   cycle,
   parents,
   approvedShiftRequests,
+  pendingShiftRequests = [],
   events,
   onChangeMonth,
   onCreateActivity,
@@ -132,6 +139,12 @@ export default function CalendarView({
     return parentMetaFor(parentId);
   }
 
+  /** Förälder enligt ett VÄNTANDE förslag, om något täcker tidpunkten. */
+  function proposedParentAt(instant: Date): ParentMeta | null {
+    const proposal = pendingShiftRequests.find((r) => isInstantWithinShift(instant, r));
+    return proposal ? parentMetaFor(proposal.takingOverParentId) : null;
+  }
+
   function previewParentAt(instant: Date): ParentMeta {
     const explicit = dayOverrides.get(dayKey(segmentDayFor(instant, switchHour)));
     if (explicit) return parentMetaFor(explicit.takingOverParentId);
@@ -155,9 +168,14 @@ export default function CalendarView({
     return preview ? previewParentAt(instant) : originalParentAt(instant);
   }
 
+  /** Sista ögonblicket före dagens byte — tillhör gårdagens block. */
+  function morningInstant(day: Date): Date {
+    return new Date(switchInstant(day).getTime() - ONE_MINUTE_MS);
+  }
+
   /** Förälder för dagens MORGON (gårdagens block, fram till bytestiden). */
   function morningParent(day: Date, preview: boolean): ParentMeta {
-    const instant = new Date(switchInstant(day).getTime() - ONE_MINUTE_MS);
+    const instant = morningInstant(day);
     return preview ? previewParentAt(instant) : originalParentAt(instant);
   }
 
@@ -359,16 +377,25 @@ export default function CalendarView({
         // Vem som har ansvaret varje dag den här veckan, plus om dagen
         // är en bytesdag (morgon och eftermiddag har olika förälder).
         const days: DayInfo[] = week.map((day) => {
-          const morning = morningParent(day, editMode);
-          const afternoon = afternoonParent(day, editMode);
+          // I ändringsläget visas det man håller på att måla. Annars visas
+          // ett väntande förslag om det finns ett — så att mottagaren ser
+          // förslaget direkt i kalendern, med nuläget spöklikt under.
+          const baseMorning = morningParent(day, false);
+          const baseAfternoon = afternoonParent(day, false);
+          const proposedMorning = editMode ? null : proposedParentAt(morningInstant(day));
+          const proposedAfternoon = editMode ? null : proposedParentAt(switchInstant(day));
+
+          const morning = editMode ? morningParent(day, true) : proposedMorning ?? baseMorning;
+          const afternoon = editMode ? afternoonParent(day, true) : proposedAfternoon ?? baseAfternoon;
+
           return {
             date: day,
             morning,
             afternoon,
+            baseMorning,
+            baseAfternoon,
             isHandover: morning.id !== afternoon.id,
-            isChanged:
-              editMode &&
-              (morning.id !== morningParent(day, false).id || afternoon.id !== afternoonParent(day, false).id),
+            isChanged: morning.id !== baseMorning.id || afternoon.id !== baseAfternoon.id,
             isToday: isSameDay(day, today),
             inMonth: day.getMonth() === monthDate.getMonth(),
             events: eventsByDay.get(dayKey(day)) ?? [],
@@ -376,6 +403,10 @@ export default function CalendarView({
         });
 
         const bars = buildBars(days);
+        // Spökraden visar vad som gäller IDAG, under det som föreslås.
+        // Bara meningsfull när något faktiskt skiljer sig i veckan.
+        const hasChanges = days.some((d) => d.isChanged);
+        const baseBars = hasChanges ? buildBars(days, "base") : [];
 
         return (
           <div
@@ -383,10 +414,25 @@ export default function CalendarView({
             className="grid border-b border-stone-100 last:border-b-0"
             style={{
               gridTemplateColumns: gridCols,
-              // rad 1: datumsiffror · rad 2: ansvarsstapel · rad 3: aktiviteter
-              gridTemplateRows: "18px 22px minmax(46px, auto)",
+              // rad 1: datumsiffror · rad 2: föreslagen stapel ·
+              // rad 3: nuvarande schema (spöke, bara vid ändringar) ·
+              // rad 4: aktiviteter
+              gridTemplateRows: hasChanges
+                ? "18px 22px 20px minmax(30px, auto)"
+                : "18px 22px 0px minmax(46px, auto)",
             }}
           >
+            {/* Post-it-gul markering över de dagar som ändras. Ligger
+                underst så att staplar och siffror läses ovanpå. */}
+            {days.map((info, i) =>
+              info.isChanged ? (
+                <div
+                  key={`hl-${i}`}
+                  className="pointer-events-none border-x border-amber-300/70 bg-amber-200/40"
+                  style={{ gridColumn: dayColOffset + i, gridRow: "1 / -1" }}
+                />
+              ) : null
+            )}
             {showWeekNumbers && (
               <div
                 className="flex items-start justify-center pt-0.5 text-[10px] font-medium text-stone-300"
@@ -437,9 +483,7 @@ export default function CalendarView({
               {bars.map((bar, bi) => (
                 <div
                   key={`bar-${bi}`}
-                  className={`absolute inset-y-0 flex items-center justify-center overflow-hidden px-1 ${
-                    bar.hasChange ? "ring-2 ring-inset ring-stone-800" : ""
-                  }`}
+                  className="absolute inset-y-0 flex items-center justify-center overflow-hidden px-1"
                   style={{
                     background: bar.parent.color,
                     left: `${(bar.from / 7) * 100}%`,
@@ -461,6 +505,37 @@ export default function CalendarView({
               ))}
             </div>
 
+            {/* Nuvarande schema, spöklikt under förslaget — så att man ser
+                vad ändringen ersätter utan att öppna en separat vy. */}
+            {hasChanges && (
+              <div
+                className="pointer-events-none relative self-center"
+                style={{ gridColumn: `${dayColOffset} / -1`, gridRow: 3, height: 16 }}
+              >
+                {baseBars.map((bar, bi) => (
+                  <div
+                    key={`ghost-${bi}`}
+                    className="absolute inset-y-0 flex items-center justify-center overflow-hidden px-1 opacity-30"
+                    style={{
+                      background: bar.parent.color,
+                      left: `${(bar.from / 7) * 100}%`,
+                      width: `${((bar.to - bar.from) / 7) * 100}%`,
+                      borderTopLeftRadius: bar.roundedStart ? 5 : 0,
+                      borderBottomLeftRadius: bar.roundedStart ? 5 : 0,
+                      borderTopRightRadius: bar.roundedEnd ? 5 : 0,
+                      borderBottomRightRadius: bar.roundedEnd ? 5 : 0,
+                      marginLeft: bar.roundedStart ? 1 : 0,
+                      marginRight: bar.roundedEnd ? 1 : 0,
+                    }}
+                  >
+                    <span className="truncate text-[10px] font-medium leading-none text-white">
+                      {shortName(bar.parent.name)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+
             {/* Bytestiden, under stapeln på just bytesdagen. */}
             {days.map((info, i) =>
               info.isHandover ? (
@@ -469,7 +544,7 @@ export default function CalendarView({
                   className={`pointer-events-none justify-self-center pt-0.5 text-[10px] font-medium leading-4 ${
                     info.isChanged ? "text-rose-600" : "text-stone-400"
                   }`}
-                  style={{ gridColumn: dayColOffset + i, gridRow: 3 }}
+                  style={{ gridColumn: dayColOffset + i, gridRow: 4 }}
                 >
                   {formatSwitchHourShort(switchHour)}
                 </span>
@@ -482,7 +557,7 @@ export default function CalendarView({
                 <div
                   key={`ev-${i}`}
                   className="pointer-events-none z-10 min-w-0 space-y-0.5 self-end px-0.5 pb-0.5"
-                  style={{ gridColumn: dayColOffset + i, gridRow: 3 }}
+                  style={{ gridColumn: dayColOffset + i, gridRow: 4 }}
                 >
                   {info.events.slice(0, 2).map((ev, ei) => (
                     <div
@@ -554,6 +629,9 @@ interface DayInfo {
   date: Date;
   morning: ParentMeta;
   afternoon: ParentMeta;
+  /** Schemat som gäller idag — ritas spöklikt under när något föreslås. */
+  baseMorning: ParentMeta;
+  baseAfternoon: ParentMeta;
   /** Morgon och eftermiddag hos olika föräldrar → själva överlämningsdagen. */
   isHandover: boolean;
   isChanged: boolean;
@@ -586,17 +664,21 @@ interface Bar {
  * början till mitten av onsdagsrutan, och Kennys från mitten av onsdags-
  * rutan vidare fram till nästa byte.
  */
-function buildBars(days: DayInfo[]): Bar[] {
+function buildBars(days: DayInfo[], variant: "current" | "base" = "current"): Bar[] {
   const bars: Bar[] = [];
   if (days.length === 0) return bars;
 
-  let parent = days[0].morning;
+  const morningOf = (d: DayInfo) => (variant === "base" ? d.baseMorning : d.morning);
+  const afternoonOf = (d: DayInfo) => (variant === "base" ? d.baseAfternoon : d.afternoon);
+
+  let parent = morningOf(days[0]);
   let from = 0;
   let changed = false;
 
   for (let i = 0; i < days.length; i++) {
     changed = changed || days[i].isChanged;
-    if (!days[i].isHandover) continue;
+    const isHandover = morningOf(days[i]).id !== afternoonOf(days[i]).id;
+    if (!isHandover) continue;
 
     // Bytet sker mitt i den här rutan: stäng föregående intervall där,
     // och låt den tillträdande föräldern ta vid från samma punkt.
@@ -609,7 +691,7 @@ function buildBars(days: DayInfo[]): Bar[] {
       roundedEnd: true,
       hasChange: changed,
     });
-    parent = days[i].afternoon;
+    parent = afternoonOf(days[i]);
     from = boundary;
     changed = days[i].isChanged;
   }

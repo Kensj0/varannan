@@ -625,6 +625,7 @@ export default function HomePage() {
                   cycle={cycle}
                   parents={[parents[0], parents[1]]}
                   approvedShiftRequests={approvedShifts}
+                  pendingShiftRequests={pendingShifts}
                   events={events.filter((e) => !e.childId || e.childId === activeChild.id)}
                   currentUserId={user!.uid}
                   onCreateActivity={async (date, title, recurring) => {
