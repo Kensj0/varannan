@@ -20,6 +20,8 @@ on:
           - hosting
           - functions
           - hosting,functions
+          - firestore:rules
+          - hosting,functions,firestore:rules
 
 jobs:
   deploy:
