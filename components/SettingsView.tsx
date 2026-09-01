@@ -22,6 +22,8 @@ interface SettingsViewProps {
    * platshållare).
    */
   onEditStructure?: () => void;
+  /** Sparar nytt visningsnamn. Utelämnas om namnbyte inte är möjligt. */
+  onUpdateDisplayName?: (name: string) => Promise<void>;
 }
 
 /**
@@ -40,10 +42,29 @@ export default function SettingsView({
   teamName,
   onCreateInvite,
   onEditStructure,
+  onUpdateDisplayName,
 }: SettingsViewProps) {
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [editingName, setEditingName] = useState(false);
+  const [nameDraft, setNameDraft] = useState(displayName);
+  const [savingName, setSavingName] = useState(false);
+  const [nameError, setNameError] = useState<string | null>(null);
+
+  async function handleSaveName() {
+    if (!onUpdateDisplayName) return;
+    setSavingName(true);
+    setNameError(null);
+    try {
+      await onUpdateDisplayName(nameDraft.trim());
+      setEditingName(false);
+    } catch {
+      setNameError("Kunde inte spara namnet. Försök igen.");
+    } finally {
+      setSavingName(false);
+    }
+  }
 
   async function handleResetPassword() {
     if (!email) return;
@@ -63,8 +84,54 @@ export default function SettingsView({
     <div className="space-y-4">
       <div className="rounded-2xl bg-white p-4 shadow-sm">
         <p className="text-xs font-semibold uppercase tracking-wide text-stone-400">Konto</p>
-        <p className="mt-2 text-sm font-medium text-stone-800">{displayName}</p>
-        {email && <p className="text-sm text-stone-500">{email}</p>}
+        {editingName ? (
+          <div className="mt-2">
+            <input
+              autoFocus
+              value={nameDraft}
+              onChange={(e) => setNameDraft(e.target.value)}
+              placeholder="Ditt namn"
+              className="w-full rounded-xl border border-stone-200 px-3 py-2 text-sm text-stone-800 outline-none focus:border-stone-400"
+            />
+            {nameError && <p className="mt-2 text-sm text-rose-600">{nameError}</p>}
+            <div className="mt-3 flex gap-2">
+              <button
+                onClick={handleSaveName}
+                disabled={savingName || !nameDraft.trim()}
+                className="flex-1 rounded-full bg-stone-800 py-2 text-sm font-semibold text-white disabled:opacity-50"
+              >
+                {savingName ? "Sparar…" : "Spara"}
+              </button>
+              <button
+                onClick={() => {
+                  setEditingName(false);
+                  setNameError(null);
+                }}
+                className="flex-1 rounded-full border border-stone-200 py-2 text-sm font-medium text-stone-500"
+              >
+                Avbryt
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="mt-2 flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <p className="truncate text-sm font-medium text-stone-800">{displayName}</p>
+              {email && <p className="truncate text-sm text-stone-500">{email}</p>}
+            </div>
+            {onUpdateDisplayName && (
+              <button
+                onClick={() => {
+                  setNameDraft(displayName);
+                  setEditingName(true);
+                }}
+                className="shrink-0 text-sm font-medium text-stone-500 underline"
+              >
+                Ändra
+              </button>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Andra föräldern — inbjudan ligger här i stället för som en

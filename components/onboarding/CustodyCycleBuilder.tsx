@@ -2,11 +2,13 @@
 
 import { useMemo, useState } from "react";
 import { CustodyCycleBlock } from "../../types/schema";
-import { CYCLE_PRESET_LIST, blocksFromPattern, validateCustodyCycleBlocks } from "../../lib/onboarding";
+import { blocksFromPattern, validateCustodyCycleBlocks } from "../../lib/onboarding";
 
 export interface CycleParent {
   id: string;
   name: string;
+  /** Förälderns färg i kalendern. Utan den faller vi tillbaka på paletten. */
+  color?: string;
 }
 
 interface CustodyCycleBuilderProps {
@@ -115,17 +117,11 @@ export default function CustodyCycleBuilder({
     setDays((prev) => resample(prev, weeks * 7));
   }
 
-  function applyPreset(pattern: number[]) {
-    const expanded = expandBlocks(blocksFromPattern(pattern, parentA.id, parentB.id));
-    setDays(resample(expanded, periodWeeks * 7));
-  }
-
   function toggleDay(index: number) {
     setDays((prev) => prev.map((p, i) => (i === index ? (p === parentA.id ? parentB.id : parentA.id) : p)));
   }
 
   const blocks = useMemo(() => compressDays(days), [days]);
-  const totalDays = days.length;
   const error = useMemo(() => validateCustodyCycleBlocks(blocks), [blocks]);
 
   const split = useMemo(() => {
@@ -136,139 +132,87 @@ export default function CustodyCycleBuilder({
 
   const nameFor = (id: string) => (id === parentA.id ? parentA.name : parentB.name);
 
-  // Hur stor andel av dygnet (i procent) som ligger FÖRE bytestiden —
-  // avgör hur stor "morgon"-delen av varje dagruta ska rita ut sig som.
-  // T.ex. switchHour "12:00" ger 50%, "08:00" ger ~33%.
-  const switchHourPct = useMemo(() => {
-    const [h, m] = switchHour.split(":").map(Number);
-    const minutes = (h ?? 12) * 60 + (m ?? 0);
-    return Math.min(100, Math.max(0, (minutes / 1440) * 100));
-  }, [switchHour]);
   const isBalanced = split[parentA.id] === split[parentB.id];
 
-  const [y, m, d] = cycleStartDate.split("-").map(Number);
-  const startDateObj = new Date(y, (m ?? 1) - 1, d ?? 1);
+  const colorA = parentA.color ?? "#E0705B";
+  const colorB = parentB.color ?? "#4A2B52";
+  const colorFor = (id: string) => (id === parentA.id ? colorA : colorB);
+
+  const WEEKDAY_LABELS = ["MÅN", "TIS", "ONS", "TORS", "FRE", "LÖR", "SÖN"];
 
   return (
     <div>
-      <h1 className="mb-2 text-2xl font-bold text-stone-800">Boendeschema för {childName}</h1>
-      <p className="mb-5 text-stone-500">
-        Välj ett vanligt mönster eller måla dagarna själva — tryck på en dag för att byta förälder. Byten sker
-        kl {switchHour}.
-      </p>
+      <h1 className="mb-6 text-3xl font-bold leading-tight text-stone-900">
+        Skapa mall för bytesdagar
+      </h1>
 
-      <div className="mb-4 flex flex-wrap gap-2">
-        {CYCLE_PRESET_LIST.map((preset) => (
-          <button
-            key={preset.label}
-            onClick={() => applyPreset(preset.pattern)}
-            className="rounded-full border border-stone-300 px-3 py-1.5 text-sm font-medium text-stone-600 hover:border-rose-400 hover:text-rose-600"
-          >
-            {preset.label}
-          </button>
+      <label className="mb-6 block">
+        <span className="mb-2 block text-sm font-semibold text-stone-800">
+          Efter hur många veckor upprepar sig schemat?
+        </span>
+        <select
+          value={periodWeeks}
+          onChange={(e) => applyPeriod(Number(e.target.value) as PeriodWeeks)}
+          className="w-full appearance-none rounded-xl border border-stone-300 bg-white px-4 py-3 text-base text-stone-800 outline-none focus:border-stone-500"
+        >
+          {PERIOD_OPTIONS.map((weeks) => (
+            <option key={weeks} value={weeks}>
+              {weeks}
+            </option>
+          ))}
+        </select>
+      </label>
+
+      <p className="mb-3 text-sm text-stone-500">Välj vem som har ansvaret för vilka dagar</p>
+
+      <div className="mb-1 grid grid-cols-7 gap-2">
+        {WEEKDAY_LABELS.map((label) => (
+          <span key={label} className="text-center text-[10px] font-medium tracking-wide text-stone-400">
+            {label}
+          </span>
         ))}
       </div>
 
-      <div className="mb-4">
-        <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-stone-400">Visa</p>
-        <div className="flex gap-2">
-          {PERIOD_OPTIONS.map((weeks) => (
-            <button
-              key={weeks}
-              onClick={() => applyPeriod(weeks)}
-              className={`flex-1 rounded-lg py-1.5 text-sm font-semibold transition ${
-                periodWeeks === weeks ? "bg-rose-500 text-white" : "bg-stone-100 text-stone-600 hover:bg-stone-200"
-              }`}
-            >
-              {weeks} {weeks === 1 ? "vecka" : "veckor"}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <div className="mb-1 flex items-center gap-4 text-xs text-stone-500">
-        <span className="flex items-center gap-1.5">
-          <span className="h-3 w-3 rounded-full bg-rose-500" /> {parentA.name}
-        </span>
-        <span className="flex items-center gap-1.5">
-          <span className="h-3 w-3 rounded-full bg-sky-500" /> {parentB.name}
-        </span>
-      </div>
-      <p className="mb-2 text-[11px] text-stone-400">
-        Varje ruta visar dygnet delat vid bytestiden {switchHour} — övre delen är morgonen (gårdagens
-        förälder), nedre delen är från bytet och resten av dagen.
-      </p>
-
-      <div className="mb-4 space-y-1">
+      <div className="mb-4 space-y-2">
         {Array.from({ length: periodWeeks }, (_, week) => (
-          <div key={week} className="grid grid-cols-7 gap-1">
+          <div key={week} className="grid grid-cols-7 gap-2">
             {Array.from({ length: 7 }, (_, dow) => {
               const i = week * 7 + dow;
               const parentId = days[i];
-              // Bytet sker vid switchHour, inte midnatt: morgonen på en
-              // given kalenderdag tillhör alltså GÅRDAGENS block, och det
-              // är först vid switchHour som dagens block (parentId) tar
-              // över. Cykeln loopar, så dag 0:s morgon tillhör cykelns
-              // sista dag (mod-räkning).
-              const morningParentId = days[(i - 1 + days.length) % days.length];
-              const date = new Date(startDateObj.getTime() + i * 24 * 60 * 60 * 1000);
               return (
                 <button
                   key={i}
                   type="button"
                   onClick={() => toggleDay(i)}
-                  title={`${date.toLocaleDateString("sv-SE")} — ${nameFor(morningParentId)} till ${switchHour}, sedan ${nameFor(parentId)}`}
-                  className="flex flex-col overflow-hidden rounded-lg text-white transition active:scale-95"
-                  style={{ height: "48px" }}
-                >
-                  <div
-                    className={`flex items-center justify-center text-[9px] font-semibold opacity-90 ${
-                      morningParentId === parentA.id ? "bg-rose-500" : "bg-sky-500"
-                    }`}
-                    style={{ height: `${switchHourPct}%` }}
-                  />
-                  <div
-                    className={`flex flex-1 flex-col items-center justify-center ${
-                      parentId === parentA.id ? "bg-rose-500" : "bg-sky-500"
-                    }`}
-                  >
-                    <span className="text-[9px] uppercase opacity-80">
-                      {date.toLocaleDateString("sv-SE", { weekday: "narrow" })}
-                    </span>
-                    <span className="text-xs font-semibold">{date.getDate()}</span>
-                  </div>
-                </button>
+                  aria-label={`${WEEKDAY_LABELS[dow]} vecka ${week + 1}: ${nameFor(parentId)}`}
+                  className="aspect-square rounded-xl transition active:scale-95"
+                  style={{ backgroundColor: colorFor(parentId) }}
+                />
               );
             })}
           </div>
         ))}
       </div>
 
-      <div className="mb-4 rounded-xl bg-stone-50 px-4 py-3 text-sm">
-        <p className="text-stone-600">
-          Cykeln är <span className="font-semibold text-stone-800">{totalDays} dagar</span> och upprepas sedan.
-        </p>
-        <p className="mt-1 text-stone-600">
-          {parentA.name}: <span className="font-semibold">{split[parentA.id]} dagar</span> ·{" "}
-          {parentB.name}: <span className="font-semibold">{split[parentB.id]} dagar</span>
-        </p>
-        {!isBalanced && (
-          <p className="mt-2 text-amber-700">
-            Ojämn fördelning — {nameFor(split[parentA.id] > split[parentB.id] ? parentA.id : parentB.id)} har{" "}
-            {Math.abs(split[parentA.id] - split[parentB.id])} dagar mer per cykel. Det är helt okej om ni vill
-            ha det så, men ställningen utgår från det här som "normalläge".
-          </p>
-        )}
+      <div className="mb-6 flex flex-wrap items-center gap-x-5 gap-y-2 text-sm text-stone-700">
+        <span className="flex items-center gap-2">
+          <span className="h-3.5 w-3.5 rounded-full" style={{ backgroundColor: colorA }} />
+          {parentA.name}
+        </span>
+        <span className="flex items-center gap-2">
+          <span className="h-3.5 w-3.5 rounded-full" style={{ backgroundColor: colorB }} />
+          {parentB.name}
+        </span>
       </div>
 
-      <div className="mb-4 grid grid-cols-2 gap-3">
+      <div className="mb-6 grid grid-cols-2 gap-3">
         <label className="text-sm text-stone-600">
           Startdatum
           <input
             type="date"
             value={cycleStartDate}
             onChange={(e) => setCycleStartDate(e.target.value)}
-            className="mt-1 w-full rounded-lg bg-stone-100 px-3 py-2"
+            className="mt-1 w-full rounded-xl border border-stone-300 bg-white px-3 py-2.5 outline-none focus:border-stone-500"
           />
         </label>
         <label className="text-sm text-stone-600">
@@ -277,18 +221,26 @@ export default function CustodyCycleBuilder({
             type="time"
             value={switchHour}
             onChange={(e) => setSwitchHour(e.target.value)}
-            className="mt-1 w-full rounded-lg bg-stone-100 px-3 py-2"
+            className="mt-1 w-full rounded-xl border border-stone-300 bg-white px-3 py-2.5 outline-none focus:border-stone-500"
           />
         </label>
       </div>
 
+      {!isBalanced && (
+        <p className="mb-4 text-sm text-stone-500">
+          {nameFor(split[parentA.id] > split[parentB.id] ? parentA.id : parentB.id)} har{" "}
+          {Math.abs(split[parentA.id] - split[parentB.id])} dagar mer per cykel. Det går bra, men ställningen
+          utgår från det här som normalläge.
+        </p>
+      )}
+
       {error && <p className="mb-4 text-sm text-rose-600">{error}</p>}
 
-      <div className="flex gap-2">
+      <div className="flex gap-3">
         {onCancel && (
           <button
             onClick={onCancel}
-            className="flex-1 rounded-full border border-stone-300 py-3 font-semibold text-stone-600"
+            className="flex-1 rounded-full border border-stone-300 py-4 text-sm font-semibold uppercase tracking-widest text-stone-600"
           >
             Avbryt
           </button>
@@ -303,7 +255,8 @@ export default function CustodyCycleBuilder({
               setSaving(false);
             }
           }}
-          className="flex-1 rounded-full bg-rose-500 py-3 font-semibold text-white disabled:opacity-40"
+          className="flex-1 rounded-full py-4 text-sm font-semibold uppercase tracking-widest text-white disabled:opacity-40"
+          style={{ backgroundColor: colorB }}
         >
           {saving ? "Sparar…" : submitLabel}
         </button>
