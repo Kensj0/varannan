@@ -28,6 +28,7 @@ import {
   EventDoc,
   TeamParentProfile,
   PARENT_PALETTE,
+  parentColorGoogleHex,
 } from "../../types/schema";
 import { switchInstantForDate } from "../../lib/custodyCycle";
 import { resolveResponsibleParent } from "../../lib/handoffPreview";
@@ -133,6 +134,22 @@ export const calendarFeed = onRequest({ cors: true }, async (req, res) => {
   const nameFor = (uid: string) =>
     profiles[uid]?.displayName ?? "Andra föräldern";
 
+  /**
+   * Google Calendar ignorerar COLOR-fältet för prenumererade kalendrar
+   * (färgar per kalender, inte per händelse — användaren väljer själv
+   * efter att ha prenumererat). Apple Calendar och Outlook läser däremot
+   * COLOR/X-APPLE-CALENDAR-COLOR och målar prenumerationen automatiskt.
+   * Vi kan bara sätta EN färg per flöde, så det gäller bara när flödet
+   * är begränsat till en förälder (`only` satt) — annars vet vi inte
+   * vilken av de två färgerna som ska gälla.
+   */
+  const feedColorHex = only
+    ? parentColorGoogleHex(
+        profiles[only]?.colorId,
+        (teamSnap.data()?.parentIds ?? []).indexOf(only),
+      )
+    : null;
+
   const shiftsSnap = await db
     .collection(`teams/${teamId}/shiftRequests`)
     .where("childId", "==", childId)
@@ -165,6 +182,12 @@ export const calendarFeed = onRequest({ cors: true }, async (req, res) => {
     // Hur ofta kalenderappen bör hämta om flödet.
     "REFRESH-INTERVAL;VALUE=DURATION:PT6H",
     "X-PUBLISHED-TTL:PT6H",
+    // Kalenderfärg (RFC 7986 COLOR, samt Apples motsvarighet). Google
+    // Calendar läser inte detta för prenumerationer — se kommentaren
+    // vid feedColorHex ovan — men Apple Calendar och Outlook gör det.
+    ...(feedColorHex
+      ? [`COLOR:${feedColorHex}`, `X-APPLE-CALENDAR-COLOR:${feedColorHex}`]
+      : []),
   ];
 
   // --- Ansvarsblock: ett event per sammanhängande period hos en förälder ---
@@ -191,6 +214,10 @@ export const calendarFeed = onRequest({ cors: true }, async (req, res) => {
             end: instant,
             summary: `${childName} hos ${nameFor(blockParent)}`,
             timezone,
+            colorHex: parentColorGoogleHex(
+              profiles[blockParent]?.colorId,
+              (teamSnap.data()?.parentIds ?? []).indexOf(blockParent),
+            ),
           }),
         );
       }
@@ -207,6 +234,10 @@ export const calendarFeed = onRequest({ cors: true }, async (req, res) => {
         end: switchInstantForDate(cycle, isoDate(rangeEnd)),
         summary: `${childName} hos ${nameFor(blockParent)}`,
         timezone,
+        colorHex: parentColorGoogleHex(
+          profiles[blockParent]?.colorId,
+          (teamSnap.data()?.parentIds ?? []).indexOf(blockParent),
+        ),
       }),
     );
   }
@@ -249,6 +280,14 @@ function vevent(opts: {
   end: Date;
   summary: string;
   timezone: string;
+  /**
+   * Google Calendars originalfärg för ansvarig förälders schemafärg.
+   * Google läser inte detta (färgar per kalender, se ovan), men Apple
+   * Calendar respekterar COLOR per händelse — så i ett kombinerat flöde
+   * (båda föräldrarnas block) kan Apple ändå visa rätt färg per block,
+   * även om Google-prenumeranten bara ser en enfärgad kalender.
+   */
+  colorHex?: string | null;
 }): string[] {
   return [
     "BEGIN:VEVENT",
@@ -257,6 +296,7 @@ function vevent(opts: {
     `DTSTART:${utcStamp(opts.start)}`,
     `DTEND:${utcStamp(opts.end)}`,
     ...foldLine(`SUMMARY:${escapeText(opts.summary)}`),
+    ...(opts.colorHex ? [`COLOR:${opts.colorHex}`] : []),
     "END:VEVENT",
   ];
 }
