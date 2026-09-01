@@ -1,0 +1,78 @@
+name: Dumpa custodyCycle
+
+# Diagnostik: skriver ut den sparade cykeln för varje barn, så att det
+# som faktiskt ligger i Firestore går att jämföra med det som målades i
+# byggaren. Inga personuppgifter utöver uid:n och blockstruktur.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  dump:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Skriv Google service account-nyckel till fil
+        run: echo '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}' > /tmp/gcp-key.json
+
+      - name: Installera firebase-admin
+        run: npm install firebase-admin --no-save
+
+      - name: Läs cyklerna
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: /tmp/gcp-key.json
+        run: |
+          mkdir -p diagnostics
+          cat > /tmp/dump.js << 'EOF'
+          const admin = require("firebase-admin");
+          admin.initializeApp({ projectId: "varannan-familj" });
+          const db = admin.firestore();
+
+          (async () => {
+            const teams = await db.collection("teams").get();
+            for (const team of teams.docs) {
+              console.log(`=== TEAM ${team.id} ===`);
+              console.log("parentIds:", JSON.stringify(team.data().parentIds));
+              const profiles = team.data().parentProfiles || {};
+              for (const [uid, p] of Object.entries(profiles)) {
+                console.log(`  ${uid} = ${p.displayName}`);
+              }
+              const children = await db.collection(`teams/${team.id}/children`).get();
+              for (const child of children.docs) {
+                console.log(`--- BARN ${child.id} (${child.data().name}) ---`);
+                const cyc = await db
+                  .doc(`teams/${team.id}/children/${child.id}/custodyCycle/main`)
+                  .get();
+                if (!cyc.exists) {
+                  console.log("  (ingen cykel sparad)");
+                  continue;
+                }
+                const d = cyc.data();
+                console.log("  cycleStartDate:", d.cycleStartDate);
+                console.log("  switchHour:", d.switchHour, "tz:", d.timezone);
+                console.log("  blocks:", JSON.stringify(d.blocks));
+                const total = (d.blocks || []).reduce((s, b) => s + b.days, 0);
+                console.log("  total dagar:", total);
+              }
+            }
+            process.exit(0);
+          })().catch((e) => {
+            console.error(e);
+            process.exit(1);
+          });
+          EOF
+          node /tmp/dump.js > diagnostics/cycle.txt 2>&1 || true
+          cat diagnostics/cycle.txt
+
+      - name: Publicera på grenen diagnostics
+        run: |
+          git config user.name "varannan-bot"
+          git config user.email "bot@varannan.local"
+          git checkout -B diagnostics
+          git add -f diagnostics/cycle.txt
+          git commit -m "Cykeldump $(date -u +%Y-%m-%dT%H:%M:%SZ)" || exit 0
+          git push -f origin diagnostics
