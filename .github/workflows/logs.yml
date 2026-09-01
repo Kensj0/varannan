@@ -1,0 +1,40 @@
+name: Hämta Cloud Functions-loggar
+
+# Diagnostik, inte deploy. Skriver ut de senaste loggraderna från en
+# vald funktion så att ett "INTERNAL"-fel i appen går att spåra till
+# den faktiska stacktracen, utan att behöva sitta vid en dator med
+# Firebase CLI installerat.
+on:
+  workflow_dispatch:
+    inputs:
+      function:
+        description: "Vilken funktion? (tom = alla)"
+        required: false
+        default: "approveShiftRequest"
+      lines:
+        description: "Antal rader"
+        required: false
+        default: "80"
+
+jobs:
+  logs:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Installera Firebase CLI
+        run: npm install -g firebase-tools
+
+      - name: Skriv Google service account-nyckel till fil
+        run: echo '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}' > /tmp/gcp-key.json
+
+      - name: Hämta loggar
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: /tmp/gcp-key.json
+        run: |
+          if [ -n "${{ github.event.inputs.function }}" ]; then
+            firebase functions:log \
+              --only "${{ github.event.inputs.function }}" \
+              -n "${{ github.event.inputs.lines }}" \
+              --project varannan-familj
+          else
+            firebase functions:log -n "${{ github.event.inputs.lines }}" --project varannan-familj
+          fi
