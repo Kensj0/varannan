@@ -67,6 +67,7 @@ function JoinPageInner() {
       setStatus("success");
       router.replace("/");
     } catch (err) {
+      console.error("[join] acceptInvite misslyckades:", err);
       setStatus("error");
       setError(mapAcceptError(err));
     }
@@ -147,8 +148,21 @@ function Centered({ children }: { children: React.ReactNode }) {
 
 function mapAcceptError(err: unknown): string {
   const code = (err as { code?: string })?.code ?? "";
+  const message = (err as { message?: string })?.message ?? "";
+
   if (code === "functions/failed-precondition") {
-    return "Koden är ogiltig eller har gått ut. Be den andra föräldern skapa en ny inbjudan.";
+    // Servern skickar med en specifik text (ogiltig kod vs familjen full)
+    // — visa den istället för en gissning, de kräver olika åtgärder.
+    return message || "Koden är ogiltig eller har gått ut. Be den andra föräldern skapa en ny inbjudan.";
   }
-  return "Något gick fel. Försök igen om en stund.";
+  if (code === "functions/unauthenticated") {
+    return "Du verkar ha blivit utloggad. Ladda om sidan och försök igen.";
+  }
+
+  // Okända fel: visa den tekniska koden också. Utan den blir alla fel
+  // omöjliga att skilja åt när något faktiskt går snett i produktion.
+  const detail = [code, message].filter(Boolean).join(": ");
+  return detail
+    ? `Något gick fel. Teknisk info: ${detail}`
+    : "Något gick fel. Försök igen om en stund.";
 }
