@@ -16,6 +16,10 @@ on:
         required: false
         default: "80"
 
+permissions:
+  # Krävs för att kunna pusha loggen till grenen "diagnostics".
+  contents: write
+
 jobs:
   logs:
     runs-on: ubuntu-latest
