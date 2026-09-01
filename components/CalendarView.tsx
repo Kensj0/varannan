@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { CustodyCycleDoc, ShiftRequestDoc, EventDoc } from "../types/schema";
 import { getScheduledParentForDate, switchInstantForDate } from "../lib/custodyCycle";
 import { expandEvents, EventOccurrence } from "../lib/recurrence";
-import { atSwitchHour, addDays } from "../lib/calendarActions";
+import { addDays } from "../lib/calendarActions";
 import { PushPermissionState } from "../lib/pushNotifications";
 import { ParentColorId } from "../types/schema";
 import { CalendarFeedLinks } from "../lib/calendarExport";
@@ -145,8 +145,15 @@ export default function CalendarView({
     return proposal ? parentMetaFor(proposal.takingOverParentId) : null;
   }
 
-  function previewParentAt(instant: Date): ParentMeta {
-    const explicit = dayOverrides.get(dayKey(segmentDayFor(instant, switchHour)));
+  /**
+   * `segmentDay` är den kalenderdag instansen tillhör, och skickas in i
+   * stället för att räknas fram ur instansen. segmentDayFor gjorde det
+   * i ENHETENS lokala tid medan instansen ligger i familjens tidszon —
+   * på en enhet i annan tidszon hamnade uppslaget en dag fel, och en
+   * målad dag såg ut att inte reagera alls.
+   */
+  function previewParentAt(instant: Date, segmentDay: Date): ParentMeta {
+    const explicit = dayOverrides.get(dayKey(segmentDay));
     if (explicit) return parentMetaFor(explicit.takingOverParentId);
     return originalParentAt(addDays(instant, -shiftOffsetDays));
   }
@@ -165,7 +172,7 @@ export default function CalendarView({
   /** Förälder för dagens EFTERMIDDAG (från bytestiden och framåt). */
   function afternoonParent(day: Date, preview: boolean): ParentMeta {
     const instant = switchInstant(day);
-    return preview ? previewParentAt(instant) : originalParentAt(instant);
+    return preview ? previewParentAt(instant, day) : originalParentAt(instant);
   }
 
   /** Sista ögonblicket före dagens byte — tillhör gårdagens block. */
@@ -175,14 +182,15 @@ export default function CalendarView({
 
   /** Förälder för dagens MORGON (gårdagens block, fram till bytestiden). */
   function morningParent(day: Date, preview: boolean): ParentMeta {
+    // Morgonen tillhör föregående dygns block, alltså gårdagens segment.
     const instant = morningInstant(day);
-    return preview ? previewParentAt(instant) : originalParentAt(instant);
+    return preview ? previewParentAt(instant, addDays(day, -1)) : originalParentAt(instant);
   }
 
   function toggleDay(day: Date) {
     const instant = switchInstant(day);
     const original = originalParentAt(addDays(instant, -shiftOffsetDays)).id;
-    const next = previewParentAt(instant).id === parentA.id ? parentB.id : parentA.id;
+    const next = previewParentAt(instant, day).id === parentA.id ? parentB.id : parentA.id;
     const key = dayKey(day);
     setDayOverrides((prev) => {
       const copy = new Map(prev);
@@ -230,14 +238,21 @@ export default function CalendarView({
     if (!editMode) return [] as DayChange[];
     const changes: DayChange[] = [];
     for (const day of visibleDays) {
+      // Bara dagar i den månad man faktiskt tittar på. Rutnätet visar
+      // in- och utfyllnadsdagar från angränsande månader, och en
+      // förskjutning ändrar per definition VARJE dag — utan den här
+      // gränsen skulle ett enda tryck på "förskjut" skicka ett förslag
+      // som spänner över tre månader, vilket är omöjligt att överblicka
+      // för den som ska svara.
+      if (!day || day.getMonth() !== monthDate.getMonth()) continue;
       const instant = switchInstant(day);
       const original = originalParentAt(instant).id;
-      const preview = previewParentAt(instant).id;
+      const preview = previewParentAt(instant, day).id;
       if (original !== preview) changes.push({ date: day, takingOverParentId: preview });
     }
     return changes;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editMode, visibleDays, shiftOffsetDays, dayOverrides, switchHour, cycle, approvedShiftRequests]);
+  }, [editMode, visibleDays, monthDate, shiftOffsetDays, dayOverrides, switchHour, cycle, approvedShiftRequests]);
 
   async function submitChanges() {
     setSubmitting(true);
@@ -780,12 +795,6 @@ function isInstantWithinShift(instant: Date, request: ShiftRequestDoc): boolean 
   const start = new Date(request.startAt.seconds * 1000);
   const end = request.endAt ? new Date(request.endAt.seconds * 1000) : null;
   return end ? instant >= start && instant < end : instant >= start;
-}
-
-/** Dygnet [switchHour(D), switchHour(D+1)) hör till dag D. */
-function segmentDayFor(instant: Date, switchHour: string): Date {
-  const midnight = new Date(instant.getFullYear(), instant.getMonth(), instant.getDate());
-  return instant < atSwitchHour(midnight, switchHour) ? addDays(midnight, -1) : midnight;
 }
 
 // ---------------------------------------------------------------------------
