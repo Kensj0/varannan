@@ -151,6 +151,52 @@ export const createInvite = onCall(async (request) => {
   return createParentInvite(onboardingDb, teamId, safeBaseUrl);
 });
 
+/**
+ * Byter ut PENDING_PARTNER_ID mot den andra förälderns riktiga uid i alla
+ * barns custodyCycle. Normalt sköts det av acceptInvite, men team som
+ * anslöts innan listChildIds-buggen fixades har kvar platshållaren i
+ * schemat — vilket gör att hela kalendern visar EN förälder. Anropas
+ * automatiskt av klienten när den upptäcker en kvarvarande platshållare.
+ */
+export const repairPendingPartner = onCall(async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) throw new HttpsError("unauthenticated", "Du måste vara inloggad.");
+  const { teamId } = request.data as { teamId: string };
+
+  const teamSnap = await db.doc(`teams/${teamId}`).get();
+  if (!teamSnap.exists) throw new HttpsError("not-found", "Team saknas.");
+  const parentIds: string[] = teamSnap.data()?.parentIds ?? [];
+  if (!parentIds.includes(uid)) throw new HttpsError("permission-denied", "Du är inte medlem i teamet.");
+  // Kräver att båda föräldrarna finns — annars vet vi inte vem
+  // platshållaren ska bli, och skulle riskera att peka ut fel person.
+  if (parentIds.length < 2) return { repaired: 0 };
+
+  const childrenSnap = await db.collection(`teams/${teamId}/children`).get();
+  let repaired = 0;
+
+  for (const child of childrenSnap.docs) {
+    const ref = db.doc(`teams/${teamId}/children/${child.id}/custodyCycle/main`);
+    const snap = await ref.get();
+    if (!snap.exists) continue;
+    const blocks = (snap.data()?.blocks ?? []) as { parentId: string; days: number }[];
+    if (!blocks.some((b) => b.parentId === PENDING_PARTNER_ID)) continue;
+
+    // Platshållaren är den förälder som INTE äger de riktiga blocken.
+    const realIdInBlocks = blocks.find((b) => b.parentId !== PENDING_PARTNER_ID)?.parentId;
+    const partnerId = parentIds.find((id) => id !== realIdInBlocks);
+    if (!partnerId) continue;
+
+    await ref.update({
+      blocks: blocks.map((b) => (b.parentId === PENDING_PARTNER_ID ? { ...b, parentId: partnerId } : b)),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedBy: uid,
+    });
+    repaired++;
+  }
+
+  return { repaired };
+});
+
 export const acceptInvite = onCall(async (request) => {
   const uid = request.auth?.uid;
   if (!uid) throw new HttpsError("unauthenticated", "Du måste vara inloggad.");

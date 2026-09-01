@@ -94,8 +94,14 @@ export function createOnboardingAdapter(db: admin.firestore.Firestore): Onboardi
     },
 
     async listChildIds(teamId: string) {
-      const snap = await db.doc(`teams/${teamId}`).get();
-      return (snap.data()?.childIds as string[]) ?? [];
+      // Läs subkollektionen direkt istället för team.childIds. Klientens
+      // addChild skriver bara barnet till teams/{id}/children och rör
+      // aldrig childIds-fältet, så fältet var i praktiken alltid tomt —
+      // vilket gjorde att platshållaren PENDING_PARTNER_ID aldrig
+      // ersattes när andra föräldern anslöt (hela schemat visade då en
+      // förälder), och att sendHandoffReminders aldrig hittade några barn.
+      const snap = await db.collection(`teams/${teamId}/children`).get();
+      return snap.docs.map((d) => d.id);
     },
 
     async readCustodyCycle(teamId: string, childId: string) {
