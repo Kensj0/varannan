@@ -85,8 +85,8 @@ import {
 import {
   PENDING_PARTNER_ID,
   DEFAULT_HANDOFF_REMINDER_PREFS,
-  DEFAULT_SCHEDULE_CHANGE_MODE,
   parentColorHex,
+  scheduleChangeModeFor,
   ParentColorId,
   ScheduleChangeMode,
 } from "../types/schema";
@@ -175,8 +175,10 @@ export default function HomePage() {
   const activeInfoChildId = selectedInfoChildId ?? children[0]?.id ?? null;
   const activeInfoChild = children.find((c) => c.id === activeInfoChildId) ?? null;
 
-  const scheduleChangeMode: ScheduleChangeMode =
-    team?.scheduleChangeMode ?? DEFAULT_SCHEDULE_CHANGE_MODE;
+  // Mitt eget läge styr hur den ANDRA får ändra mina dagar — det är det
+  // jag ställer in. Motpartens läge styr vad JAG får göra, och avgör
+  // därför om en ändring blir en förfrågan eller gäller direkt.
+  const myScheduleChangeMode = scheduleChangeModeFor(team, user?.uid);
 
 
 
@@ -653,9 +655,8 @@ export default function HomePage() {
                 teamName={team?.name}
                 onCreateInvite={() => createInvite(teamId!)}
                 onUpdateDisplayName={updateDisplayName}
-                onEditStructure={
-                  hasPartner && activeChild && cycle ? () => setEditingStructure(true) : undefined
-                }
+                reminderPrefs={reminderPrefs}
+                onUpdateReminderPrefs={handleUpdateReminderPrefs}
               />
             )}
 
@@ -756,7 +757,7 @@ export default function HomePage() {
                       takingOverParentId,
                       // Bytet sker vid schemats bytestid, inte midnatt.
                       startAt: atSwitchHour(date, cycle.switchHour),
-                      mode: scheduleChangeMode,
+                      mode: scheduleChangeModeFor(team, otherParentId),
                     });
                   }}
                   onProposeShiftBatch={async (changes) => {
@@ -766,7 +767,7 @@ export default function HomePage() {
                       requestedBy: user!.uid,
                       switchHour: cycle.switchHour,
                       changes,
-                      mode: scheduleChangeMode,
+                      mode: scheduleChangeModeFor(team, otherParentId),
                     });
                   }}
                   pushPermission={pushPermission}
@@ -782,6 +783,9 @@ export default function HomePage() {
                     feedTokens?.[user!.uid] && teamId && activeChild
                       ? buildFeedLinks(teamId, activeChild.id, user!.uid, feedTokens[user!.uid], {
                           onlyParentId: user!.uid,
+                          // Aktiviteter ligger i ett eget flöde, så de kan
+                          // få egen färg i Google (som färgar per kalender).
+                          includeActivities: false,
                         })
                       : feedLinks
                         ? feedLinks[user!.uid]
@@ -800,13 +804,23 @@ export default function HomePage() {
                   otherParentName={parentNames[otherParentId] ?? "Andra föräldern"}
                   onCreateFeed={handleCreateFeed}
                   onChangeSwitchHour={handleChangeSwitchHour}
+                  onEditStructure={
+                    hasPartner && cycle ? () => setEditingStructure(true) : undefined
+                  }
+                  activityFeedLinks={
+                    feedTokens?.[user!.uid] && teamId
+                      ? buildFeedLinks(teamId, activeChild.id, user!.uid, feedTokens[user!.uid], {
+                          activitiesOnly: true,
+                        })
+                      : null
+                  }
                   calendars={children.map((c) => ({ id: c.id, name: c.name }))}
                   activeCalendarId={activeChild.id}
                   onSelectCalendar={setSelectedChildId}
                   onCreateCalendar={handleCreateCalendar}
                   onRenameCalendar={handleRenameCalendar}
                   onDeleteCalendar={handleDeleteCalendar}
-                  scheduleChangeMode={scheduleChangeMode}
+                  scheduleChangeMode={myScheduleChangeMode}
                   onChangeScheduleChangeMode={handleChangeScheduleChangeMode}
                 />
               </>

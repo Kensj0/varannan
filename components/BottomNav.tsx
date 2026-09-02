@@ -7,7 +7,7 @@ const SECTIONS: { id: AppSection; label: string; icon: (active: boolean) => Reac
   { id: "info", label: "Info", icon: (a) => <InfoIcon active={a} /> },
   { id: "calendar", label: "Schema", icon: (a) => <CalendarIcon active={a} /> },
   { id: "lists", label: "Listor", icon: (a) => <ListIcon active={a} /> },
-  { id: "settings", label: "Inställningar", icon: (a) => <SettingsGearIcon active={a} /> },
+  { id: "settings", label: "Profil", icon: (a) => <ProfileIcon active={a} /> },
 ];
 
 /**
@@ -85,11 +85,11 @@ function ListIcon({ active }: { active: boolean }) {
   );
 }
 
-function SettingsGearIcon({ active }: { active: boolean }) {
+function ProfileIcon({ active }: { active: boolean }) {
   return (
     <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={active ? 2 : 1.6}>
-      <circle cx="12" cy="12" r="3" />
-      <path d="M12 3v2.2M12 18.8V21M21 12h-2.2M5.2 12H3M18.4 5.6l-1.5 1.5M7.1 16.9l-1.5 1.5M18.4 18.4l-1.5-1.5M7.1 7.1 5.6 5.6" strokeLinecap="round" />
+      <circle cx="12" cy="8" r="3.6" />
+      <path d="M4.5 20a7.5 7.5 0 0 1 15 0" strokeLinecap="round" />
     </svg>
   );
 }

@@ -12,16 +12,11 @@ interface SettingsViewProps {
   onSignOut: () => Promise<void>;
   pushPermission: PushPermission;
   onEnablePush: () => Promise<void> | void;
+  reminderPrefs: { dayBefore: boolean; sameDay: boolean };
+  onUpdateReminderPrefs: (prefs: { dayBefore: boolean; sameDay: boolean }) => void;
   hasPartner: boolean;
   teamName?: string;
   onCreateInvite: () => Promise<{ code: string; shareUrl: string }>;
-  /**
-   * Öppnar cykelbyggaren för att göra om grundschemat. Utelämnas när det
-   * inte går att ändra än (inget barn valt, eller andra föräldern har
-   * inte anslutit — blocken pekar på uid:n och kan inte byggas mot en
-   * platshållare).
-   */
-  onEditStructure?: () => void;
   /** Sparar nytt visningsnamn. Utelämnas om namnbyte inte är möjligt. */
   onUpdateDisplayName?: (name: string) => Promise<void>;
 }
@@ -38,10 +33,11 @@ export default function SettingsView({
   onSignOut,
   pushPermission,
   onEnablePush,
+  reminderPrefs,
+  onUpdateReminderPrefs,
   hasPartner,
   teamName,
   onCreateInvite,
-  onEditStructure,
   onUpdateDisplayName,
 }: SettingsViewProps) {
   const [sending, setSending] = useState(false);
@@ -147,23 +143,6 @@ export default function SettingsView({
         </div>
       )}
 
-      {/* Struktur — gör om grundschemat i samma byggare som i onboarding. */}
-      {onEditStructure && (
-        <div className="rounded-2xl bg-white p-4 shadow-sm">
-          <p className="text-xs font-semibold uppercase tracking-wide text-stone-400">Struktur</p>
-          <p className="mt-2 text-sm text-stone-500">
-            Ändra grundschemat — vem som har barnet vilka dagar, och när bytet sker. Inlagda aktiviteter
-            och godkända bytesdagar påverkas inte.
-          </p>
-          <button
-            onClick={onEditStructure}
-            className="mt-3 w-full rounded-full bg-stone-800 py-2.5 text-sm font-semibold text-white hover:bg-stone-700"
-          >
-            Ändra grundschema
-          </button>
-        </div>
-      )}
-
       {/* Notiser */}
       <div className="rounded-2xl bg-white p-4 shadow-sm">
         <p className="text-xs font-semibold uppercase tracking-wide text-stone-400">Notiser</p>
@@ -200,6 +179,26 @@ export default function SettingsView({
             Notiser stöds inte i den här webbläsaren.
           </p>
         )}
+
+        {/* Påminnelser om överlämning hör hit och inte till en enskild
+            kalender: de är ett personligt notisval och gäller alla barn. */}
+        <div className="mt-4 border-t border-stone-100 pt-3">
+          <p className="mb-1 text-[13px] font-medium text-stone-700">Påminn om överlämning</p>
+          <label className="flex items-center justify-between py-1.5">
+            <span className="text-sm text-stone-600">Dagen innan</span>
+            <Toggle
+              checked={reminderPrefs.dayBefore}
+              onChange={(v) => onUpdateReminderPrefs({ ...reminderPrefs, dayBefore: v })}
+            />
+          </label>
+          <label className="flex items-center justify-between py-1.5">
+            <span className="text-sm text-stone-600">Samma dag</span>
+            <Toggle
+              checked={reminderPrefs.sameDay}
+              onChange={(v) => onUpdateReminderPrefs({ ...reminderPrefs, sameDay: v })}
+            />
+          </label>
+        </div>
       </div>
 
       <div className="rounded-2xl bg-white p-4 shadow-sm">
@@ -224,5 +223,22 @@ export default function SettingsView({
         Logga ut
       </button>
     </div>
+  );
+}
+
+function Toggle({ checked, onChange }: { checked: boolean; onChange: (value: boolean) => void }) {
+  return (
+    <button
+      role="switch"
+      aria-checked={checked}
+      onClick={() => onChange(!checked)}
+      className={`relative h-6 w-10 shrink-0 rounded-full transition ${checked ? "bg-rose-500" : "bg-stone-200"}`}
+    >
+      <span
+        className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition ${
+          checked ? "left-[18px]" : "left-0.5"
+        }`}
+      />
+    </button>
   );
 }

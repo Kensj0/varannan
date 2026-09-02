@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { PushPermissionState } from "../lib/pushNotifications";
 import {
   PARENT_PALETTE,
   ParentColorId,
@@ -15,10 +14,6 @@ interface CalendarSettingsPanelProps {
   onClose: () => void;
   showWeekNumbers: boolean;
   onToggleShowWeekNumbers: (value: boolean) => void;
-  pushPermission: PushPermissionState | null;
-  onEnablePush: () => void;
-  reminderPrefs: { dayBefore: boolean; sameDay: boolean };
-  onUpdateReminderPrefs: (prefs: { dayBefore: boolean; sameDay: boolean }) => void;
   myColorId?: ParentColorId;
   onSelectColor: (colorId: ParentColorId) => Promise<void>;
   otherParentColorHex: string;
@@ -28,6 +23,8 @@ interface CalendarSettingsPanelProps {
   otherParentName?: string;
   onCreateFeed: () => Promise<void>;
   onOpenExportGuide: () => void;
+  /** Undefined när schemat inte går att ändra än (ingen partner/cykel). */
+  onEditStructure?: () => void;
   switchHour: string;
   onChangeSwitchHour: (hh: string, mm: string) => Promise<void>;
   childName: string;
@@ -43,10 +40,6 @@ export default function CalendarSettingsPanel({
   onClose,
   showWeekNumbers,
   onToggleShowWeekNumbers,
-  pushPermission,
-  onEnablePush,
-  reminderPrefs,
-  onUpdateReminderPrefs,
   myColorId,
   onSelectColor,
   otherParentColorHex,
@@ -55,6 +48,7 @@ export default function CalendarSettingsPanel({
   otherParentName,
   onCreateFeed,
   onOpenExportGuide,
+  onEditStructure,
   switchHour,
   onChangeSwitchHour,
   childName,
@@ -210,31 +204,24 @@ export default function CalendarSettingsPanel({
           })}
         </div>
 
-        <Section title="Påminnelser om överlämning" />
-
-        {pushPermission !== "granted" && (
-          <button
-            onClick={onEnablePush}
-            className="mb-2 w-full rounded-lg bg-rose-500 px-3 py-2 text-sm font-semibold text-white"
-          >
-            Aktivera push-notiser
-          </button>
+        {onEditStructure && (
+          <>
+            <Section title="Grundschema" />
+            <p className="mb-2 text-[11px] leading-snug text-stone-400">
+              Vem som har barnet vilka dagar, och när bytet sker. Gäller den här kalendern.
+              Aktiviteter och godkända bytesdagar påverkas inte.
+            </p>
+            <button
+              onClick={() => {
+                onEditStructure();
+                onClose();
+              }}
+              className="w-full rounded-lg bg-stone-50 px-3 py-2 text-sm font-medium text-stone-700 hover:bg-stone-100"
+            >
+              Ändra grundschema
+            </button>
+          </>
         )}
-
-        <label className="flex items-center justify-between py-1.5">
-          <span className="text-sm text-stone-700">Dagen innan</span>
-          <Toggle
-            checked={reminderPrefs.dayBefore}
-            onChange={(v) => onUpdateReminderPrefs({ ...reminderPrefs, dayBefore: v })}
-          />
-        </label>
-        <label className="flex items-center justify-between py-1.5">
-          <span className="text-sm text-stone-700">Samma dag</span>
-          <Toggle
-            checked={reminderPrefs.sameDay}
-            onChange={(v) => onUpdateReminderPrefs({ ...reminderPrefs, sameDay: v })}
-          />
-        </label>
 
         <Section title="Exportera kalender" />
 
