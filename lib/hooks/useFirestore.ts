@@ -296,7 +296,11 @@ export function usePackLists(
   return state;
 }
 
-export function useNotes(teamId: string | null | undefined): ListenerState<NoteDoc[]> {
+export function useNotes(
+  teamId: string | null | undefined,
+  childId?: string | null,
+  isFallbackCalendar = false
+): ListenerState<NoteDoc[]> {
   const [state, setState] = useState<ListenerState<NoteDoc[]>>({ data: [], loading: true, error: null });
 
   useEffect(() => {
@@ -307,19 +311,50 @@ export function useNotes(teamId: string | null | undefined): ListenerState<NoteD
     const q = query(collection(db, `teams/${teamId}/notes`), orderBy("updatedAt", "desc"));
     const unsub = onSnapshot(
       q,
-      (snap) => setState({ data: snap.docs.map((d) => d.data() as NoteDoc), loading: false, error: null }),
+      (snap) =>
+        setState({
+          // Filtreras i klienten i stället för med where(): kombinationen
+          // childId + orderBy kräver ett sammansatt index, och volymen
+          // (en familjs anteckningar) gör det inte värt besväret.
+          data: snap.docs
+            .map((d) => d.data() as NoteDoc)
+            .filter((n) => belongsToCalendar(n.childId, childId, isFallbackCalendar)),
+          loading: false,
+          error: null,
+        }),
       (error) => setState({ data: [], loading: false, error })
     );
     return unsub;
-  }, [teamId]);
+  }, [teamId, childId, isFallbackCalendar]);
 
   return state;
+}
+
+
+/**
+ * Hör dokumentet till den valda kalendern?
+ *
+ * Chatt, notes och todos låg tidigare på teamet och saknar childId. De
+ * visas på den FÖRSTA kalendern i stället för att försvinna — annars
+ * hade befintligt innehåll blivit oåtkomligt när delningen flyttades
+ * ner på barnet.
+ */
+function belongsToCalendar(
+  docChildId: string | undefined,
+  childId: string | null | undefined,
+  isFallbackCalendar: boolean
+): boolean {
+  if (!childId) return false;
+  if (docChildId) return docChildId === childId;
+  return isFallbackCalendar;
 }
 
 /** Todos. `archived` styr om avbockade uppgifter ligger kvar i listan. */
 export function useTodos(
   teamId: string | null | undefined,
-  includeArchived = false
+  includeArchived = false,
+  childId?: string | null,
+  isFallbackCalendar = false
 ): ListenerState<TodoDoc[]> {
   const [state, setState] = useState<ListenerState<TodoDoc[]>>({ data: [], loading: true, error: null });
 
@@ -335,11 +370,18 @@ export function useTodos(
 
     const unsub = onSnapshot(
       q,
-      (snap) => setState({ data: snap.docs.map((d) => d.data() as TodoDoc), loading: false, error: null }),
+      (snap) =>
+        setState({
+          data: snap.docs
+            .map((d) => d.data() as TodoDoc)
+            .filter((t) => belongsToCalendar(t.childId, childId, isFallbackCalendar)),
+          loading: false,
+          error: null,
+        }),
       (error) => setState({ data: [], loading: false, error })
     );
     return unsub;
-  }, [teamId, includeArchived]);
+  }, [teamId, includeArchived, childId, isFallbackCalendar]);
 
   return state;
 }
@@ -414,7 +456,9 @@ export function useChildAccounts(
  */
 export function useChatMessages(
   teamId: string | null | undefined,
-  messageLimit = 100
+  messageLimit = 100,
+  childId?: string | null,
+  isFallbackCalendar = false
 ): ListenerState<ChatMessageDoc[]> {
   const [state, setState] = useState<ListenerState<ChatMessageDoc[]>>({ data: [], loading: true, error: null });
 
@@ -426,20 +470,27 @@ export function useChatMessages(
     const q = query(
       collection(db, `teams/${teamId}/chatMessages`),
       orderBy("createdAt", "desc"),
-      limit(messageLimit)
+      // Hämtas rikligare än vad som visas, eftersom filtreringen per
+      // kalender sker i klienten — annars kunde limit ätas upp av
+      // meddelanden som hör till en annan kalender.
+      limit(messageLimit * 4)
     );
     const unsub = onSnapshot(
       q,
       (snap) =>
         setState({
-          data: snap.docs.map((d) => d.data() as ChatMessageDoc).reverse(),
+          data: snap.docs
+            .map((d) => d.data() as ChatMessageDoc)
+            .filter((m) => belongsToCalendar(m.childId, childId, isFallbackCalendar))
+            .slice(0, messageLimit)
+            .reverse(),
           loading: false,
           error: null,
         }),
       (error) => setState({ data: [], loading: false, error })
     );
     return unsub;
-  }, [teamId, messageLimit]);
+  }, [teamId, messageLimit, childId, isFallbackCalendar]);
 
   return state;
 }

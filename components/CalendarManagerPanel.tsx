@@ -5,6 +5,8 @@ import { useState } from "react";
 export interface ManagedCalendar {
   id: string;
   name: string;
+  /** Antal föräldrar som delar kalendern. Styr om "ta bort" är radera eller lämna. */
+  memberCount: number;
 }
 
 interface CalendarManagerPanelProps {
@@ -15,6 +17,7 @@ interface CalendarManagerPanelProps {
   onCreateCalendar: (name: string) => Promise<void>;
   onRenameCalendar: (calendarId: string, name: string) => Promise<void>;
   onDeleteCalendar: (calendarId: string) => Promise<void>;
+  onInviteToCalendar: (calendarId: string) => Promise<{ shareUrl: string }>;
 }
 
 /**
@@ -34,6 +37,7 @@ export default function CalendarManagerPanel({
   onCreateCalendar,
   onRenameCalendar,
   onDeleteCalendar,
+  onInviteToCalendar,
 }: CalendarManagerPanelProps) {
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState("");
@@ -41,6 +45,7 @@ export default function CalendarManagerPanel({
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [inviteUrl, setInviteUrl] = useState<{ id: string; url: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -134,8 +139,17 @@ export default function CalendarManagerPanel({
               return (
                 <div key={calendar.id} className="rounded-lg bg-rose-50 p-2">
                   <p className="mb-2 text-[11px] leading-snug text-rose-700">
-                    Ta bort <span className="font-semibold">{calendar.name}</span>? Schemat,
-                    ställningen, barninfo och konton försvinner. Det går inte att ångra.
+                    {calendar.memberCount > 1 ? (
+                      <>
+                        Lämna <span className="font-semibold">{calendar.name}</span>? Den försvinner
+                        för dig, men finns kvar hos den andra föräldern — som kan bjuda in någon ny.
+                      </>
+                    ) : (
+                      <>
+                        Ta bort <span className="font-semibold">{calendar.name}</span>? Schemat,
+                        ställningen, barninfo, chatt och listor försvinner. Det går inte att ångra.
+                      </>
+                    )}
                   </p>
                   <div className="flex gap-1">
                     <button
@@ -155,7 +169,7 @@ export default function CalendarManagerPanel({
                       }}
                       className="flex-1 rounded-lg bg-rose-600 py-1 text-xs font-semibold text-white disabled:opacity-40"
                     >
-                      {busy ? "Tar bort…" : "Ta bort"}
+                      {busy ? "Arbetar…" : calendar.memberCount > 1 ? "Lämna" : "Ta bort"}
                     </button>
                   </div>
                 </div>
@@ -196,6 +210,25 @@ export default function CalendarManagerPanel({
                 >
                   Byt namn
                 </button>
+
+                {calendar.memberCount < 2 && (
+                  <button
+                    onClick={async () => {
+                      const res = await run(
+                        async () => {
+                          const { shareUrl } = await onInviteToCalendar(calendar.id);
+                          setInviteUrl({ id: calendar.id, url: shareUrl });
+                        },
+                        "Kunde inte skapa inbjudan."
+                      );
+                      void res;
+                    }}
+                    aria-label={`Bjud in till ${calendar.name}`}
+                    className="shrink-0 rounded px-1.5 py-1 text-xs text-stone-400 hover:text-rose-600"
+                  >
+                    Bjud in
+                  </button>
+                )}
 
                 <button
                   onClick={() => {
@@ -285,6 +318,21 @@ export default function CalendarManagerPanel({
             </button>
           )}
         </div>
+
+        {inviteUrl && (
+          <div className="mt-2 rounded-lg bg-stone-50 p-2">
+            <p className="mb-1 text-[11px] font-medium text-stone-700">Dela den här länken:</p>
+            <p className="break-all text-[11px] text-stone-500">{inviteUrl.url}</p>
+            <button
+              onClick={() => {
+                void navigator.clipboard.writeText(inviteUrl.url);
+              }}
+              className="mt-1 text-[11px] font-semibold text-rose-600 hover:underline"
+            >
+              Kopiera länk
+            </button>
+          </div>
+        )}
 
         {error && <p className="mt-2 text-[11px] leading-snug text-rose-600">{error}</p>}
       </div>

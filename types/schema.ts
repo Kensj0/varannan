@@ -218,7 +218,30 @@ export interface ChildDoc {
   name: string;
   avatarUrl?: string;
   birthYear?: number;
+  /**
+   * Vilka föräldrar som delar DEN HÄR kalendern.
+   *
+   * Delningen sitter på barnet, inte på teamet: kalendern ÄR barnet, och
+   * allt som hör till barnet (schema, chatt, listor, barninfo) delas med
+   * exakt de här personerna. Att lämna en kalender tar därför bort den
+   * bara för en själv — den andra föräldern behåller sin och kan bjuda
+   * in någon ny i stället.
+   *
+   * Saknas fältet gäller teamets parentIds, så kalendrar som skapades
+   * innan delningen flyttades hit fortsätter fungera oförändrat.
+   */
+  parentIds?: string[];
   createdAt: FirestoreTimestamp;
+}
+
+/** Vilka föräldrar delar kalendern? Faller tillbaka på teamets. */
+export function calendarParentIds(
+  child: { parentIds?: string[] } | null | undefined,
+  team: { parentIds?: string[] } | null | undefined,
+): string[] {
+  const own = child?.parentIds;
+  if (own && own.length > 0) return own;
+  return team?.parentIds ?? [];
 }
 
 /** /children/{childId}/childInfo/main */
@@ -447,6 +470,8 @@ export interface PackListDoc {
 export interface NoteDoc {
   id: string;
   teamId: string;
+  /** Vilken kalender anteckningen hör till. Saknas = äldre, teamgemensam. */
+  childId?: string;
   title: string;
   content: string;
   createdBy: string;
@@ -457,6 +482,8 @@ export interface NoteDoc {
 export interface TodoDoc {
   id: string;
   teamId: string;
+  /** Vilken kalender uppgiften hör till. Saknas = äldre, teamgemensam. */
+  childId?: string;
   title: string;
   done: boolean;
   doneBy?: string;
@@ -474,6 +501,8 @@ export interface TodoDoc {
 export interface ChatMessageDoc {
   id: string;
   teamId: string;
+  /** Vilken kalender meddelandet hör till. Saknas = äldre, teamgemensamt. */
+  childId?: string;
   senderId: string;
   text?: string;
   /** Länk till t.ex. en shiftRequest som visas som ett kort i chatten. */

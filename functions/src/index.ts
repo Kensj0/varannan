@@ -18,6 +18,7 @@
  */
 
 import * as admin from "firebase-admin";
+import * as crypto from "crypto";
 import { setGlobalOptions } from "firebase-functions/v2";
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { onDocumentWritten, onDocumentCreated } from "firebase-functions/v2/firestore";
@@ -37,6 +38,7 @@ import {
   TeamParentProfile,
   ScheduleChangeMode,
   scheduleChangeModeFor,
+  calendarParentIds,
   PENDING_PARTNER_ID,
 } from "../../types/schema";
 import { applyApprovedShiftToBalance } from "../../lib/dayBalance";
@@ -863,6 +865,9 @@ export const addChild = onCall(async (request) => {
     id: childRef.id,
     teamId,
     name: trimmed,
+    // Nya kalendrar delas med teamets nuvarande föräldrar. Delningen
+    // ligger på barnet så att den kan ändras per kalender senare.
+    parentIds: parentIds.filter((id: string) => id !== PENDING_PARTNER_ID),
     createdAt: admin.firestore.FieldValue.serverTimestamp(),
     ...(typeof birthYear === "number" ? { birthYear } : {}),
   });
@@ -904,16 +909,24 @@ export const renameChild = onCall(async (request) => {
 });
 
 /**
- * Tar bort en kalender (= ett barn) med allt som hänger på den.
+ * Lämnar eller raderar en kalender.
  *
- * Firestore kaskadraderar INTE subkollektioner: att bara ta bort
- * barn-dokumentet hade lämnat kvar grundschema, ställning, historik,
- * barninfo och konton som föräldralösa dokument — osynliga i appen men
- * fortfarande läsbara för den som kan gissa en path. Därför städas de
- * uttryckligen här.
+ * Kalendern ÄR barnet, och delas av de föräldrar som står i
+ * child.parentIds. Därför finns två utfall:
  *
- * shiftRequests och packLists ligger under teamet (inte under barnet)
- * och filtreras på childId, så de raderas via frågor.
+ *  - Är du INTE ensam kvar: du lämnar bara. Kalendern med allt innehåll
+ *    finns kvar hos den andra föräldern, som kan bjuda in någon ny i
+ *    ditt ställe. Ditt uid byts mot PENDING_PARTNER_ID i grundschemat,
+ *    precis som när man bygger ett schema innan partnern anslutit — då
+ *    glider nästa person in på samma plats utan att schemat byggs om.
+ *
+ *  - Är du sista medlemmen: allt raderas. Firestore kaskadraderar inte,
+ *    så subkollektionerna städas uttryckligen — annars blir schema,
+ *    ställning, barninfo och konton kvar som föräldralösa dokument.
+ *
+ * Ställningen behålls när någon lämnar (uttryckligt val): saldot är en
+ * fortsättning på kalenderns historik, inte på relationen till en viss
+ * person.
  */
 export const deleteChild = onCall(async (request) => {
   const uid = request.auth?.uid;
@@ -928,30 +941,58 @@ export const deleteChild = onCall(async (request) => {
   const teamSnap = await teamRef.get();
   if (!teamSnap.exists) throw new HttpsError("not-found", "Teamet finns inte.");
 
-  const parentIds: string[] = teamSnap.data()?.parentIds ?? [];
-  if (!parentIds.includes(uid)) {
-    throw new HttpsError("permission-denied", "Du tillhör inte teamet.");
-  }
-
-  // Räkna de FAKTISKA barnen, inte team.childIds. Det fältet kunde inte
-  // skrivas från klienten (firestore.rules låser team-dokumentet), så
-  // barn som lades till innan addChild blev en callable saknas där.
-  // Att lita på det gav "det går inte att ta bort den sista kalendern"
-  // trots att det fanns flera i listan.
-  const allChildren = await db.collection(`teams/${teamId}/children`).get();
-  if (allChildren.size <= 1) {
-    throw new HttpsError(
-      "failed-precondition",
-      "Det går inte att ta bort den sista kalendern. Skapa en ny först, eller byt namn på den här."
-    );
-  }
-
   const childRef = db.doc(`teams/${teamId}/children/${childId}`);
-  if (!(await childRef.get()).exists) {
-    throw new HttpsError("not-found", "Kalendern finns inte.");
+  const childSnap = await childRef.get();
+  if (!childSnap.exists) throw new HttpsError("not-found", "Kalendern finns inte.");
+
+  const members = calendarParentIds(childSnap.data() as any, teamSnap.data() as any);
+  if (!members.includes(uid)) {
+    throw new HttpsError("permission-denied", "Du delar inte den här kalendern.");
   }
 
-  // Subkollektioner under barnet.
+  const remainingMembers = members.filter((id) => id !== uid && id !== PENDING_PARTNER_ID);
+
+  // ---- Fall 1: någon annan är kvar — lämna, radera inte. ----
+  if (remainingMembers.length > 0) {
+    const cycleRef = childRef.collection("custodyCycle").doc("main");
+    const cycleSnap = await cycleRef.get();
+
+    const batch = db.batch();
+    batch.update(childRef, { parentIds: remainingMembers });
+
+    if (cycleSnap.exists) {
+      // Blocken pekar på uid:n. Byt mina mot platshållaren så att den
+      // som bjuds in härnäst ärver mina dagar i stället för att schemat
+      // pekar på någon som inte längre är med.
+      const cycle = cycleSnap.data() as CustodyCycleDoc;
+      const blocks = (cycle.blocks ?? []).map((b) =>
+        b.parentId === uid ? { ...b, parentId: PENDING_PARTNER_ID } : b,
+      );
+      batch.update(cycleRef, { blocks });
+    }
+
+    await batch.commit();
+
+    // Prenumerationstoken som var mina blir meningslösa.
+    const tokens: Record<string, string> = teamSnap.data()?.calendarFeedTokens ?? {};
+    const mine = Object.keys(tokens).filter((k) => k === `${childId}:${uid}`);
+    if (mine.length > 0) {
+      const patch: Record<string, any> = {};
+      for (const key of mine) patch[`calendarFeedTokens.${key}`] = admin.firestore.FieldValue.delete();
+      await teamRef.update(patch);
+    }
+
+    const leaverName = teamSnap.data()?.parentProfiles?.[uid]?.displayName ?? "Den andra föräldern";
+    const childName = childSnap.data()?.name ?? "kalendern";
+    await sendPushToUsers(db, remainingMembers, {
+      title: `${leaverName} lämnade ${childName}`,
+      body: "Kalendern finns kvar hos dig. Du kan bjuda in någon ny att dela den med.",
+    });
+
+    return { ok: true, left: true };
+  }
+
+  // ---- Fall 2: sista medlemmen — radera allt. ----
   for (const sub of [
     "childInfo",
     "accounts",
@@ -964,7 +1005,7 @@ export const deleteChild = onCall(async (request) => {
   }
 
   // Team-nivådokument som pekar på barnet.
-  for (const col of ["shiftRequests", "packLists", "events"]) {
+  for (const col of ["shiftRequests", "packLists", "events", "notes", "todos", "chatMessages"]) {
     await deleteQueryInBatches(
       db.collection(`teams/${teamId}/${col}`).where("childId", "==", childId)
     );
@@ -972,26 +1013,18 @@ export const deleteChild = onCall(async (request) => {
 
   await childRef.delete();
 
-  // Skriv om childIds från de barn som faktiskt finns, i stället för att
-  // bara plocka bort ett id. Fältet kan ha glidit ur synk av samma skäl
-  // som ovan, och sendHandoffReminders läser det för att veta vilka barn
-  // som ska påminnas om — en lucka där betyder uteblivna påminnelser.
-  const remaining = allChildren.docs.map((d) => d.id).filter((id) => id !== childId);
-  await teamRef.update({ childIds: remaining });
+  const allChildren = await db.collection(`teams/${teamId}/children`).get();
+  await teamRef.update({ childIds: allChildren.docs.map((d) => d.id) });
 
-  // Prenumerationstoken för barnet blir meningslösa — ta bort dem så att
-  // en gammal ICS-länk inte ligger kvar och pekar på ett borttaget barn.
   const tokens: Record<string, string> = teamSnap.data()?.calendarFeedTokens ?? {};
   const staleKeys = Object.keys(tokens).filter((k) => k.startsWith(`${childId}:`));
   if (staleKeys.length > 0) {
     const patch: Record<string, any> = {};
-    for (const key of staleKeys) {
-      patch[`calendarFeedTokens.${key}`] = admin.firestore.FieldValue.delete();
-    }
+    for (const key of staleKeys) patch[`calendarFeedTokens.${key}`] = admin.firestore.FieldValue.delete();
     await teamRef.update(patch);
   }
 
-  return { ok: true };
+  return { ok: true, left: false };
 });
 
 /** Raderar alla dokument en fråga matchar, i lagom stora batchar. */
@@ -1008,6 +1041,167 @@ async function deleteQueryInBatches(
     if (snap.size < batchSize) return;
   }
 }
+
+
+// ---------------------------------------------------------------------------
+// 1g. Inbjudan till EN kalender.
+//
+//     Skiljer sig från createInvite (som bjuder in till hela familjen och
+//     bara kan användas en gång, innan team-uppsättningen är klar). Den
+//     här används när man redan har en kalender och vill dela just den —
+//     t.ex. efter att den andra föräldern lämnat och man vill koppla på
+//     någon ny på samma schema.
+// ---------------------------------------------------------------------------
+
+export const createCalendarInvite = onCall(async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) throw new HttpsError("unauthenticated", "Du måste vara inloggad.");
+
+  const { teamId, childId, baseUrl } = request.data as {
+    teamId?: string;
+    childId?: string;
+    baseUrl?: string;
+  };
+  if (!teamId || !childId) {
+    throw new HttpsError("invalid-argument", "teamId och childId krävs.");
+  }
+
+  const [teamSnap, childSnap] = await Promise.all([
+    db.doc(`teams/${teamId}`).get(),
+    db.doc(`teams/${teamId}/children/${childId}`).get(),
+  ]);
+  if (!teamSnap.exists || !childSnap.exists) {
+    throw new HttpsError("not-found", "Kalendern finns inte.");
+  }
+
+  const members = calendarParentIds(childSnap.data() as any, teamSnap.data() as any).filter(
+    (id) => id !== PENDING_PARTNER_ID,
+  );
+  if (!members.includes(uid)) {
+    throw new HttpsError("permission-denied", "Du delar inte den här kalendern.");
+  }
+  if (members.length >= 2) {
+    throw new HttpsError("failed-precondition", "Kalendern delas redan av två föräldrar.");
+  }
+
+  // Samma origin-validering som createInvite: baseUrl kommer från
+  // klienten och får inte kunna peka länken mot en phishing-domän.
+  const allowed = (process.env.ALLOWED_APP_ORIGINS ?? "")
+    .split(",")
+    .map((x) => x.trim())
+    .filter(Boolean);
+  const safeBaseUrl =
+    baseUrl && allowed.includes(baseUrl) ? baseUrl : allowed[0] ?? "http://localhost:3000";
+
+  const code = generateCalendarInviteCode();
+  const expiresAt = new Date(Date.now() + 48 * 60 * 60 * 1000);
+  await db.doc(`teamInvites/${code}`).set({
+    teamId,
+    childId,
+    code,
+    used: false,
+    invitedBy: uid,
+    expiresAt: admin.firestore.Timestamp.fromDate(expiresAt),
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+
+  return {
+    code,
+    expiresAt: expiresAt.toISOString(),
+    shareUrl: `${safeBaseUrl.replace(/\/$/, "")}/join?code=${encodeURIComponent(code)}`,
+  };
+});
+
+/** ABCDE-FGHIJ ur ett alfabet utan tecken som lätt förväxlas (0/O, 1/I). */
+function generateCalendarInviteCode(): string {
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  const bytes = crypto.randomBytes(10);
+  let out = "";
+  for (let i = 0; i < 10; i++) {
+    out += alphabet[bytes[i] % alphabet.length];
+    if (i === 4) out += "-";
+  }
+  return out;
+}
+
+/**
+ * Ansluter till en enskild kalender. Den som redan är med i teamet
+ * läggs bara till på kalendern; den som är helt ny läggs till i båda.
+ */
+export const acceptCalendarInvite = onCall(async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) throw new HttpsError("unauthenticated", "Du måste vara inloggad.");
+
+  const rawCode = (request.data as { code?: string })?.code;
+  if (!rawCode) throw new HttpsError("invalid-argument", "code krävs.");
+  const code = rawCode.trim().toUpperCase();
+
+  const inviteRef = db.doc(`teamInvites/${code}`);
+  const inviteSnap = await inviteRef.get();
+  const invite = inviteSnap.data();
+  if (!inviteSnap.exists || !invite?.childId) {
+    throw new HttpsError("not-found", "Koden gäller ingen kalender.");
+  }
+  if (invite.used) throw new HttpsError("failed-precondition", "Koden är redan använd.");
+  if ((invite.expiresAt as admin.firestore.Timestamp).toDate().getTime() < Date.now()) {
+    throw new HttpsError("failed-precondition", "Koden har gått ut.");
+  }
+
+  const { teamId, childId } = invite as { teamId: string; childId: string };
+  const teamRef = db.doc(`teams/${teamId}`);
+  const childRef = db.doc(`teams/${teamId}/children/${childId}`);
+  const [teamSnap, childSnap] = await Promise.all([teamRef.get(), childRef.get()]);
+  if (!teamSnap.exists || !childSnap.exists) {
+    throw new HttpsError("not-found", "Kalendern finns inte längre.");
+  }
+
+  const members = calendarParentIds(childSnap.data() as any, teamSnap.data() as any).filter(
+    (id) => id !== PENDING_PARTNER_ID,
+  );
+  if (members.includes(uid)) {
+    await inviteRef.update({ used: true, usedAt: admin.firestore.FieldValue.serverTimestamp() });
+    return { teamId, childId };
+  }
+  if (members.length >= 2) {
+    throw new HttpsError("failed-precondition", "Kalendern delas redan av två föräldrar.");
+  }
+
+  const profile = profileFromAuth(request.auth!);
+  const teamParentIds: string[] = teamSnap.data()?.parentIds ?? [];
+
+  const batch = db.batch();
+  batch.update(inviteRef, { used: true, usedAt: admin.firestore.FieldValue.serverTimestamp() });
+  batch.update(childRef, { parentIds: [...members, uid] });
+
+  if (!teamParentIds.includes(uid)) {
+    batch.update(teamRef, {
+      parentIds: admin.firestore.FieldValue.arrayUnion(uid),
+      [`parentProfiles.${uid}`]: profile,
+    });
+  }
+
+  // Platshållaren i grundschemat blir den nya föräldern, så schemat
+  // aktiveras direkt i stället för att behöva byggas om.
+  const cycleRef = childRef.collection("custodyCycle").doc("main");
+  const cycleSnap = await cycleRef.get();
+  if (cycleSnap.exists) {
+    const cycle = cycleSnap.data() as CustodyCycleDoc;
+    const blocks = (cycle.blocks ?? []).map((b) =>
+      b.parentId === PENDING_PARTNER_ID ? { ...b, parentId: uid } : b,
+    );
+    batch.update(cycleRef, { blocks });
+  }
+
+  await batch.commit();
+  await db.doc(`users/${uid}`).set({ teamId }, { merge: true });
+
+  await sendPushToUsers(db, members, {
+    title: "Någon anslöt till kalendern",
+    body: `${profile.displayName} delar nu ${childSnap.data()?.name ?? "kalendern"} med dig.`,
+  });
+
+  return { teamId, childId };
+});
 
 // ---------------------------------------------------------------------------
 // 1d. setScheduleChangeMode — växla mellan "förfrågan" och "notifiering"

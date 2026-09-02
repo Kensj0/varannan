@@ -11,6 +11,8 @@ import { ChatMessageDoc } from "../types/schema";
  */
 export async function sendChatMessage(args: {
   teamId: string;
+  /** Kalendern meddelandet hör till — chatten följer kalendern. */
+  childId?: string;
   senderId: string;
   text: string;
   linkedShiftRequestId?: string;
@@ -22,6 +24,7 @@ export async function sendChatMessage(args: {
     senderId: args.senderId,
     text: args.text,
     createdAt: Timestamp.now() as any,
+    ...(args.childId ? { childId: args.childId } : {}),
     // Firestores webb-SDK kastar fel på `undefined`-fält (till skillnad
     // från Admin SDK). Ett vanligt chattmeddelande har inget kopplat
     // ansvarsbyte, så fältet fick värdet undefined och setDoc kastade
