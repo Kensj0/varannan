@@ -66,6 +66,15 @@ export async function renameChild(
   await fn({ teamId, childId, name });
 }
 
+/**
+ * Tar bort en kalender med allt som hänger på den (schema, ställning,
+ * barninfo, konton, byten). Servern vägrar ta bort den sista kalendern.
+ */
+export async function deleteChild(teamId: string, childId: string): Promise<void> {
+  const fn = httpsCallable(functions, "deleteChild");
+  await fn({ teamId, childId });
+}
+
 export async function saveCustodyCycle(args: {
   teamId: string;
   childId: string;

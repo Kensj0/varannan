@@ -78,6 +78,7 @@ import {
   createInvite,
   addChild,
   renameChild,
+  deleteChild,
   saveCustodyCycle,
   repairPendingPartner,
 } from "../lib/onboardingClient";
@@ -192,9 +193,19 @@ export default function HomePage() {
     setSelectedChildId(childId);
   }
 
-  async function handleRenameCalendar(name: string) {
-    if (!teamId || !activeChildId) return;
-    await renameChild(teamId, activeChildId, name);
+  async function handleRenameCalendar(calendarId: string, name: string) {
+    if (!teamId) return;
+    await renameChild(teamId, calendarId, name);
+  }
+
+  async function handleDeleteCalendar(calendarId: string) {
+    if (!teamId) return;
+    await deleteChild(teamId, calendarId);
+    // Vyn kan stå på den kalender som just försvann — släpp valet så att
+    // fallbacken (första barnet) tar över i stället för att peka på ett
+    // dokument som inte finns.
+    if (selectedChildId === calendarId) setSelectedChildId(null);
+    if (selectedInfoChildId === calendarId) setSelectedInfoChildId(null);
   }
 
   async function handleAddInfoChild(name: string) {
@@ -794,6 +805,7 @@ export default function HomePage() {
                   onSelectCalendar={setSelectedChildId}
                   onCreateCalendar={handleCreateCalendar}
                   onRenameCalendar={handleRenameCalendar}
+                  onDeleteCalendar={handleDeleteCalendar}
                   scheduleChangeMode={scheduleChangeMode}
                   onChangeScheduleChangeMode={handleChangeScheduleChangeMode}
                 />

@@ -18,11 +18,32 @@ import { db, functions } from "./firebase";
 import { ParentColorId } from "../types/schema";
 
 /**
- * Bas-URL till den deployade calendarFeed-funktionen. Sätts i .env.local
- * (NEXT_PUBLIC_CALENDAR_FEED_URL) eftersom den innehåller projekt-id och
- * region, som skiljer sig mellan dev och prod.
+ * Bas-URL till den deployade calendarFeed-funktionen.
+ *
+ * Kan sättas explicit i .env.local (NEXT_PUBLIC_CALENDAR_FEED_URL), men
+ * faller annars tillbaka på standardadressen som byggs av projekt-id
+ * och region. Tidigare gav en osatt variabel tom sträng, vilket
+ * producerade en URL som började med "?team=" — Google Kalender svarade
+ * då "Det gick inte att lägga till kalender. Kontrollera webbadressen",
+ * utan att det gick att se varför.
  */
-const FEED_BASE = process.env.NEXT_PUBLIC_CALENDAR_FEED_URL ?? "";
+const FEED_REGION = "us-central1";
+
+function resolveFeedBase(): string {
+  const explicit = process.env.NEXT_PUBLIC_CALENDAR_FEED_URL;
+  if (explicit) return explicit.replace(/\/+$/, "");
+
+  const projectId = process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID;
+  if (projectId) {
+    return `https://${FEED_REGION}-${projectId}.cloudfunctions.net/calendarFeed`;
+  }
+  return "";
+}
+
+const FEED_BASE = resolveFeedBase();
+
+/** Går det att bygga en prenumerationslänk alls? Se resolveFeedBase. */
+export const feedBaseConfigured = FEED_BASE.length > 0;
 
 export interface CalendarFeedLinks {
   /** Rå https-URL till ICS-flödet — den som kan klistras in var som helst. */
