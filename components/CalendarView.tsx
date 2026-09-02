@@ -385,7 +385,6 @@ export default function CalendarView({
             onClose={() => setSettingsOpen(false)}
             showWeekNumbers={showWeekNumbers}
             onToggleShowWeekNumbers={toggleShowWeekNumbers}
-            onEnterEditMode={() => setEditMode(true)}
             pushPermission={pushPermission}
             onEnablePush={onEnablePush}
             reminderPrefs={reminderPrefs}
@@ -897,10 +896,11 @@ function PlusIcon() {
 function SettingsIcon() {
   return (
     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-      <path d="M4 7h9M17 7h3M4 12h3M11 12h9M4 17h9M17 17h3" strokeLinecap="round" />
-      <circle cx="15" cy="7" r="2" />
-      <circle cx="9" cy="12" r="2" />
-      <circle cx="15" cy="17" r="2" />
+      <circle cx="12" cy="12" r="3.2" />
+      <path
+        d="M12 2.6l1.3 2.3 2.6-.5.4 2.6 2.3 1.3-1.4 2.2 1.4 2.2-2.3 1.3-.4 2.6-2.6-.5L12 21.4l-1.3-2.3-2.6.5-.4-2.6-2.3-1.3L6.8 13 5.4 10.8l2.3-1.3.4-2.6 2.6.5L12 2.6z"
+        strokeLinejoin="round"
+      />
     </svg>
   );
 }
