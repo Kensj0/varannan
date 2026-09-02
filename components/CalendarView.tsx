@@ -6,11 +6,12 @@ import { getScheduledParentForDate, switchInstantForDate } from "../lib/custodyC
 import { expandEvents, EventOccurrence } from "../lib/recurrence";
 import { addDays } from "../lib/calendarActions";
 import { PushPermissionState } from "../lib/pushNotifications";
-import { ParentColorId, ScheduleChangeMode } from "../types/schema";
+import { ParentColorId, ScheduleChangeMode, parentColorHex } from "../types/schema";
 import { CalendarFeedLinks } from "../lib/calendarExport";
 import DayActionModal from "./DayActionModal";
 import CalendarSettingsPanel from "./CalendarSettingsPanel";
 import CalendarManagerPanel from "./CalendarManagerPanel";
+import CalendarExportGuide from "./CalendarExportGuide";
 
 interface ParentMeta {
   id: string;
@@ -116,6 +117,7 @@ export default function CalendarView({
 }: CalendarViewProps) {
   const [activeDay, setActiveDay] = useState<Date | null>(null);
   const [parentA, parentB] = parents;
+  const myColorHex = parentColorHex(myColorId, 0);
   const switchHour = cycle.switchHour;
 
   const [showWeekNumbers, setShowWeekNumbers] = useState(true);
@@ -130,6 +132,7 @@ export default function CalendarView({
 
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [managerOpen, setManagerOpen] = useState(false);
+  const [exportGuideOpen, setExportGuideOpen] = useState(false);
 
   const [editMode, setEditMode] = useState(false);
   const [shiftOffsetDays, setShiftOffsetDays] = useState(0);
@@ -396,6 +399,7 @@ export default function CalendarView({
             otherFeedLinks={otherFeedLinks}
             otherParentName={otherParentName}
             onCreateFeed={onCreateFeed}
+            onOpenExportGuide={() => setExportGuideOpen(true)}
             switchHour={switchHour}
             onChangeSwitchHour={onChangeSwitchHour}
             childName={childName}
@@ -678,6 +682,24 @@ export default function CalendarView({
       )}
       </div>
 
+
+      {exportGuideOpen && feedLinks && (
+        <CalendarExportGuide
+          onClose={() => setExportGuideOpen(false)}
+          people={[
+            { label: "Dina dagar", hex: myColorHex, links: feedLinks },
+            ...(otherFeedLinks
+              ? [
+                  {
+                    label: `${otherParentName ?? "Andra föräldern"}s dagar`,
+                    hex: otherParentColorHex,
+                    links: otherFeedLinks,
+                  },
+                ]
+              : []),
+          ]}
+        />
+      )}
 
       {activeDay && !editMode && (
         <DayActionModal

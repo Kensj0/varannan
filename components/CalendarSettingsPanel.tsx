@@ -4,7 +4,6 @@ import { useState } from "react";
 import { PushPermissionState } from "../lib/pushNotifications";
 import {
   PARENT_PALETTE,
-  parentColorHex,
   ParentColorId,
   ScheduleChangeMode,
   SCHEDULE_CHANGE_MODES,
@@ -28,6 +27,7 @@ interface CalendarSettingsPanelProps {
   otherFeedLinks?: CalendarFeedLinks | null;
   otherParentName?: string;
   onCreateFeed: () => Promise<void>;
+  onOpenExportGuide: () => void;
   switchHour: string;
   onChangeSwitchHour: (hh: string, mm: string) => Promise<void>;
   childName: string;
@@ -54,6 +54,7 @@ export default function CalendarSettingsPanel({
   otherFeedLinks,
   otherParentName,
   onCreateFeed,
+  onOpenExportGuide,
   switchHour,
   onChangeSwitchHour,
   childName,
@@ -62,18 +63,9 @@ export default function CalendarSettingsPanel({
 }: CalendarSettingsPanelProps) {
   const [creatingFeed, setCreatingFeed] = useState(false);
   const [feedError, setFeedError] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
 
   const [modeBusy, setModeBusy] = useState(false);
   const [modeError, setModeError] = useState<string | null>(null);
-
-  // Färgens NAMN, inte bara prickens kulör: det är namnet man letar
-  // efter i Googles färgmeny, och paletten är byggd på Googles egna
-  // färger just för att de ska gå att känna igen där.
-  const myColorHex = parentColorHex(myColorId, 0);
-  const myColorName = PARENT_PALETTE.find((c) => c.id === myColorId)?.label ?? null;
-  const otherColorName =
-    PARENT_PALETTE.find((c) => c.hex === otherParentColorHex)?.label ?? null;
 
   const [hh] = (switchHour || "08:00").split(":");
   const [pendingHh, setPendingHh] = useState(hh ?? "08");
@@ -89,17 +81,6 @@ export default function CalendarSettingsPanel({
       setFeedError("Kunde inte skapa länken. Försök igen.");
     } finally {
       setCreatingFeed(false);
-    }
-  }
-
-  async function copyIcsUrl() {
-    if (!feedLinks) return;
-    try {
-      await navigator.clipboard.writeText(feedLinks.ics);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch {
-      setFeedError("Kunde inte kopiera. Markera och kopiera länken manuellt.");
     }
   }
 
@@ -258,65 +239,23 @@ export default function CalendarSettingsPanel({
         <Section title="Exportera kalender" />
 
         {!feedLinks ? (
-          <>
-            <p className="mb-2 text-[11px] leading-snug text-stone-400">
-              Skapar prenumerationslänkar som håller din och den andra förälderns kalender uppdaterade automatiskt — var sin länk, var sin färg i Google Calendar.
-            </p>
-            <button
-              onClick={handleCreateFeed}
-              disabled={creatingFeed}
-              className="w-full rounded-lg bg-stone-50 px-3 py-2 text-sm font-medium text-stone-700 hover:bg-stone-100 disabled:opacity-50"
-            >
-              {creatingFeed ? "Skapar…" : "Skapa prenumerationslänkar"}
-            </button>
-          </>
+          <button
+            onClick={handleCreateFeed}
+            disabled={creatingFeed}
+            className="w-full rounded-lg bg-stone-50 px-3 py-2 text-sm font-medium text-stone-700 hover:bg-stone-100 disabled:opacity-50"
+          >
+            {creatingFeed ? "Skapar…" : "Skapa prenumerationslänkar"}
+          </button>
         ) : (
-          <>
-            <FeedHeading label="Dina dagar" colorName={myColorName} hex={myColorHex} />
-            <div className="mb-3 space-y-1.5">
-              <FeedLink href={feedLinks.google} label="Google Kalender" />
-              <FeedLink href={feedLinks.apple} label="iPhone / Apple Kalender" />
-              <FeedLink href={feedLinks.outlook} label="Outlook / Microsoft" />
-
-              {otherFeedLinks && (
-                <div className="mt-3 border-t border-stone-100 pt-3">
-                  <FeedHeading
-                    label={`${otherParentName}s dagar`}
-                    colorName={otherColorName}
-                    hex={otherParentColorHex}
-                  />
-                  <FeedLink href={otherFeedLinks.google} label="Google Kalender" />
-                  <FeedLink href={otherFeedLinks.apple} label="iPhone / Apple Kalender" />
-                </div>
-              )}
-            </div>
-
-            {/* Färgen väljs i Google först efter att kalendern lagts till, så
-                namnet står här — annars finns ingenting att gå efter i det
-                ögonblick valet faktiskt görs, och färgerna glider isär. */}
-            <p className="mb-2 text-[11px] leading-snug text-stone-400">
-              I Google väljer du färgen själv när kalendern lagts till. Apple och Outlook sätter den
-              åt dig.
-            </p>
-
-            <button
-              onClick={copyIcsUrl}
-              className="w-full rounded-lg border border-stone-200 px-3 py-2 text-sm text-stone-600 hover:bg-stone-50"
-            >
-              {copied ? "Kopierad!" : "Kopiera min ICS-länk"}
-            </button>
-
-            <p className="mt-2 text-[11px] leading-snug text-stone-400">
-              Vem som helst med länken kan läsa schemat. Skapa nya länker för att återkalla de gamla.
-            </p>
-            <button
-              onClick={handleCreateFeed}
-              disabled={creatingFeed}
-              className="mt-1 text-[11px] font-medium text-rose-500 hover:underline disabled:opacity-50"
-            >
-              {creatingFeed ? "Skapar…" : "Skapa nya länker"}
-            </button>
-          </>
+          <button
+            onClick={() => {
+              onOpenExportGuide();
+              onClose();
+            }}
+            className="w-full rounded-lg bg-stone-50 px-3 py-2 text-sm font-medium text-stone-700 hover:bg-stone-100"
+          >
+            Exportera kalender
+          </button>
         )}
 
         {feedError && <p className="mt-2 text-[11px] text-rose-600">{feedError}</p>}
@@ -334,42 +273,6 @@ function Section({ title, first = false }: { title: string; first?: boolean }) {
     >
       {title}
     </p>
-  );
-}
-
-function FeedHeading({
-  label,
-  colorName,
-  hex,
-}: {
-  label: string;
-  colorName: string | null;
-  hex: string;
-}) {
-  return (
-    <p className="mb-2 flex items-center gap-1.5 text-[11px] font-medium text-stone-700">
-      <span
-        className="h-2.5 w-2.5 shrink-0 rounded-full"
-        style={{ backgroundColor: hex }}
-        aria-hidden
-      />
-      {label}
-      {colorName && <span className="font-normal text-stone-400">· {colorName}</span>}
-    </p>
-  );
-}
-
-function FeedLink({ href, label }: { href: string; label: string }) {
-  return (
-    <a
-      href={href}
-      target="_blank"
-      rel="noopener noreferrer"
-      className="flex items-center justify-between rounded-lg bg-stone-50 px-3 py-2 text-sm font-medium text-stone-700 hover:bg-stone-100"
-    >
-      {label}
-      <span className="text-stone-300">→</span>
-    </a>
   );
 }
 
