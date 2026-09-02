@@ -1,7 +1,6 @@
 import { httpsCallable } from "firebase/functions";
-import { doc, setDoc, collection, updateDoc, arrayUnion } from "firebase/firestore";
-import { functions, db } from "./firebase";
-import { CustodyCycleBlock, ChildDoc } from "../types/schema";
+import { functions } from "./firebase";
+import { CustodyCycleBlock } from "../types/schema";
 
 /**
  * team/invite/cykel går via Cloud Functions eftersom firestore.rules
@@ -37,24 +36,34 @@ export async function repairPendingPartner(teamId: string): Promise<{ repaired: 
   return res.data;
 }
 
-export async function addChild(teamId: string, name: string, birthYear?: number): Promise<{ childId: string }> {
-  const ref = doc(collection(db, `teams/${teamId}/children`));
-  const childDoc: ChildDoc = {
-    id: ref.id,
-    teamId,
-    name,
-    createdAt: { seconds: Math.floor(Date.now() / 1000), nanoseconds: 0 },
-    // Firestores webb-SDK kastar fel på `undefined`-fält (till skillnad
-    // från Admin SDK), så birthYear inkluderas bara när det faktiskt
-    // angetts — annars kraschar setDoc när fältet lämnas tomt.
-    ...(birthYear !== undefined ? { birthYear } : {}),
-  };
-  await setDoc(ref, childDoc);
-  // Håll team.childIds i synk. sendHandoffReminders läser det fältet för
-  // att veta vilka barn som finns, så utan detta skickades aldrig några
-  // överlämningspåminnelser för barn som lagts till från klienten.
-  await updateDoc(doc(db, `teams/${teamId}`), { childIds: arrayUnion(ref.id) });
-  return { childId: ref.id };
+/**
+ * Lägger till ett barn (= en kalender). Går via callable eftersom
+ * skapandet också måste uppdatera teams/{teamId}.childIds, och
+ * team-dokumentet är låst för klientskrivningar i firestore.rules.
+ * sendHandoffReminders läser childIds för att veta vilka barn som
+ * finns, så de två skrivningarna måste ske ihop.
+ */
+export async function addChild(
+  teamId: string,
+  name: string,
+  birthYear?: number
+): Promise<{ childId: string }> {
+  const fn = httpsCallable<
+    { teamId: string; name: string; birthYear?: number },
+    { childId: string }
+  >(functions, "addChild");
+  const res = await fn({ teamId, name, ...(birthYear !== undefined ? { birthYear } : {}) });
+  return res.data;
+}
+
+/** Byter namn på en kalender (= barnets namn). */
+export async function renameChild(
+  teamId: string,
+  childId: string,
+  name: string
+): Promise<void> {
+  const fn = httpsCallable(functions, "renameChild");
+  await fn({ teamId, childId, name });
 }
 
 export async function saveCustodyCycle(args: {

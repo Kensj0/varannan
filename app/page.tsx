@@ -27,10 +27,11 @@ import {
 } from "../lib/hooks/useFirestore";
 import {
   createEvent,
-  proposeShiftRequest,
   respondToShiftRequest,
-  proposeShiftRequestBatch,
   respondToShiftRequestBatch,
+  submitShiftChange,
+  submitShiftChangeBatch,
+  setScheduleChangeMode,
   clearApprovedShiftsFrom,
   proposeBalanceAdjustment,
   respondToBalanceAdjustment,
@@ -73,12 +74,20 @@ import ChildInfoView from "../components/ChildInfoView";
 import AccountsView from "../components/AccountsView";
 import CycleSetupScreen from "../components/onboarding/CycleSetupScreen";
 import AddFirstChildScreen from "../components/onboarding/AddFirstChildScreen";
-import { createInvite, addChild, saveCustodyCycle, repairPendingPartner } from "../lib/onboardingClient";
+import {
+  createInvite,
+  addChild,
+  renameChild,
+  saveCustodyCycle,
+  repairPendingPartner,
+} from "../lib/onboardingClient";
 import {
   PENDING_PARTNER_ID,
   DEFAULT_HANDOFF_REMINDER_PREFS,
+  DEFAULT_SCHEDULE_CHANGE_MODE,
   parentColorHex,
   ParentColorId,
+  ScheduleChangeMode,
 } from "../types/schema";
 import {
   buildFeedLinks,
@@ -148,6 +157,13 @@ export default function HomePage() {
   const { data: children, loading: childrenLoading } = useChildren(teamId);
 
   const [selectedChildId, setSelectedChildId] = useState<string | null>(null);
+  /**
+   * Vilket barn Barninfo/Konton visar. Medvetet SKILT från vilken
+   * kalender som är vald: barnets uppgifter hör till personen, inte till
+   * schemat man råkar titta på, så att bläddra bland barnkorten ska inte
+   * byta kalender under fötterna på en.
+   */
+  const [selectedInfoChildId, setSelectedInfoChildId] = useState<string | null>(null);
   const [monthDate, setMonthDate] = useState(() => new Date());
   const [section, setSection] = useState<AppSection>("calendar");
   const [listSubTab, setListSubTab] = useState<ListSubTab>("packlist");
@@ -155,12 +171,41 @@ export default function HomePage() {
 
   // Välj första barnet automatiskt så fort listan laddats.
   const activeChildId = selectedChildId ?? children[0]?.id ?? null;
+  const activeInfoChildId = selectedInfoChildId ?? children[0]?.id ?? null;
+  const activeInfoChild = children.find((c) => c.id === activeInfoChildId) ?? null;
+
+  const scheduleChangeMode: ScheduleChangeMode =
+    team?.scheduleChangeMode ?? DEFAULT_SCHEDULE_CHANGE_MODE;
 
 
 
   async function handleSelectColor(colorId: ParentColorId) {
     if (!teamId) return;
     await updateParentColor(teamId, colorId);
+  }
+
+  async function handleCreateCalendar(name: string) {
+    if (!teamId) return;
+    const { childId } = await addChild(teamId, name);
+    // Hoppa direkt till den nya kalendern — annars ser det ut som att
+    // ingenting hände, eftersom vyn ligger kvar på den gamla.
+    setSelectedChildId(childId);
+  }
+
+  async function handleRenameCalendar(name: string) {
+    if (!teamId || !activeChildId) return;
+    await renameChild(teamId, activeChildId, name);
+  }
+
+  async function handleAddInfoChild(name: string) {
+    if (!teamId) return;
+    const { childId } = await addChild(teamId, name);
+    setSelectedInfoChildId(childId);
+  }
+
+  async function handleChangeScheduleChangeMode(mode: ScheduleChangeMode) {
+    if (!teamId) return;
+    await setScheduleChangeMode(teamId, mode);
   }
 
   async function handleChangeSwitchHour(hh: string, mm: string) {
@@ -180,8 +225,8 @@ export default function HomePage() {
   const { data: packLists } = usePackLists(teamId, activeChildId);
   const { data: notes } = useNotes(teamId);
   const { data: todos } = useTodos(teamId);
-  const { data: childInfo } = useChildInfo(teamId, activeChildId);
-  const { data: childAccounts } = useChildAccounts(teamId, activeChildId);
+  const { data: childInfo } = useChildInfo(teamId, activeInfoChildId);
+  const { data: childAccounts } = useChildAccounts(teamId, activeInfoChildId);
 
   // Förälder-metadata från teamets cachade profiler (users/{uid} är bara
   // läsbart för ägaren själv, därför ligger namnen i team-dokumentet).
@@ -444,7 +489,11 @@ export default function HomePage() {
   // Barnväljaren visas bara när det faktiskt finns flera barn — annars
   // äter den höjd i onödan. Övriga rubriker är borttagna: månad och
   // barnets namn står redan i kalenderns egen header.
-  const showChildChips = children.length > 1 && section !== "chat" && section !== "settings";
+  //
+  // Bara för Listor: kalendern har sin egen väljare i inställnings-
+  // panelen och Barninfo bläddrar mellan barnkort, så där skulle chipsen
+  // bli ett andra, konkurrerande sätt att välja samma sak.
+  const showChildChips = children.length > 1 && section === "lists";
 
   return (
     <div className="fixed inset-0 flex flex-col bg-stone-50">
@@ -547,9 +596,14 @@ export default function HomePage() {
 
                 {infoSubTab === "childinfo" && (
                   <ChildInfoView
-                    childName={activeChild.name}
+                    childList={children.map((c) => ({ id: c.id, name: c.name }))}
+                    activeChildId={activeInfoChild!.id}
+                    onSelectChild={setSelectedInfoChildId}
+                    onAddChild={handleAddInfoChild}
                     info={childInfo}
-                    onSave={(patch) => updateChildInfo(teamId!, activeChild.id, patch, user!.uid)}
+                    onSave={(patch) =>
+                      updateChildInfo(teamId!, activeInfoChild!.id, patch, user!.uid)
+                    }
                   />
                 )}
 
@@ -560,15 +614,17 @@ export default function HomePage() {
                     onCreate={async (service, username, pinOrNote) => {
                       await createChildAccount({
                         teamId: teamId!,
-                        childId: activeChild.id,
+                        childId: activeInfoChild!.id,
                         service,
                         username,
                         pinOrNote,
                         addedBy: user!.uid,
                       });
                     }}
-                    onUpdate={(accountId, patch) => updateChildAccount(teamId!, activeChild.id, accountId, patch)}
-                    onDelete={(accountId) => deleteChildAccount(teamId!, activeChild.id, accountId)}
+                    onUpdate={(accountId, patch) =>
+                      updateChildAccount(teamId!, activeInfoChild!.id, accountId, patch)
+                    }
+                    onDelete={(accountId) => deleteChildAccount(teamId!, activeInfoChild!.id, accountId)}
                   />
                 )}
               </>
@@ -682,22 +738,24 @@ export default function HomePage() {
                     });
                   }}
                   onProposeShift={async (date, takingOverParentId) => {
-                    await proposeShiftRequest({
+                    await submitShiftChange({
                       teamId: teamId!,
                       childId: activeChild.id,
                       requestedBy: user!.uid,
                       takingOverParentId,
                       // Bytet sker vid schemats bytestid, inte midnatt.
                       startAt: atSwitchHour(date, cycle.switchHour),
+                      mode: scheduleChangeMode,
                     });
                   }}
                   onProposeShiftBatch={async (changes) => {
-                    await proposeShiftRequestBatch({
+                    await submitShiftChangeBatch({
                       teamId: teamId!,
                       childId: activeChild.id,
                       requestedBy: user!.uid,
                       switchHour: cycle.switchHour,
                       changes,
+                      mode: scheduleChangeMode,
                     });
                   }}
                   pushPermission={pushPermission}
@@ -731,6 +789,13 @@ export default function HomePage() {
                   otherParentName={parentNames[otherParentId] ?? "Andra föräldern"}
                   onCreateFeed={handleCreateFeed}
                   onChangeSwitchHour={handleChangeSwitchHour}
+                  calendars={children.map((c) => ({ id: c.id, name: c.name }))}
+                  activeCalendarId={activeChild.id}
+                  onSelectCalendar={setSelectedChildId}
+                  onCreateCalendar={handleCreateCalendar}
+                  onRenameCalendar={handleRenameCalendar}
+                  scheduleChangeMode={scheduleChangeMode}
+                  onChangeScheduleChangeMode={handleChangeScheduleChangeMode}
                 />
               </>
             )}

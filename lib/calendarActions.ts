@@ -2,7 +2,12 @@ import { collection, doc, setDoc, Timestamp } from "firebase/firestore";
 import { httpsCallable } from "firebase/functions";
 import { db, functions } from "./firebase";
 import { sendChatMessage } from "./chatActions";
-import { EventDoc, ShiftRequestDoc, RecurrenceRule } from "../types/schema";
+import {
+  EventDoc,
+  ShiftRequestDoc,
+  RecurrenceRule,
+  ScheduleChangeMode,
+} from "../types/schema";
 
 /**
  * Skrivningar från kalendervyn. Aktiviteter och nya (pending)
@@ -141,6 +146,29 @@ function isSameCalendarDay(a: Date, b: Date): boolean {
 }
 
 /**
+ * Slår ihop enskilda dagändringar till sammanhängande körningar med
+ * samma förälder, så att "må–to till pappa" blir ETT block istället för
+ * fyra. Delas av förfrågningsvägen och direktändringsvägen, så att en
+ * ändring ser likadan ut i historiken oavsett vilket läge teamet har.
+ */
+function groupIntoRuns(
+  changes: DayChange[]
+): { start: Date; end: Date; takingOverParentId: string }[] {
+  const sorted = [...changes].sort((a, b) => a.date.getTime() - b.date.getTime());
+  const runs: { start: Date; end: Date; takingOverParentId: string }[] = [];
+  for (const change of sorted) {
+    const last = runs[runs.length - 1];
+    const isConsecutive = last && isSameCalendarDay(addDays(last.end, 1), change.date);
+    if (last && last.takingOverParentId === change.takingOverParentId && isConsecutive) {
+      last.end = change.date;
+    } else {
+      runs.push({ start: change.date, end: change.date, takingOverParentId: change.takingOverParentId });
+    }
+  }
+  return runs;
+}
+
+/**
  * Slår ihop flera dagändringar (från kalenderns ändringsläge) till ETT
  * förslag: en shiftRequest per SAMMANHÄNGANDE körning av dagar som går
  * till samma förälder, alla taggade med samma batchId så de visas och
@@ -161,18 +189,7 @@ export async function proposeShiftRequestBatch(args: {
   if (args.changes.length === 0) throw new Error("Inga dagar valda.");
 
   const sorted = [...args.changes].sort((a, b) => a.date.getTime() - b.date.getTime());
-
-  // Gruppera i sammanhängande körningar med samma förälder.
-  const runs: { start: Date; end: Date; takingOverParentId: string }[] = [];
-  for (const change of sorted) {
-    const last = runs[runs.length - 1];
-    const isConsecutive = last && isSameCalendarDay(addDays(last.end, 1), change.date);
-    if (last && last.takingOverParentId === change.takingOverParentId && isConsecutive) {
-      last.end = change.date;
-    } else {
-      runs.push({ start: change.date, end: change.date, takingOverParentId: change.takingOverParentId });
-    }
-  }
+  const runs = groupIntoRuns(args.changes);
 
   const batchId = doc(collection(db, `teams/${args.teamId}/shiftRequests`)).id;
 
@@ -243,4 +260,106 @@ export async function respondToShiftRequestBatch(args: {
 }): Promise<void> {
   const fn = httpsCallable(functions, "approveShiftRequestBatch");
   await fn(args);
+}
+
+// ---------------------------------------------------------------------------
+// Läget för schemaändringar: förfrågan (godkännande krävs) vs notifiering
+// (gäller direkt). Se ScheduleChangeMode i types/schema.ts.
+// ---------------------------------------------------------------------------
+
+export async function setScheduleChangeMode(
+  teamId: string,
+  mode: ScheduleChangeMode
+): Promise<void> {
+  const fn = httpsCallable(functions, "setScheduleChangeMode");
+  await fn({ teamId, mode });
+}
+
+/**
+ * Genomför en schemaändring direkt, utan godkännandesteg. Servern
+ * vägrar om teamet står på "request", så läget kan inte kringgås
+ * genom att bara anropa den här istället.
+ */
+async function applyScheduleChangeDirect(args: {
+  teamId: string;
+  childId: string;
+  changes: { startAt: Date; endAt?: Date; takingOverParentId: string }[];
+  note?: string;
+}): Promise<void> {
+  const fn = httpsCallable(functions, "applyScheduleChangeDirect");
+  await fn({
+    teamId: args.teamId,
+    childId: args.childId,
+    note: args.note,
+    changes: args.changes.map((c) => ({
+      startAt: c.startAt.toISOString(),
+      endAt: c.endAt ? c.endAt.toISOString() : null,
+      takingOverParentId: c.takingOverParentId,
+    })),
+  });
+}
+
+/**
+ * Enda ingången för "ändra en dag" från kalendern. Väljer väg utifrån
+ * teamets läge, så att anropande UI slipper känna till skillnaden.
+ */
+export async function submitShiftChange(args: {
+  teamId: string;
+  childId: string;
+  requestedBy: string;
+  takingOverParentId: string;
+  startAt: Date;
+  endAt?: Date;
+  note?: string;
+  mode: ScheduleChangeMode;
+}): Promise<void> {
+  if (args.mode === "notify") {
+    await applyScheduleChangeDirect({
+      teamId: args.teamId,
+      childId: args.childId,
+      note: args.note,
+      changes: [
+        {
+          startAt: args.startAt,
+          endAt: args.endAt,
+          takingOverParentId: args.takingOverParentId,
+        },
+      ],
+    });
+    return;
+  }
+  await proposeShiftRequest(args);
+}
+
+/**
+ * Enda ingången för kalenderns ändringsläge (flera dagar på en gång).
+ * Grupperingen i sammanhängande körningar är samma som i
+ * proposeShiftRequestBatch — bara målet skiljer.
+ */
+export async function submitShiftChangeBatch(args: {
+  teamId: string;
+  childId: string;
+  requestedBy: string;
+  switchHour: string;
+  changes: DayChange[];
+  note?: string;
+  mode: ScheduleChangeMode;
+}): Promise<void> {
+  if (args.mode !== "notify") {
+    await proposeShiftRequestBatch(args);
+    return;
+  }
+  if (args.changes.length === 0) throw new Error("Inga dagar valda.");
+
+  const runs = groupIntoRuns(args.changes);
+  await applyScheduleChangeDirect({
+    teamId: args.teamId,
+    childId: args.childId,
+    note: args.note,
+    changes: runs.map((run) => ({
+      startAt: atSwitchHour(run.start, args.switchHour),
+      endAt: atSwitchHour(addDays(run.end, 1), args.switchHour),
+      takingOverParentId: run.takingOverParentId,
+    })),
+  });
 }

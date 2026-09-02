@@ -1,10 +1,18 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { ChildInfoDoc } from "../types/schema";
 
 interface ChildInfoViewProps {
-  childName: string;
+  /**
+   * Alla barn i familjen. Listan är medvetet frikopplad från vilken
+   * kalender som visas: barninfo, konton och liknande hör till personen,
+   * inte till schemat man råkar titta på.
+   */
+  childList: { id: string; name: string }[];
+  activeChildId: string;
+  onSelectChild: (childId: string) => void;
+  onAddChild: (name: string) => Promise<void>;
   info: ChildInfoDoc | null;
   onSave: (patch: Partial<ChildInfoDoc>) => Promise<void>;
 }
@@ -58,14 +66,163 @@ const FIELD_GROUPS: { title: string; fields: FieldSpec[] }[] = [
   },
 ];
 
-export default function ChildInfoView({ childName, info, onSave }: ChildInfoViewProps) {
+export default function ChildInfoView({
+  childList,
+  activeChildId,
+  onSelectChild,
+  onAddChild,
+  info,
+  onSave,
+}: ChildInfoViewProps) {
+  const [adding, setAdding] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const touchStartX = useRef<number | null>(null);
+
+  const index = childList.findIndex((c) => c.id === activeChildId);
+  const activeChild = childList[index];
+
+  function step(delta: number) {
+    if (childList.length < 2) return;
+    // Modulo så att man kan bläddra runt i stället för att gå in i en vägg.
+    const next = (index + delta + childList.length) % childList.length;
+    onSelectChild(childList[next].id);
+  }
+
+  async function handleAdd() {
+    const trimmed = newName.trim();
+    if (!trimmed) {
+      setError("Ange ett namn.");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      await onAddChild(trimmed);
+      setNewName("");
+      setAdding(false);
+    } catch {
+      setError("Kunde inte lägga till barnet. Försök igen.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <div className="space-y-4">
-      <div className="rounded-2xl bg-white p-4 shadow-sm">
-        <h2 className="mb-1 text-lg font-bold text-stone-800">{childName}</h2>
-        <p className="text-sm text-stone-500">
+      <div
+        className="rounded-2xl bg-white p-4 shadow-sm"
+        onTouchStart={(e) => {
+          touchStartX.current = e.touches[0]?.clientX ?? null;
+        }}
+        onTouchEnd={(e) => {
+          const start = touchStartX.current;
+          touchStartX.current = null;
+          if (start === null) return;
+          const dx = (e.changedTouches[0]?.clientX ?? start) - start;
+          // 50 px så att en darrig tumme inte råkar byta barn.
+          if (Math.abs(dx) < 50) return;
+          step(dx < 0 ? 1 : -1);
+        }}
+      >
+        <div className="flex items-center justify-between gap-2">
+          <button
+            onClick={() => step(-1)}
+            disabled={childList.length < 2}
+            aria-label="Föregående barn"
+            className="grid h-8 w-8 shrink-0 place-items-center rounded-full text-stone-300 hover:bg-stone-50 hover:text-rose-500 disabled:opacity-0"
+          >
+            ‹
+          </button>
+
+          <div className="min-w-0 flex-1 text-center">
+            <h2 className="truncate text-lg font-bold text-stone-800">
+              {activeChild?.name ?? "Barn"}
+            </h2>
+            {childList.length > 1 && (
+              <p className="text-xs text-stone-400">
+                {index + 1} av {childList.length}
+              </p>
+            )}
+          </div>
+
+          <button
+            onClick={() => step(1)}
+            disabled={childList.length < 2}
+            aria-label="Nästa barn"
+            className="grid h-8 w-8 shrink-0 place-items-center rounded-full text-stone-300 hover:bg-stone-50 hover:text-rose-500 disabled:opacity-0"
+          >
+            ›
+          </button>
+        </div>
+
+        {childList.length > 1 && (
+          <div className="mt-2 flex justify-center gap-1.5">
+            {childList.map((child) => (
+              <button
+                key={child.id}
+                onClick={() => onSelectChild(child.id)}
+                aria-label={child.name}
+                className={`h-1.5 rounded-full transition-all ${
+                  child.id === activeChildId ? "w-4 bg-rose-500" : "w-1.5 bg-stone-200"
+                }`}
+              />
+            ))}
+          </div>
+        )}
+
+        <p className="mt-3 text-sm text-stone-500">
           Information som båda föräldrarna behöver komma åt. Bara ni två kan se det här.
         </p>
+
+        {adding ? (
+          <div className="mt-3">
+            <input
+              autoFocus
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") void handleAdd();
+                if (e.key === "Escape") setAdding(false);
+              }}
+              placeholder="Barnets namn"
+              disabled={busy}
+              className="mb-2 w-full rounded-lg border border-stone-200 px-3 py-2 text-sm disabled:opacity-50"
+            />
+            <div className="flex gap-2">
+              <button
+                onClick={() => {
+                  setAdding(false);
+                  setNewName("");
+                  setError(null);
+                }}
+                className="flex-1 rounded-full border border-stone-300 py-1.5 text-sm font-semibold text-stone-600"
+              >
+                Avbryt
+              </button>
+              <button
+                onClick={handleAdd}
+                disabled={busy}
+                className="flex-1 rounded-full bg-rose-500 py-1.5 text-sm font-semibold text-white disabled:opacity-40"
+              >
+                {busy ? "Lägger till…" : "Lägg till"}
+              </button>
+            </div>
+          </div>
+        ) : (
+          <button
+            onClick={() => {
+              setAdding(true);
+              setError(null);
+            }}
+            className="mt-3 text-sm font-medium text-rose-600 hover:underline"
+          >
+            + Lägg till barn
+          </button>
+        )}
+
+        {error && <p className="mt-2 text-xs text-rose-600">{error}</p>}
       </div>
 
       {FIELD_GROUPS.map((group) => (

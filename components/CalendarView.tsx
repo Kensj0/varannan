@@ -6,7 +6,7 @@ import { getScheduledParentForDate, switchInstantForDate } from "../lib/custodyC
 import { expandEvents, EventOccurrence } from "../lib/recurrence";
 import { addDays } from "../lib/calendarActions";
 import { PushPermissionState } from "../lib/pushNotifications";
-import { ParentColorId } from "../types/schema";
+import { ParentColorId, ScheduleChangeMode } from "../types/schema";
 import { CalendarFeedLinks } from "../lib/calendarExport";
 import DayActionModal from "./DayActionModal";
 import CalendarSettingsPanel from "./CalendarSettingsPanel";
@@ -60,6 +60,16 @@ interface CalendarViewProps {
   otherParentName?: string;
   onCreateFeed: () => Promise<void>;
   onChangeSwitchHour: (hh: string, mm: string) => Promise<void>;
+
+  /** Kalenderväljaren i inställningspanelen. Ett barn = en kalender. */
+  calendars: { id: string; name: string }[];
+  activeCalendarId: string;
+  onSelectCalendar: (calendarId: string) => void;
+  onCreateCalendar: (name: string) => Promise<void>;
+  onRenameCalendar: (name: string) => Promise<void>;
+
+  scheduleChangeMode: ScheduleChangeMode;
+  onChangeScheduleChangeMode: (mode: ScheduleChangeMode) => Promise<void>;
 }
 
 const WEEKDAY_LABELS = ["M", "T", "O", "T", "F", "L", "S"];
@@ -93,6 +103,13 @@ export default function CalendarView({
   otherParentName,
   onCreateFeed,
   onChangeSwitchHour,
+  calendars,
+  activeCalendarId,
+  onSelectCalendar,
+  onCreateCalendar,
+  onRenameCalendar,
+  scheduleChangeMode,
+  onChangeScheduleChangeMode,
 }: CalendarViewProps) {
   const [activeDay, setActiveDay] = useState<Date | null>(null);
   const [parentA, parentB] = parents;
@@ -349,6 +366,13 @@ export default function CalendarView({
             onChangeSwitchHour={onChangeSwitchHour}
             childName={childName}
             cycle={cycle}
+            calendars={calendars}
+            activeCalendarId={activeCalendarId}
+            onSelectCalendar={onSelectCalendar}
+            onCreateCalendar={onCreateCalendar}
+            onRenameCalendar={onRenameCalendar}
+            scheduleChangeMode={scheduleChangeMode}
+            onChangeScheduleChangeMode={onChangeScheduleChangeMode}
           />
         )}
       </header>

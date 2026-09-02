@@ -139,9 +139,49 @@ export interface TeamDoc {
    * functions/src/calendarFeed.ts). Skrivs bara av Cloud Functions.
    */
   calendarFeedTokens?: Record<string /* childId */, string>;
+  /**
+   * Hur schemaändringar hanteras mellan föräldrarna. Saknas = "request"
+   * (det ursprungliga beteendet), så befintliga team påverkas inte.
+   * Se SCHEDULE_CHANGE_MODES. Ligger på teamet, inte per användare:
+   * båda föräldrarna måste följa samma regel, annars skulle den ena
+   * kunna ändra fritt medan den andra måste be om lov.
+   */
+  scheduleChangeMode?: ScheduleChangeMode;
   createdAt: FirestoreTimestamp;
   createdBy: string;
 }
+
+/**
+ * "request" — en ändring blir ett förslag som den andra föräldern måste
+ *   godkänna innan det syns i schemat. (Ursprungligt beteende.)
+ * "notify"  — ändringen börjar gälla direkt och den andra föräldern får
+ *   en notis om att den skett. Ingen godkännandeknapp.
+ *
+ * Gäller ALLA schemaändringar: enstaka dagar, ändringsläget i kalendern
+ * och förskjutning av hela schemat.
+ */
+export type ScheduleChangeMode = "request" | "notify";
+
+export const DEFAULT_SCHEDULE_CHANGE_MODE: ScheduleChangeMode = "request";
+
+export const SCHEDULE_CHANGE_MODES: {
+  id: ScheduleChangeMode;
+  label: string;
+  description: string;
+}[] = [
+  {
+    id: "request",
+    label: "Förfrågan",
+    description:
+      "Ändringar blir förslag som den andra föräldern godkänner eller avböjer innan de gäller.",
+  },
+  {
+    id: "notify",
+    label: "Notifiering",
+    description:
+      "Ändringar gäller direkt. Den andra föräldern får en notis om vad som ändrats.",
+  },
+];
 
 // ---------------------------------------------------------------------------
 // CHILDREN
