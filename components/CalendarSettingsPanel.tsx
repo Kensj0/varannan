@@ -15,7 +15,6 @@ interface CalendarSettingsPanelProps {
   onClose: () => void;
   showWeekNumbers: boolean;
   onToggleShowWeekNumbers: (value: boolean) => void;
-  onEnterEditMode: () => void;
   pushPermission: PushPermissionState | null;
   onEnablePush: () => void;
   reminderPrefs: { dayBefore: boolean; sameDay: boolean };
@@ -43,7 +42,6 @@ export default function CalendarSettingsPanel({
   onClose,
   showWeekNumbers,
   onToggleShowWeekNumbers,
-  onEnterEditMode,
   pushPermission,
   onEnablePush,
   reminderPrefs,
@@ -152,16 +150,6 @@ export default function CalendarSettingsPanel({
           <span className="text-sm text-stone-700">Visa veckonummer</span>
           <Toggle checked={showWeekNumbers} onChange={onToggleShowWeekNumbers} />
         </label>
-
-        <button
-          onClick={() => {
-            onEnterEditMode();
-            onClose();
-          }}
-          className="w-full rounded-lg bg-stone-50 px-3 py-2 text-left text-sm font-medium text-stone-700 hover:bg-stone-100"
-        >
-          Gå in i ändringsläge
-        </button>
 
         <Section title="Bytestid" />
         <p className="mb-2 text-[11px] leading-snug text-stone-400">
