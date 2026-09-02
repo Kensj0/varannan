@@ -13,7 +13,8 @@
     "deploy": "firebase deploy",
     "test": "tsc -p test/tsconfig.json && node .test-out/test/correctness.js",
     "bench": "tsc -p test/tsconfig.json && node .test-out/test/bench.js",
-    "bench:firestore": "tsc -p test/tsconfig.json && node .test-out/test/firestoreBench.js"
+    "bench:firestore": "tsc -p test/tsconfig.json && node .test-out/test/firestoreBench.js",
+    "icons": "python3 scripts/generate-icons.py"
   },
   "dependencies": {
     "next": "^14.2.0",
