@@ -4,6 +4,7 @@ import { useState } from "react";
 import { PushPermissionState } from "../lib/pushNotifications";
 import {
   PARENT_PALETTE,
+  parentColorHex,
   ParentColorId,
   ScheduleChangeMode,
   SCHEDULE_CHANGE_MODES,
@@ -65,6 +66,14 @@ export default function CalendarSettingsPanel({
 
   const [modeBusy, setModeBusy] = useState(false);
   const [modeError, setModeError] = useState<string | null>(null);
+
+  // Färgens NAMN, inte bara prickens kulör: det är namnet man letar
+  // efter i Googles färgmeny, och paletten är byggd på Googles egna
+  // färger just för att de ska gå att känna igen där.
+  const myColorHex = parentColorHex(myColorId, 0);
+  const myColorName = PARENT_PALETTE.find((c) => c.id === myColorId)?.label ?? null;
+  const otherColorName =
+    PARENT_PALETTE.find((c) => c.hex === otherParentColorHex)?.label ?? null;
 
   const [hh] = (switchHour || "08:00").split(":");
   const [pendingHh, setPendingHh] = useState(hh ?? "08");
@@ -263,7 +272,7 @@ export default function CalendarSettingsPanel({
           </>
         ) : (
           <>
-            <p className="mb-2 text-[11px] font-medium text-stone-700">Din schemalänk:</p>
+            <FeedHeading label="Dina dagar" colorName={myColorName} hex={myColorHex} />
             <div className="mb-3 space-y-1.5">
               <FeedLink href={feedLinks.google} label="Google Kalender" />
               <FeedLink href={feedLinks.apple} label="iPhone / Apple Kalender" />
@@ -271,20 +280,24 @@ export default function CalendarSettingsPanel({
 
               {otherFeedLinks && (
                 <div className="mt-3 border-t border-stone-100 pt-3">
-                  <p className="mb-2 text-xs text-stone-500">
-                    Länkarna ovan innehåller bara dina dagar. Lägg till {otherParentName}s dagar som
-                    en egen kalender för att se båda.
-                  </p>
-                  <p className="mb-2 text-[11px] leading-snug text-stone-400">
-                    Google Kalender färgar per kalender, inte per händelse — där måste de vara två
-                    kalendrar för att få var sin färg, och färgen väljer du själv när du lagt till
-                    dem. Apple Kalender och Outlook läser färgen ur flödet och sätter den åt dig.
-                  </p>
-                  <FeedLink href={otherFeedLinks.google} label={`${otherParentName}s dagar — Google`} />
-                  <FeedLink href={otherFeedLinks.apple} label={`${otherParentName}s dagar — Apple`} />
+                  <FeedHeading
+                    label={`${otherParentName}s dagar`}
+                    colorName={otherColorName}
+                    hex={otherParentColorHex}
+                  />
+                  <FeedLink href={otherFeedLinks.google} label="Google Kalender" />
+                  <FeedLink href={otherFeedLinks.apple} label="iPhone / Apple Kalender" />
                 </div>
               )}
             </div>
+
+            {/* Färgen väljs i Google först efter att kalendern lagts till, så
+                namnet står här — annars finns ingenting att gå efter i det
+                ögonblick valet faktiskt görs, och färgerna glider isär. */}
+            <p className="mb-2 text-[11px] leading-snug text-stone-400">
+              I Google väljer du färgen själv när kalendern lagts till. Apple och Outlook sätter den
+              åt dig.
+            </p>
 
             <button
               onClick={copyIcsUrl}
@@ -320,6 +333,28 @@ function Section({ title, first = false }: { title: string; first?: boolean }) {
       }`}
     >
       {title}
+    </p>
+  );
+}
+
+function FeedHeading({
+  label,
+  colorName,
+  hex,
+}: {
+  label: string;
+  colorName: string | null;
+  hex: string;
+}) {
+  return (
+    <p className="mb-2 flex items-center gap-1.5 text-[11px] font-medium text-stone-700">
+      <span
+        className="h-2.5 w-2.5 shrink-0 rounded-full"
+        style={{ backgroundColor: hex }}
+        aria-hidden
+      />
+      {label}
+      {colorName && <span className="font-normal text-stone-400">· {colorName}</span>}
     </p>
   );
 }
