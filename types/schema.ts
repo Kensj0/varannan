@@ -68,6 +68,17 @@ export interface TeamParentProfile {
    * platsens standardfärg, så gamla team fortsätter se ut som förut.
    */
   colorId?: ParentColorId;
+  /**
+   * Hur DEN HÄR föräldern vill bli inblandad när den andra ändrar
+   * schemat. Läget hör till mottagaren, inte till den som ändrar: det
+   * är mottagaren som annars skulle behöva godkänna, så det är hen som
+   * rimligen bestämmer om det steget behövs.
+   *
+   * Föräldrarna kan alltså ha olika lägen. A kan kräva förfrågan medan
+   * B nöjer sig med en notis — då måste B fråga A om lov, men A kan
+   * ändra B:s dagar direkt. Saknas fältet gäller DEFAULT_SCHEDULE_CHANGE_MODE.
+   */
+  scheduleChangeMode?: ScheduleChangeMode;
 }
 
 /**
@@ -140,11 +151,10 @@ export interface TeamDoc {
    */
   calendarFeedTokens?: Record<string /* childId */, string>;
   /**
-   * Hur schemaändringar hanteras mellan föräldrarna. Saknas = "request"
-   * (det ursprungliga beteendet), så befintliga team påverkas inte.
-   * Se SCHEDULE_CHANGE_MODES. Ligger på teamet, inte per användare:
-   * båda föräldrarna måste följa samma regel, annars skulle den ena
-   * kunna ändra fritt medan den andra måste be om lov.
+   * Teamgemensamt läge. UTGÅENDE — läget ligger numera per förälder på
+   * parentProfiles[uid].scheduleChangeMode. Fältet läses fortfarande som
+   * fallback för team som satte det innan flytten, så deras val inte
+   * tyst återgår till "request".
    */
   scheduleChangeMode?: ScheduleChangeMode;
   createdAt: FirestoreTimestamp;
@@ -164,6 +174,23 @@ export type ScheduleChangeMode = "request" | "notify";
 
 export const DEFAULT_SCHEDULE_CHANGE_MODE: ScheduleChangeMode = "request";
 
+/**
+ * Vilket läge gäller för ändringar av `parentId`s dagar? Slår upp
+ * förälderns eget val, och faller tillbaka på teamets gamla gemensamma
+ * inställning innan den blev individuell.
+ */
+export function scheduleChangeModeFor(
+  team: { scheduleChangeMode?: ScheduleChangeMode; parentProfiles?: Record<string, TeamParentProfile> } | null | undefined,
+  parentId: string | undefined,
+): ScheduleChangeMode {
+  if (!team || !parentId) return DEFAULT_SCHEDULE_CHANGE_MODE;
+  return (
+    team.parentProfiles?.[parentId]?.scheduleChangeMode ??
+    team.scheduleChangeMode ??
+    DEFAULT_SCHEDULE_CHANGE_MODE
+  );
+}
+
 export const SCHEDULE_CHANGE_MODES: {
   id: ScheduleChangeMode;
   label: string;
@@ -172,14 +199,12 @@ export const SCHEDULE_CHANGE_MODES: {
   {
     id: "request",
     label: "Förfrågan",
-    description:
-      "Ändringar blir förslag som den andra föräldern godkänner eller avböjer innan de gäller.",
+    description: "Du vill godkänna ändringar av dina dagar innan de gäller.",
   },
   {
     id: "notify",
     label: "Notifiering",
-    description:
-      "Ändringar gäller direkt. Den andra föräldern får en notis om vad som ändrats.",
+    description: "Ändringar av dina dagar gäller direkt. Du får en notis.",
   },
 ];
 

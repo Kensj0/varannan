@@ -65,6 +65,12 @@ export interface FeedScope {
   onlyParentId?: string;
   /** Sätt false för det andra flödet, så aktiviteter inte dubbleras. */
   includeActivities?: boolean;
+  /**
+   * Bara aktiviteter, inga ansvarsblock. Ett eget flöde för dessa gör
+   * att de kan läggas till som en TREDJE kalender och därmed få en egen
+   * färg i Google, som färgar per kalender.
+   */
+  activitiesOnly?: boolean;
 }
 
 export function buildFeedLinks(
@@ -76,7 +82,8 @@ export function buildFeedLinks(
 ): CalendarFeedLinks {
   const extra =
     (scope.onlyParentId ? `&only=${encodeURIComponent(scope.onlyParentId)}` : "") +
-    (scope.includeActivities === false ? "&activities=0" : "");
+    (scope.includeActivities === false ? "&activities=0" : "") +
+    (scope.activitiesOnly ? "&activitiesonly=1" : "");
   const ics = `${FEED_BASE}?team=${encodeURIComponent(teamId)}&child=${encodeURIComponent(
     childId
   )}&parent=${encodeURIComponent(parentId)}&token=${encodeURIComponent(token)}${extra}`;

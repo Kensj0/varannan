@@ -60,8 +60,12 @@ interface CalendarViewProps {
   /** Andra förälderns dagar som separat flöde — se CalendarSettingsPanel. */
   otherFeedLinks?: CalendarFeedLinks | null;
   otherParentName?: string;
+  /** Enbart aktiviteter, som en egen kalender med egen färg. */
+  activityFeedLinks?: CalendarFeedLinks | null;
   onCreateFeed: () => Promise<void>;
   onChangeSwitchHour: (hh: string, mm: string) => Promise<void>;
+  /** Undefined när grundschemat inte går att ändra än. */
+  onEditStructure?: () => void;
 
   /** Kalenderväljaren i inställningspanelen. Ett barn = en kalender. */
   calendars: { id: string; name: string }[];
@@ -104,8 +108,10 @@ export default function CalendarView({
   feedLinks,
   otherFeedLinks,
   otherParentName,
+  activityFeedLinks,
   onCreateFeed,
   onChangeSwitchHour,
+  onEditStructure,
   calendars,
   activeCalendarId,
   onSelectCalendar,
@@ -388,10 +394,6 @@ export default function CalendarView({
             onClose={() => setSettingsOpen(false)}
             showWeekNumbers={showWeekNumbers}
             onToggleShowWeekNumbers={toggleShowWeekNumbers}
-            pushPermission={pushPermission}
-            onEnablePush={onEnablePush}
-            reminderPrefs={reminderPrefs}
-            onUpdateReminderPrefs={onUpdateReminderPrefs}
             myColorId={myColorId}
             onSelectColor={onSelectColor}
             otherParentColorHex={otherParentColorHex}
@@ -400,6 +402,7 @@ export default function CalendarView({
             otherParentName={otherParentName}
             onCreateFeed={onCreateFeed}
             onOpenExportGuide={() => setExportGuideOpen(true)}
+            onEditStructure={onEditStructure}
             switchHour={switchHour}
             onChangeSwitchHour={onChangeSwitchHour}
             childName={childName}
@@ -697,6 +700,9 @@ export default function CalendarView({
                   },
                 ]
               : []),
+            ...(activityFeedLinks
+              ? [{ label: "Aktiviteter", hex: "#78716C", links: activityFeedLinks }]
+              : []),
           ]}
         />
       )}
@@ -899,10 +905,19 @@ function isInstantWithinShift(instant: Date, request: ShiftRequestDoc): boolean 
 
 function EditCalendarIcon() {
   return (
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-      <rect x="3" y="4" width="18" height="17" rx="2" />
-      <path d="M3 9h18" />
-      <path d="m15.5 17.5 3-3 1.5 1.5-3 3h-1.5v-1.5Z" fill="currentColor" stroke="none" />
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6">
+      {/* Kalenderkropp, avkortad till höger så pennan får plats utanför
+          den i stället för att ligga ovanpå rutnätet. */}
+      <path d="M3 5.5A1.5 1.5 0 0 1 4.5 4h11A1.5 1.5 0 0 1 17 5.5V11" strokeLinecap="round" />
+      <path d="M3 5.5V19a1.5 1.5 0 0 0 1.5 1.5H11" strokeLinecap="round" />
+      <path d="M3 9h14" strokeLinecap="round" />
+      <path d="M7 2.5V5M13 2.5V5" strokeLinecap="round" />
+      {/* Penna som skriver i kalendern, med spets nedåt vänster. */}
+      <path
+        d="m19.6 12.2 2.2 2.2-6.1 6.1-2.9.7.7-2.9 6.1-6.1Z"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
     </svg>
   );
 }
@@ -917,10 +932,11 @@ function PlusIcon() {
 
 function SettingsIcon() {
   return (
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-      <circle cx="12" cy="12" r="3.2" />
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6">
+      <circle cx="12" cy="12" r="3" />
       <path
-        d="M12 2.6l1.3 2.3 2.6-.5.4 2.6 2.3 1.3-1.4 2.2 1.4 2.2-2.3 1.3-.4 2.6-2.6-.5L12 21.4l-1.3-2.3-2.6.5-.4-2.6-2.3-1.3L6.8 13 5.4 10.8l2.3-1.3.4-2.6 2.6.5L12 2.6z"
+        d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"
+        strokeLinecap="round"
         strokeLinejoin="round"
       />
     </svg>

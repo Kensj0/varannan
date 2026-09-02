@@ -36,6 +36,7 @@ import {
   UserDoc,
   TeamParentProfile,
   ScheduleChangeMode,
+  scheduleChangeModeFor,
   PENDING_PARTNER_ID,
 } from "../../types/schema";
 import { applyApprovedShiftToBalance } from "../../lib/dayBalance";
@@ -932,11 +933,13 @@ export const deleteChild = onCall(async (request) => {
     throw new HttpsError("permission-denied", "Du tillhör inte teamet.");
   }
 
-  // Vägra ta bort den sista kalendern: appen har ingen vy för ett team
-  // helt utan barn, och användaren skulle hamna i onboarding igen med
-  // sitt schema borta. Byt namn i stället.
-  const childIds: string[] = teamSnap.data()?.childIds ?? [];
-  if (childIds.length <= 1) {
+  // Räkna de FAKTISKA barnen, inte team.childIds. Det fältet kunde inte
+  // skrivas från klienten (firestore.rules låser team-dokumentet), så
+  // barn som lades till innan addChild blev en callable saknas där.
+  // Att lita på det gav "det går inte att ta bort den sista kalendern"
+  // trots att det fanns flera i listan.
+  const allChildren = await db.collection(`teams/${teamId}/children`).get();
+  if (allChildren.size <= 1) {
     throw new HttpsError(
       "failed-precondition",
       "Det går inte att ta bort den sista kalendern. Skapa en ny först, eller byt namn på den här."
@@ -968,9 +971,13 @@ export const deleteChild = onCall(async (request) => {
   }
 
   await childRef.delete();
-  await teamRef.update({
-    childIds: admin.firestore.FieldValue.arrayRemove(childId),
-  });
+
+  // Skriv om childIds från de barn som faktiskt finns, i stället för att
+  // bara plocka bort ett id. Fältet kan ha glidit ur synk av samma skäl
+  // som ovan, och sendHandoffReminders läser det för att veta vilka barn
+  // som ska påminnas om — en lucka där betyder uteblivna påminnelser.
+  const remaining = allChildren.docs.map((d) => d.id).filter((id) => id !== childId);
+  await teamRef.update({ childIds: remaining });
 
   // Prenumerationstoken för barnet blir meningslösa — ta bort dem så att
   // en gammal ICS-länk inte ligger kvar och pekar på ett borttaget barn.
@@ -1033,10 +1040,13 @@ export const setScheduleChangeMode = onCall(async (request) => {
     throw new HttpsError("permission-denied", "Du tillhör inte teamet.");
   }
 
-  await teamRef.update({ scheduleChangeMode: mode });
+  // Läget är individuellt: det styr hur ANDRA får ändra den här
+  // förälderns dagar, så var och en sätter bara sitt eget.
+  await teamRef.update({ [`parentProfiles.${uid}.scheduleChangeMode`]: mode });
 
-  // Den andra föräldern ska veta att spelreglerna ändrats — annars kan
-  // hens dagar plötsligt börja ändras utan godkännande, utan förvarning.
+  // Den andra föräldern behöver veta, eftersom det ändrar vad HEN kan
+  // göra: om jag slår på notifiering kan hen plötsligt ändra mina dagar
+  // utan att fråga, och tvärtom.
   const changerName = teamSnap.data()?.parentProfiles?.[uid]?.displayName ?? "Andra föräldern";
   const others = parentIds.filter((id) => id !== uid && id !== PENDING_PARTNER_ID);
   if (others.length > 0) {
@@ -1044,8 +1054,8 @@ export const setScheduleChangeMode = onCall(async (request) => {
       title: "Läget för schemaändringar ändrades",
       body:
         mode === "notify"
-          ? `${changerName} slog på direktändring. Ändringar gäller nu direkt, utan godkännande.`
-          : `${changerName} slog på förfrågningar. Ändringar måste nu godkännas.`,
+          ? `${changerName} vill inte längre godkänna ändringar. Du kan ändra ${changerName}s dagar direkt.`
+          : `${changerName} vill godkänna ändringar av sina dagar först.`,
     });
   }
 
@@ -1093,11 +1103,16 @@ export const applyScheduleChangeDirect = onCall(async (request) => {
     throw new HttpsError("permission-denied", "Du är inte medlem i det här teamet.");
   }
 
-  const mode: ScheduleChangeMode = teamSnap.data()?.scheduleChangeMode ?? "request";
+  // Läget som gäller är MOTPARTENS: det är hen som annars hade fått
+  // godkänna, och hen som bestämt om det steget behövs. Att läsa sitt
+  // eget läge här hade låtit vem som helst ändra fritt genom att slå
+  // om sin egen inställning.
+  const otherParentId = parentIds.find((id) => id !== uid && id !== PENDING_PARTNER_ID);
+  const mode = scheduleChangeModeFor(teamSnap.data() as any, otherParentId);
   if (mode !== "notify") {
     throw new HttpsError(
       "failed-precondition",
-      "Teamet kräver godkännande för schemaändringar. Skicka en förfrågan istället."
+      "Den andra föräldern vill godkänna ändringar först. Skicka en förfrågan istället."
     );
   }
 

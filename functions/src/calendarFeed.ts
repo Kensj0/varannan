@@ -109,6 +109,12 @@ export const calendarFeed = onRequest(
   const only = req.query.only ? String(req.query.only) : null;
   /** Aktiviteter dubbleras om man prenumererar på båda flödena. */
   const includeActivities = String(req.query.activities ?? "1") !== "0";
+  /**
+   * Bara aktiviteter, inga ansvarsblock. Gör att aktiviteterna kan
+   * ligga som en egen kalender med egen färg — Google färgar per
+   * kalender, så det är enda sättet att skilja dem från schemat där.
+   */
+  const activitiesOnly = String(req.query.activitiesonly ?? "0") === "1";
 
   if (!teamId || !childId || !parentId || !token) {
     res.status(400).send("Saknar team, child, parent eller token.");
@@ -187,7 +193,9 @@ export const calendarFeed = onRequest(
     "PRODID:-//Varannan//Schema//SV",
     "CALSCALE:GREGORIAN",
     "METHOD:PUBLISH",
-    `X-WR-CALNAME:${escapeText(`${childName}s schema`)}`,
+    `X-WR-CALNAME:${escapeText(
+      activitiesOnly ? `${childName} – aktiviteter` : `${childName}s schema`,
+    )}`,
     `X-WR-TIMEZONE:${timezone}`,
     // Hur ofta kalenderappen bör hämta om flödet.
     "REFRESH-INTERVAL;VALUE=DURATION:PT6H",
@@ -205,7 +213,7 @@ export const calendarFeed = onRequest(
   let blockParent: string | null = null;
 
   for (
-    let day = new Date(rangeStart);
+    let day = activitiesOnly ? new Date(rangeEnd) : new Date(rangeStart);
     day < rangeEnd;
     day.setDate(day.getDate() + 1)
   ) {
@@ -236,7 +244,7 @@ export const calendarFeed = onRequest(
     }
   }
 
-  if (blockParent && blockStart && (!only || blockParent === only)) {
+  if (!activitiesOnly && blockParent && blockStart && (!only || blockParent === only)) {
     lines.push(
       ...vevent({
         uid: `custody-${childId}-${blockStart.getTime()}@varannan`,
