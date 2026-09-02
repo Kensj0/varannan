@@ -79,6 +79,7 @@ import {
   addChild,
   renameChild,
   deleteChild,
+  createCalendarInvite,
   saveCustodyCycle,
   repairPendingPartner,
 } from "../lib/onboardingClient";
@@ -87,6 +88,7 @@ import {
   DEFAULT_HANDOFF_REMINDER_PREFS,
   parentColorHex,
   scheduleChangeModeFor,
+  calendarParentIds,
   ParentColorId,
   ScheduleChangeMode,
 } from "../types/schema";
@@ -172,8 +174,14 @@ export default function HomePage() {
 
   // Välj första barnet automatiskt så fort listan laddats.
   const activeChildId = selectedChildId ?? children[0]?.id ?? null;
-  const activeInfoChildId = selectedInfoChildId ?? children[0]?.id ?? null;
+  // Kalendern ÄR barnet: barninfo, konton, listor och chatt visar samma
+  // barn som schemat. Den tidigare uppdelningen (eget val i Barninfo)
+  // är borttagen — den gjorde att man kunde titta på ett barns uppgifter
+  // medan schemat visade ett annat.
+  const activeInfoChildId = activeChildId;
   const activeInfoChild = children.find((c) => c.id === activeInfoChildId) ?? null;
+  /** Äldre chatt/notes/todos saknar childId och hör hem på första kalendern. */
+  const isFallbackCalendar = children.length > 0 && children[0]?.id === activeChildId;
 
   // Mitt eget läge styr hur den ANDRA får ändra mina dagar — det är det
   // jag ställer in. Motpartens läge styr vad JAG får göra, och avgör
@@ -198,6 +206,11 @@ export default function HomePage() {
   async function handleRenameCalendar(calendarId: string, name: string) {
     if (!teamId) return;
     await renameChild(teamId, calendarId, name);
+  }
+
+  async function handleInviteToCalendar(calendarId: string) {
+    if (!teamId) throw new Error("Inget team.");
+    return createCalendarInvite(teamId, calendarId);
   }
 
   async function handleDeleteCalendar(calendarId: string) {
@@ -234,10 +247,10 @@ export default function HomePage() {
   const { data: pendingBalanceRequests } = usePendingBalanceRequests(teamId, activeChildId);
   const { data: events } = useEventsForMonth(teamId, monthDate);
   const { data: allShiftRequests } = useAllShiftRequests(teamId);
-  const { data: chatMessages } = useChatMessages(teamId);
+  const { data: chatMessages } = useChatMessages(teamId, 100, activeChildId, isFallbackCalendar);
   const { data: packLists } = usePackLists(teamId, activeChildId);
-  const { data: notes } = useNotes(teamId);
-  const { data: todos } = useTodos(teamId);
+  const { data: notes } = useNotes(teamId, activeChildId, isFallbackCalendar);
+  const { data: todos } = useTodos(teamId, false, activeChildId, isFallbackCalendar);
   const { data: childInfo } = useChildInfo(teamId, activeInfoChildId);
   const { data: childAccounts } = useChildAccounts(teamId, activeInfoChildId);
 
@@ -543,7 +556,12 @@ export default function HomePage() {
               shiftRequestsById={allShiftRequests}
               childName={activeChild.name}
               onSend={async (text) => {
-                await sendChatMessage({ teamId: teamId!, senderId: user!.uid, text });
+                await sendChatMessage({
+                  teamId: teamId!,
+                  childId: activeChild.id,
+                  senderId: user!.uid,
+                  text,
+                });
               }}
             />
           </div>
@@ -581,7 +599,13 @@ export default function HomePage() {
                     notes={notes}
                     parentNames={parentNames}
                     onCreate={async (title, content) => {
-                      await createNote({ teamId: teamId!, title, content, createdBy: user!.uid });
+                      await createNote({
+                        teamId: teamId!,
+                        childId: activeChild.id,
+                        title,
+                        content,
+                        createdBy: user!.uid,
+                      });
                     }}
                     onUpdate={(noteId, patch) => updateNote(teamId!, noteId, patch)}
                     onDelete={(noteId) => deleteNote(teamId!, noteId)}
@@ -594,7 +618,12 @@ export default function HomePage() {
                     currentUserId={user!.uid}
                     parentNames={parentNames}
                     onCreate={async (title) => {
-                      await createTodo({ teamId: teamId!, title, createdBy: user!.uid });
+                      await createTodo({
+                        teamId: teamId!,
+                        childId: activeChild.id,
+                        title,
+                        createdBy: user!.uid,
+                      });
                     }}
                     onToggle={(todo) => toggleTodo(teamId!, todo, user!.uid)}
                     onArchive={(todoId) => archiveTodo(teamId!, todoId)}
@@ -611,8 +640,8 @@ export default function HomePage() {
                   <ChildInfoView
                     childList={children.map((c) => ({ id: c.id, name: c.name }))}
                     activeChildId={activeInfoChild!.id}
-                    onSelectChild={setSelectedInfoChildId}
-                    onAddChild={handleAddInfoChild}
+                    onSelectChild={setSelectedChildId}
+                    onAddChild={handleCreateCalendar}
                     info={childInfo}
                     onSave={(patch) =>
                       updateChildInfo(teamId!, activeInfoChild!.id, patch, user!.uid)
@@ -814,12 +843,20 @@ export default function HomePage() {
                         })
                       : null
                   }
-                  calendars={children.map((c) => ({ id: c.id, name: c.name }))}
+                  calendars={children.map((c) => ({
+                    id: c.id,
+                    name: c.name,
+                    // Styr om "ta bort" betyder lämna eller radera.
+                    memberCount: calendarParentIds(c, team).filter(
+                      (id) => id !== PENDING_PARTNER_ID,
+                    ).length,
+                  }))}
                   activeCalendarId={activeChild.id}
                   onSelectCalendar={setSelectedChildId}
                   onCreateCalendar={handleCreateCalendar}
                   onRenameCalendar={handleRenameCalendar}
                   onDeleteCalendar={handleDeleteCalendar}
+                  onInviteToCalendar={handleInviteToCalendar}
                   scheduleChangeMode={myScheduleChangeMode}
                   onChangeScheduleChangeMode={handleChangeScheduleChangeMode}
                 />

@@ -105,6 +105,7 @@ export async function deletePackList(teamId: string, listId: string): Promise<vo
 
 export async function createNote(args: {
   teamId: string;
+  childId?: string;
   title: string;
   content: string;
   createdBy: string;
@@ -118,6 +119,7 @@ export async function createNote(args: {
     createdBy: args.createdBy,
     createdAt: Timestamp.now() as any,
     updatedAt: Timestamp.now() as any,
+    ...(args.childId ? { childId: args.childId } : {}),
   };
   await setDoc(ref, note);
   return ref.id;
@@ -144,6 +146,7 @@ export async function deleteNote(teamId: string, noteId: string): Promise<void> 
 
 export async function createTodo(args: {
   teamId: string;
+  childId?: string;
   title: string;
   createdBy: string;
 }): Promise<string> {
@@ -157,6 +160,7 @@ export async function createTodo(args: {
     seenBy: [args.createdBy],
     createdBy: args.createdBy,
     createdAt: Timestamp.now() as any,
+    ...(args.childId ? { childId: args.childId } : {}),
   };
   await setDoc(ref, todo);
   return ref.id;

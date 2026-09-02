@@ -94,3 +94,30 @@ export async function saveCustodyCycle(args: {
     referenceParentId: args.referenceParentId,
   });
 }
+
+/**
+ * Bjuder in någon till EN kalender. Används när man redan har en
+ * kalender och vill dela just den — t.ex. efter att den andra föräldern
+ * lämnat och man vill koppla på någon ny på samma schema.
+ */
+export async function createCalendarInvite(
+  teamId: string,
+  childId: string
+): Promise<{ code: string; expiresAt: string; shareUrl: string }> {
+  const fn = httpsCallable(functions, "createCalendarInvite");
+  const baseUrl = typeof window !== "undefined" ? window.location.origin : undefined;
+  const res = await fn({ teamId, childId, baseUrl });
+  return res.data as any;
+}
+
+/** Ansluter till en kalender via en kalenderscopad inbjudningskod. */
+export async function acceptCalendarInvite(
+  code: string
+): Promise<{ teamId: string; childId: string }> {
+  const fn = httpsCallable<{ code: string }, { teamId: string; childId: string }>(
+    functions,
+    "acceptCalendarInvite"
+  );
+  const res = await fn({ code });
+  return res.data;
+}

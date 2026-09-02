@@ -15,6 +15,19 @@ service cloud.firestore {
       return isSignedIn() && userTeamId() == teamId;
     }
 
+    // Delningen sitter på barnet: kalendern ÄR barnet, och bara de
+    // föräldrar som står i child.parentIds får se innehållet. Kalendrar
+    // som skapades innan delningen flyttades hit saknar fältet och
+    // faller tillbaka på teamets föräldrar.
+    function calendarMembers(teamId, childId) {
+      let child = get(/databases/$(database)/documents/teams/$(teamId)/children/$(childId)).data;
+      return child.get("parentIds", get(/databases/$(database)/documents/teams/$(teamId)).data.parentIds);
+    }
+
+    function isCalendarMember(teamId, childId) {
+      return isTeamMember(teamId) && request.auth.uid in calendarMembers(teamId, childId);
+    }
+
     // ---------------------------------------------------------------
     // users/{uid}
     // ---------------------------------------------------------------
@@ -39,6 +52,9 @@ service cloud.firestore {
       allow write: if false;
 
       match /children/{childId} {
+        // Listningen av barn måste vara läsbar för hela teamet — annars
+        // kan klienten inte avgöra vilka kalendrar man är med i. Vilket
+        // INNEHÅLL som visas styrs av reglerna nedan.
         allow read, write: if isTeamMember(teamId);
 
         match /childInfo/{docId} {
@@ -47,12 +63,12 @@ service cloud.firestore {
           // läsa/skriva — ingen delning, ingen collectionGroup-fråga
           // (se saknaden av index på dessa fält i firestore.indexes.json:
           // fälten ska ALDRIG indexeras, då de annars blir sökbara).
-          allow read, write: if isTeamMember(teamId);
+          allow read, write: if isCalendarMember(teamId, childId);
         }
         match /accounts/{accountId} {
           // Inloggningar och PIN-koder till barnens tjänster.
           // Samma restriktion som childInfo.
-          allow read, write: if isTeamMember(teamId);
+          allow read, write: if isCalendarMember(teamId, childId);
         }
         match /custodyCycle/{docId} {
           allow read: if isTeamMember(teamId);

@@ -68,12 +68,13 @@ interface CalendarViewProps {
   onEditStructure?: () => void;
 
   /** Kalenderväljaren i inställningspanelen. Ett barn = en kalender. */
-  calendars: { id: string; name: string }[];
+  calendars: { id: string; name: string; memberCount: number }[];
   activeCalendarId: string;
   onSelectCalendar: (calendarId: string) => void;
   onCreateCalendar: (name: string) => Promise<void>;
   onRenameCalendar: (calendarId: string, name: string) => Promise<void>;
   onDeleteCalendar: (calendarId: string) => Promise<void>;
+  onInviteToCalendar: (calendarId: string) => Promise<{ shareUrl: string }>;
 
   scheduleChangeMode: ScheduleChangeMode;
   onChangeScheduleChangeMode: (mode: ScheduleChangeMode) => Promise<void>;
@@ -118,6 +119,7 @@ export default function CalendarView({
   onCreateCalendar,
   onRenameCalendar,
   onDeleteCalendar,
+  onInviteToCalendar,
   scheduleChangeMode,
   onChangeScheduleChangeMode,
 }: CalendarViewProps) {
@@ -376,6 +378,7 @@ export default function CalendarView({
             onCreateCalendar={onCreateCalendar}
             onRenameCalendar={onRenameCalendar}
             onDeleteCalendar={onDeleteCalendar}
+            onInviteToCalendar={onInviteToCalendar}
           />
         )}
 

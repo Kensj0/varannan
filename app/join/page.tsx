@@ -4,7 +4,7 @@ import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "../../lib/auth/AuthProvider";
 import LoginForm from "../../components/auth/LoginForm";
-import { acceptInvite } from "../../lib/onboardingClient";
+import { acceptInvite, acceptCalendarInvite } from "../../lib/onboardingClient";
 
 type Status = "checking" | "confirm-switch" | "accepting" | "success" | "error";
 
@@ -62,7 +62,15 @@ function JoinPageInner() {
     setStatus("accepting");
     setError(null);
     try {
-      await acceptInvite(code);
+      // Koden kan gälla antingen hela familjen (den ursprungliga
+      // inbjudan) eller en enskild kalender. De ser likadana ut, så
+      // kalendervarianten prövas först och familjeflödet tar vid om
+      // koden inte var kalenderscopad.
+      try {
+        await acceptCalendarInvite(code);
+      } catch {
+        await acceptInvite(code);
+      }
       await refreshUserDoc();
       setStatus("success");
       router.replace("/");
