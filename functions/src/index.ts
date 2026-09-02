@@ -35,6 +35,7 @@ import {
   EventDoc,
   UserDoc,
   TeamParentProfile,
+  ScheduleChangeMode,
   PENDING_PARTNER_ID,
 } from "../../types/schema";
 import { applyApprovedShiftToBalance } from "../../lib/dayBalance";
@@ -818,6 +819,295 @@ export const approveShiftRequestBatch = onCall(async (request) => {
 });
 
 // ---------------------------------------------------------------------------
+// 1f. addChild / renameChild — ett barn ÄR en kalender i appen: det är
+//     dokumentet som bär namnet, grundschemat och ställningen.
+//
+//     Måste vara en callable eftersom skapandet också ska uppdatera
+//     teams/{teamId}.childIds, och team-dokumentet är låst för
+//     klientskrivningar i firestore.rules. (Den tidigare klientversionen
+//     skrev barnet men fick permission-denied på childIds-uppdateringen,
+//     vilket bl.a. gjorde att överlämningspåminnelser aldrig skickades
+//     för barn som lagts till efter onboarding.)
+// ---------------------------------------------------------------------------
+
+export const addChild = onCall(async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) throw new HttpsError("unauthenticated", "Du måste vara inloggad.");
+
+  const { teamId, name, birthYear } = request.data as {
+    teamId?: string;
+    name?: string;
+    birthYear?: number;
+  };
+  const trimmed = (name ?? "").trim();
+  if (!teamId || !trimmed) {
+    throw new HttpsError("invalid-argument", "teamId och namn krävs.");
+  }
+  if (trimmed.length > 40) {
+    throw new HttpsError("invalid-argument", "Namnet får vara högst 40 tecken.");
+  }
+
+  const teamRef = db.doc(`teams/${teamId}`);
+  const teamSnap = await teamRef.get();
+  if (!teamSnap.exists) throw new HttpsError("not-found", "Teamet finns inte.");
+
+  const parentIds: string[] = teamSnap.data()?.parentIds ?? [];
+  if (!parentIds.includes(uid)) {
+    throw new HttpsError("permission-denied", "Du tillhör inte teamet.");
+  }
+
+  const childRef = db.collection(`teams/${teamId}/children`).doc();
+  const batch = db.batch();
+  batch.set(childRef, {
+    id: childRef.id,
+    teamId,
+    name: trimmed,
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    ...(typeof birthYear === "number" ? { birthYear } : {}),
+  });
+  batch.update(teamRef, {
+    childIds: admin.firestore.FieldValue.arrayUnion(childRef.id),
+  });
+  await batch.commit();
+
+  return { childId: childRef.id };
+});
+
+export const renameChild = onCall(async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) throw new HttpsError("unauthenticated", "Du måste vara inloggad.");
+
+  const { teamId, childId, name } = request.data as {
+    teamId?: string;
+    childId?: string;
+    name?: string;
+  };
+  const trimmed = (name ?? "").trim();
+  if (!teamId || !childId || !trimmed) {
+    throw new HttpsError("invalid-argument", "teamId, childId och namn krävs.");
+  }
+  if (trimmed.length > 40) {
+    throw new HttpsError("invalid-argument", "Namnet får vara högst 40 tecken.");
+  }
+
+  const teamSnap = await db.doc(`teams/${teamId}`).get();
+  if (!teamSnap.exists) throw new HttpsError("not-found", "Teamet finns inte.");
+
+  const parentIds: string[] = teamSnap.data()?.parentIds ?? [];
+  if (!parentIds.includes(uid)) {
+    throw new HttpsError("permission-denied", "Du tillhör inte teamet.");
+  }
+
+  await db.doc(`teams/${teamId}/children/${childId}`).update({ name: trimmed });
+  return { ok: true };
+});
+
+// ---------------------------------------------------------------------------
+// 1d. setScheduleChangeMode — växla mellan "förfrågan" och "notifiering"
+//     för hela teamet. Ligger på teamet och inte per användare: båda
+//     måste följa samma regel, annars kunde den ena ändra fritt medan
+//     den andra tvingades be om lov.
+// ---------------------------------------------------------------------------
+
+export const setScheduleChangeMode = onCall(async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) throw new HttpsError("unauthenticated", "Du måste vara inloggad.");
+
+  const { teamId, mode } = request.data as {
+    teamId?: string;
+    mode?: ScheduleChangeMode;
+  };
+  if (!teamId || !mode) {
+    throw new HttpsError("invalid-argument", "teamId och mode krävs.");
+  }
+  if (mode !== "request" && mode !== "notify") {
+    throw new HttpsError("invalid-argument", "mode måste vara 'request' eller 'notify'.");
+  }
+
+  const teamRef = db.doc(`teams/${teamId}`);
+  const teamSnap = await teamRef.get();
+  if (!teamSnap.exists) throw new HttpsError("not-found", "Teamet finns inte.");
+
+  const parentIds: string[] = teamSnap.data()?.parentIds ?? [];
+  if (!parentIds.includes(uid)) {
+    throw new HttpsError("permission-denied", "Du tillhör inte teamet.");
+  }
+
+  await teamRef.update({ scheduleChangeMode: mode });
+
+  // Den andra föräldern ska veta att spelreglerna ändrats — annars kan
+  // hens dagar plötsligt börja ändras utan godkännande, utan förvarning.
+  const changerName = teamSnap.data()?.parentProfiles?.[uid]?.displayName ?? "Andra föräldern";
+  const others = parentIds.filter((id) => id !== uid && id !== PENDING_PARTNER_ID);
+  if (others.length > 0) {
+    await sendPushToUsers(db, others, {
+      title: "Läget för schemaändringar ändrades",
+      body:
+        mode === "notify"
+          ? `${changerName} slog på direktändring. Ändringar gäller nu direkt, utan godkännande.`
+          : `${changerName} slog på förfrågningar. Ändringar måste nu godkännas.`,
+    });
+  }
+
+  return { ok: true, mode };
+});
+
+// ---------------------------------------------------------------------------
+// 1e. applyScheduleChangeDirect — schemaändring UTAN godkännandesteg.
+//
+//     Används bara när teamets scheduleChangeMode är "notify". Skapar
+//     shiftRequests som redan är approved, justerar ställningen i samma
+//     transaktion och notifierar den andra föräldern i efterhand.
+//
+//     Att detta är en callable och inte en klientskrivning är själva
+//     poängen: läget kontrolleras på servern. Annars hade en klient
+//     kunnat skriva approved-dokument direkt och hoppa över
+//     godkännandet även när teamet står på "request".
+// ---------------------------------------------------------------------------
+
+export const applyScheduleChangeDirect = onCall(async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) throw new HttpsError("unauthenticated", "Du måste vara inloggad.");
+
+  const { teamId, childId, changes, note } = request.data as {
+    teamId?: string;
+    childId?: string;
+    /** Varje post är en sammanhängande period, redan grupperad av klienten. */
+    changes?: { startAt: string; endAt?: string | null; takingOverParentId: string }[];
+    note?: string;
+  };
+
+  if (!teamId || !childId || !changes || changes.length === 0) {
+    throw new HttpsError("invalid-argument", "teamId, childId och minst en ändring krävs.");
+  }
+
+  const teamRef = db.doc(`teams/${teamId}`);
+  const cycleRef = db.doc(`teams/${teamId}/children/${childId}/custodyCycle/main`);
+  const balanceRef = db.doc(`teams/${teamId}/children/${childId}/dayBalance/main`);
+
+  const teamSnap = await teamRef.get();
+  if (!teamSnap.exists) throw new HttpsError("not-found", "Team saknas.");
+
+  const parentIds: string[] = teamSnap.data()?.parentIds ?? [];
+  if (!parentIds.includes(uid)) {
+    throw new HttpsError("permission-denied", "Du är inte medlem i det här teamet.");
+  }
+
+  const mode: ScheduleChangeMode = teamSnap.data()?.scheduleChangeMode ?? "request";
+  if (mode !== "notify") {
+    throw new HttpsError(
+      "failed-precondition",
+      "Teamet kräver godkännande för schemaändringar. Skicka en förfrågan istället."
+    );
+  }
+
+  // Parsa och validera tiderna innan transaktionen.
+  const parsed = changes.map((c) => {
+    const startMs = Date.parse(c.startAt);
+    const endMs = c.endAt ? Date.parse(c.endAt) : null;
+    if (Number.isNaN(startMs) || (endMs !== null && Number.isNaN(endMs))) {
+      throw new HttpsError("invalid-argument", "Ogiltigt datumformat.");
+    }
+    if (!parentIds.includes(c.takingOverParentId)) {
+      throw new HttpsError("invalid-argument", "takingOverParentId tillhör inte teamet.");
+    }
+    return { startMs, endMs, takingOverParentId: c.takingOverParentId };
+  });
+
+  // Samma överlappskoll som vid godkännande — en direktändring ovanpå en
+  // redan godkänd avvikelse skulle göra schemat tvetydigt.
+  for (const p of parsed) {
+    const clash = await findOverlappingApproved(teamId, childId, p.startMs, p.endMs, []);
+    if (clash.length > 0) {
+      throw new HttpsError(
+        "failed-precondition",
+        "Perioden krockar med en ändring som redan är godkänd. Ta bort den först."
+      );
+    }
+  }
+
+  // Flera perioder som skickas ihop hör ihop i UI:t, precis som en batch
+  // av förslag gör.
+  const batchId = parsed.length > 1 ? db.collection(`teams/${teamId}/shiftRequests`).doc().id : null;
+
+  await db.runTransaction(async (tx) => {
+    const [cycleSnap, balanceSnap] = await Promise.all([tx.get(cycleRef), tx.get(balanceRef)]);
+    if (!cycleSnap.exists) throw new HttpsError("not-found", "Ingen boendecykel konfigurerad för barnet.");
+    if (!balanceSnap.exists) throw new HttpsError("not-found", "Ingen ställning initierad för barnet.");
+
+    const cycle = cycleSnap.data() as CustodyCycleDoc;
+    let runningBalance = balanceSnap.data() as DayBalanceDoc;
+
+    for (const p of parsed) {
+      const ref = db.collection(`teams/${teamId}/shiftRequests`).doc();
+      const approvedRequest: ShiftRequestDoc = {
+        id: ref.id,
+        teamId,
+        childId,
+        requestedBy: uid,
+        takingOverParentId: p.takingOverParentId,
+        startAt: admin.firestore.Timestamp.fromMillis(p.startMs) as any,
+        status: "approved",
+        // Den som gör ändringen är också den som "svarat" på den — det
+        // finns ingen motpart att vänta på i det här läget.
+        respondedBy: uid,
+        createdAt: admin.firestore.Timestamp.now() as any,
+        ...(p.endMs !== null
+          ? { endAt: admin.firestore.Timestamp.fromMillis(p.endMs) as any }
+          : {}),
+        ...(note ? { note } : {}),
+        ...(batchId ? { batchId } : {}),
+      };
+
+      const { updatedBalance, deltaDays } = applyApprovedShiftToBalance(
+        runningBalance,
+        cycle,
+        approvedRequest
+      );
+      runningBalance = updatedBalance;
+
+      tx.set(ref, {
+        ...approvedRequest,
+        respondedAt: admin.firestore.FieldValue.serverTimestamp(),
+        balanceDeltaDays: deltaDays,
+      });
+
+      const historyRef = db.collection(`teams/${teamId}/children/${childId}/dayBalanceHistory`).doc();
+      tx.set(historyRef, {
+        id: historyRef.id,
+        childId,
+        shiftRequestId: ref.id,
+        deltaDays,
+        balanceAfter: runningBalance.balanceDays,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+    }
+
+    tx.set(balanceRef, {
+      ...runningBalance,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+  });
+
+  // Notisen ÄR hela poängen med det här läget — den ersätter
+  // godkännandesteget, så den andra föräldern måste få veta.
+  const changerName = teamSnap.data()?.parentProfiles?.[uid]?.displayName ?? "Andra föräldern";
+  const others = parentIds.filter((id) => id !== uid && id !== PENDING_PARTNER_ID);
+  if (others.length > 0) {
+    const dayLabel = `${parsed.length} dag${parsed.length === 1 ? "" : "ar"}`;
+    await sendPushToUsers(db, others, {
+      title: "Schemat ändrades",
+      body:
+        parsed.length > 1
+          ? `${changerName} ändrade ${dayLabel} i schemat.`
+          : `${changerName} ändrade en dag i schemat.`,
+    });
+  }
+
+  return { ok: true, applied: parsed.length };
+});
+
+// ---------------------------------------------------------------------------
 // 1c. notifyOnShiftRequestCreated — pushar till MOTPARTEN när ett nytt
 //     ansvarsbyte föreslås (en enskild dag eller en hel batch från
 //     kalenderns ändringsläge).
@@ -835,6 +1125,12 @@ export const notifyOnShiftRequestCreated = onDocumentCreated(
   async (event) => {
     const request = event.data?.data() as ShiftRequestDoc | undefined;
     if (!request) return;
+
+    // Direktändringar (scheduleChangeMode "notify") skapas redan som
+    // approved och skickar sin EGEN notis från applyScheduleChangeDirect.
+    // Utan den här vakten får den andra föräldern två pushar, varav en
+    // felaktigt påstår att något väntar på godkännande.
+    if (request.status !== "pending") return;
 
     if (request.batchId) {
       const claimRef = db.doc(`teams/${event.params.teamId}/shiftRequestBatchNotified/${request.batchId}`);

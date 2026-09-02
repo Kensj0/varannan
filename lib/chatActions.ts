@@ -21,8 +21,15 @@ export async function sendChatMessage(args: {
     teamId: args.teamId,
     senderId: args.senderId,
     text: args.text,
-    linkedShiftRequestId: args.linkedShiftRequestId,
     createdAt: Timestamp.now() as any,
+    // Firestores webb-SDK kastar fel på `undefined`-fält (till skillnad
+    // från Admin SDK). Ett vanligt chattmeddelande har inget kopplat
+    // ansvarsbyte, så fältet fick värdet undefined och setDoc kastade
+    // — vilket gjorde att INGA vanliga meddelanden gick att skicka.
+    // Ta bara med fältet när det faktiskt pekar på en shiftRequest.
+    ...(args.linkedShiftRequestId
+      ? { linkedShiftRequestId: args.linkedShiftRequestId }
+      : {}),
   };
   await setDoc(ref, message);
   return ref.id;

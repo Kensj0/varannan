@@ -2,7 +2,12 @@
 
 import { useState } from "react";
 import { PushPermissionState } from "../lib/pushNotifications";
-import { PARENT_PALETTE, ParentColorId } from "../types/schema";
+import {
+  PARENT_PALETTE,
+  ParentColorId,
+  ScheduleChangeMode,
+  SCHEDULE_CHANGE_MODES,
+} from "../types/schema";
 import { CalendarFeedLinks } from "../lib/calendarExport";
 import { CustodyCycleDoc } from "../types/schema";
 
@@ -27,6 +32,20 @@ interface CalendarSettingsPanelProps {
   onChangeSwitchHour: (hh: string, mm: string) => Promise<void>;
   childName: string;
   cycle: CustodyCycleDoc | undefined;
+
+  /**
+   * Kalendrarna att växla mellan. Ett barn ÄR en kalender: dokumentet
+   * bär namnet, grundschemat och ställningen.
+   */
+  calendars: { id: string; name: string }[];
+  activeCalendarId: string;
+  onSelectCalendar: (calendarId: string) => void;
+  onCreateCalendar: (name: string) => Promise<void>;
+  onRenameCalendar: (name: string) => Promise<void>;
+
+  /** Förfrågan vs notifiering — gäller alla schemaändringar, se schema.ts. */
+  scheduleChangeMode: ScheduleChangeMode;
+  onChangeScheduleChangeMode: (mode: ScheduleChangeMode) => Promise<void>;
 }
 
 export default function CalendarSettingsPanel({
@@ -47,10 +66,67 @@ export default function CalendarSettingsPanel({
   onCreateFeed,
   switchHour,
   onChangeSwitchHour,
+  childName,
+  calendars,
+  activeCalendarId,
+  onSelectCalendar,
+  onCreateCalendar,
+  onRenameCalendar,
+  scheduleChangeMode,
+  onChangeScheduleChangeMode,
 }: CalendarSettingsPanelProps) {
   const [creatingFeed, setCreatingFeed] = useState(false);
   const [feedError, setFeedError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+
+  // Kalenderväljaren: listan fälls ut under namnet, och båda formulären
+  // (ny / byt namn) är stängda tills man aktivt väljer dem.
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [creatingCalendar, setCreatingCalendar] = useState(false);
+  const [renameDraft, setRenameDraft] = useState<string | null>(null);
+  const [calendarBusy, setCalendarBusy] = useState(false);
+  const [calendarError, setCalendarError] = useState<string | null>(null);
+  const [modeBusy, setModeBusy] = useState(false);
+  const [modeError, setModeError] = useState<string | null>(null);
+
+  async function handleCreateCalendar() {
+    const trimmed = newName.trim();
+    if (!trimmed) {
+      setCalendarError("Ge kalendern ett namn.");
+      return;
+    }
+    setCalendarBusy(true);
+    setCalendarError(null);
+    try {
+      await onCreateCalendar(trimmed);
+      setNewName("");
+      setCreatingCalendar(false);
+      setPickerOpen(false);
+    } catch {
+      setCalendarError("Kunde inte skapa kalendern. Försök igen.");
+    } finally {
+      setCalendarBusy(false);
+    }
+  }
+
+  async function handleRenameCalendar() {
+    const trimmed = (renameDraft ?? "").trim();
+    if (!trimmed) {
+      setCalendarError("Namnet kan inte vara tomt.");
+      return;
+    }
+    setCalendarBusy(true);
+    setCalendarError(null);
+    try {
+      await onRenameCalendar(trimmed);
+      setRenameDraft(null);
+    } catch {
+      setCalendarError("Kunde inte byta namn. Försök igen.");
+    } finally {
+      setCalendarBusy(false);
+    }
+  }
 
   const [hh] = (switchHour || "08:00").split(":");
   const [pendingHh, setPendingHh] = useState(hh ?? "08");
@@ -85,7 +161,174 @@ export default function CalendarSettingsPanel({
       <div className="fixed inset-0 z-40" onClick={onClose} />
 
       <div className="absolute right-0 top-12 z-50 max-h-[75vh] w-72 overflow-y-auto rounded-2xl bg-white p-4 text-left shadow-xl ring-1 ring-stone-100">
-        <Section title="Kalender" first />
+        <Section title="Kalendrar" first />
+
+        {/* Vald kalender — trycket fäller ut listan över de andra. */}
+        <button
+          onClick={() => setPickerOpen((v) => !v)}
+          className="flex w-full items-center justify-between rounded-lg bg-stone-50 px-3 py-2 text-left hover:bg-stone-100"
+        >
+          <span className="truncate text-sm font-semibold text-stone-800">{childName}</span>
+          <span className={`shrink-0 text-xs text-stone-400 ${pickerOpen ? "rotate-180" : ""}`}>▾</span>
+        </button>
+
+        {pickerOpen && (
+          <div className="mt-1 space-y-0.5">
+            {calendars.map((calendar) => (
+              <button
+                key={calendar.id}
+                onClick={() => {
+                  onSelectCalendar(calendar.id);
+                  setPickerOpen(false);
+                  setRenameDraft(null);
+                }}
+                className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-sm hover:bg-stone-50 ${
+                  calendar.id === activeCalendarId ? "font-semibold text-rose-600" : "text-stone-700"
+                }`}
+              >
+                <span className="truncate">{calendar.name}</span>
+                {calendar.id === activeCalendarId && <span className="shrink-0 text-xs">✓</span>}
+              </button>
+            ))}
+
+            {creatingCalendar ? (
+              <div className="pt-1">
+                <input
+                  autoFocus
+                  value={newName}
+                  onChange={(e) => setNewName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") void handleCreateCalendar();
+                    if (e.key === "Escape") setCreatingCalendar(false);
+                  }}
+                  placeholder="Namn på kalendern"
+                  disabled={calendarBusy}
+                  className="mb-1 w-full rounded-lg border border-stone-200 px-2 py-1.5 text-sm disabled:opacity-50"
+                />
+                <div className="flex gap-1">
+                  <button
+                    onClick={() => {
+                      setCreatingCalendar(false);
+                      setNewName("");
+                      setCalendarError(null);
+                    }}
+                    className="flex-1 rounded-lg border border-stone-200 py-1.5 text-xs font-semibold text-stone-600"
+                  >
+                    Avbryt
+                  </button>
+                  <button
+                    onClick={handleCreateCalendar}
+                    disabled={calendarBusy}
+                    className="flex-1 rounded-lg bg-rose-500 py-1.5 text-xs font-semibold text-white disabled:opacity-40"
+                  >
+                    {calendarBusy ? "Skapar…" : "Skapa"}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <button
+                onClick={() => {
+                  setCreatingCalendar(true);
+                  setCalendarError(null);
+                }}
+                className="w-full rounded-lg px-3 py-2 text-left text-sm font-medium text-rose-600 hover:bg-rose-50"
+              >
+                + Ny kalender
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* Byt namn på den kalender som visas just nu. */}
+        {renameDraft !== null ? (
+          <div className="mt-2">
+            <input
+              autoFocus
+              value={renameDraft}
+              onChange={(e) => setRenameDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") void handleRenameCalendar();
+                if (e.key === "Escape") setRenameDraft(null);
+              }}
+              disabled={calendarBusy}
+              className="mb-1 w-full rounded-lg border border-stone-200 px-2 py-1.5 text-sm disabled:opacity-50"
+            />
+            <div className="flex gap-1">
+              <button
+                onClick={() => {
+                  setRenameDraft(null);
+                  setCalendarError(null);
+                }}
+                className="flex-1 rounded-lg border border-stone-200 py-1.5 text-xs font-semibold text-stone-600"
+              >
+                Avbryt
+              </button>
+              <button
+                onClick={handleRenameCalendar}
+                disabled={calendarBusy}
+                className="flex-1 rounded-lg bg-rose-500 py-1.5 text-xs font-semibold text-white disabled:opacity-40"
+              >
+                {calendarBusy ? "Sparar…" : "Spara"}
+              </button>
+            </div>
+          </div>
+        ) : (
+          <button
+            onClick={() => setRenameDraft(childName)}
+            className="mt-1 w-full rounded-lg px-3 py-2 text-left text-sm text-stone-600 hover:bg-stone-50"
+          >
+            Byt namn på kalendern
+          </button>
+        )}
+
+        {calendarError && <p className="mt-1 text-[11px] text-rose-600">{calendarError}</p>}
+
+        <Section title="Schemaändringar" />
+        <p className="mb-2 text-[11px] leading-snug text-stone-400">
+          Gäller alla ändringar av schemat — enstaka dagar såväl som ändringsläget. Inställningen är
+          gemensam för er båda.
+        </p>
+        <div className="space-y-1">
+          {SCHEDULE_CHANGE_MODES.map((option) => {
+            const selected = option.id === scheduleChangeMode;
+            return (
+              <button
+                key={option.id}
+                disabled={modeBusy}
+                onClick={async () => {
+                  if (selected) return;
+                  setModeBusy(true);
+                  setModeError(null);
+                  try {
+                    await onChangeScheduleChangeMode(option.id);
+                  } catch {
+                    setModeError("Kunde inte byta läge. Försök igen.");
+                  } finally {
+                    setModeBusy(false);
+                  }
+                }}
+                className={`w-full rounded-lg border px-3 py-2 text-left disabled:opacity-50 ${
+                  selected ? "border-rose-300 bg-rose-50" : "border-stone-200 hover:bg-stone-50"
+                }`}
+              >
+                <span className="flex items-center justify-between">
+                  <span
+                    className={`text-sm font-semibold ${selected ? "text-rose-700" : "text-stone-700"}`}
+                  >
+                    {option.label}
+                  </span>
+                  {selected && <span className="text-xs text-rose-600">✓</span>}
+                </span>
+                <span className="mt-0.5 block text-[11px] leading-snug text-stone-500">
+                  {option.description}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+        {modeError && <p className="mt-1 text-[11px] text-rose-600">{modeError}</p>}
+
+        <Section title="Visning" />
 
         <label className="flex items-center justify-between py-2">
           <span className="text-sm text-stone-700">Visa veckonummer</span>
