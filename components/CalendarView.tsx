@@ -10,6 +10,7 @@ import { ParentColorId, ScheduleChangeMode } from "../types/schema";
 import { CalendarFeedLinks } from "../lib/calendarExport";
 import DayActionModal from "./DayActionModal";
 import CalendarSettingsPanel from "./CalendarSettingsPanel";
+import CalendarManagerPanel from "./CalendarManagerPanel";
 
 interface ParentMeta {
   id: string;
@@ -66,7 +67,8 @@ interface CalendarViewProps {
   activeCalendarId: string;
   onSelectCalendar: (calendarId: string) => void;
   onCreateCalendar: (name: string) => Promise<void>;
-  onRenameCalendar: (name: string) => Promise<void>;
+  onRenameCalendar: (calendarId: string, name: string) => Promise<void>;
+  onDeleteCalendar: (calendarId: string) => Promise<void>;
 
   scheduleChangeMode: ScheduleChangeMode;
   onChangeScheduleChangeMode: (mode: ScheduleChangeMode) => Promise<void>;
@@ -108,6 +110,7 @@ export default function CalendarView({
   onSelectCalendar,
   onCreateCalendar,
   onRenameCalendar,
+  onDeleteCalendar,
   scheduleChangeMode,
   onChangeScheduleChangeMode,
 }: CalendarViewProps) {
@@ -126,6 +129,7 @@ export default function CalendarView({
   }
 
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [managerOpen, setManagerOpen] = useState(false);
 
   const [editMode, setEditMode] = useState(false);
   const [shiftOffsetDays, setShiftOffsetDays] = useState(0);
@@ -299,9 +303,14 @@ export default function CalendarView({
     <div className="rounded-2xl bg-white shadow-sm">
       <header className="relative flex items-center justify-between px-3 py-3">
         <button
-          onClick={() => setEditMode(true)}
-          aria-label="Ändringsläge"
-          className="grid h-9 w-9 place-items-center rounded-full text-stone-400 hover:bg-stone-50 hover:text-rose-500"
+          onClick={() => (editMode ? exitEditMode() : setEditMode(true))}
+          aria-label={editMode ? "Avsluta ändringsläge" : "Ändringsläge"}
+          aria-pressed={editMode}
+          className={`grid h-9 w-9 place-items-center rounded-full ${
+            editMode
+              ? "bg-rose-100 text-rose-600"
+              : "text-stone-400 hover:bg-stone-50 hover:text-rose-500"
+          }`}
         >
           <EditCalendarIcon />
         </button>
@@ -338,8 +347,34 @@ export default function CalendarView({
           </button>
         </div>
 
+        <div className="flex items-center">
         <button
-          onClick={() => setSettingsOpen((v) => !v)}
+          onClick={() => {
+            setManagerOpen((v) => !v);
+            setSettingsOpen(false);
+          }}
+          aria-label="Hantera scheman"
+          className="grid h-9 w-9 place-items-center rounded-full text-stone-400 hover:bg-stone-50 hover:text-rose-500"
+        >
+          <PlusIcon />
+        </button>
+        {managerOpen && (
+          <CalendarManagerPanel
+            onClose={() => setManagerOpen(false)}
+            calendars={calendars}
+            activeCalendarId={activeCalendarId}
+            onSelectCalendar={onSelectCalendar}
+            onCreateCalendar={onCreateCalendar}
+            onRenameCalendar={onRenameCalendar}
+            onDeleteCalendar={onDeleteCalendar}
+          />
+        )}
+
+        <button
+          onClick={() => {
+            setSettingsOpen((v) => !v);
+            setManagerOpen(false);
+          }}
           aria-label="Kalenderinställningar"
           className="grid h-9 w-9 place-items-center rounded-full text-stone-400 hover:bg-stone-50 hover:text-rose-500"
         >
@@ -366,15 +401,11 @@ export default function CalendarView({
             onChangeSwitchHour={onChangeSwitchHour}
             childName={childName}
             cycle={cycle}
-            calendars={calendars}
-            activeCalendarId={activeCalendarId}
-            onSelectCalendar={onSelectCalendar}
-            onCreateCalendar={onCreateCalendar}
-            onRenameCalendar={onRenameCalendar}
             scheduleChangeMode={scheduleChangeMode}
             onChangeScheduleChangeMode={onChangeScheduleChangeMode}
           />
         )}
+        </div>
       </header>
 
       <div className="overflow-hidden rounded-b-2xl">
@@ -851,6 +882,14 @@ function EditCalendarIcon() {
       <rect x="3" y="4" width="18" height="17" rx="2" />
       <path d="M3 9h18" />
       <path d="m15.5 17.5 3-3 1.5 1.5-3 3h-1.5v-1.5Z" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
+function PlusIcon() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <path d="M12 5v14M5 12h14" strokeLinecap="round" />
     </svg>
   );
 }

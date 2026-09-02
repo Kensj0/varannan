@@ -902,6 +902,106 @@ export const renameChild = onCall(async (request) => {
   return { ok: true };
 });
 
+/**
+ * Tar bort en kalender (= ett barn) med allt som hänger på den.
+ *
+ * Firestore kaskadraderar INTE subkollektioner: att bara ta bort
+ * barn-dokumentet hade lämnat kvar grundschema, ställning, historik,
+ * barninfo och konton som föräldralösa dokument — osynliga i appen men
+ * fortfarande läsbara för den som kan gissa en path. Därför städas de
+ * uttryckligen här.
+ *
+ * shiftRequests och packLists ligger under teamet (inte under barnet)
+ * och filtreras på childId, så de raderas via frågor.
+ */
+export const deleteChild = onCall(async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) throw new HttpsError("unauthenticated", "Du måste vara inloggad.");
+
+  const { teamId, childId } = request.data as { teamId?: string; childId?: string };
+  if (!teamId || !childId) {
+    throw new HttpsError("invalid-argument", "teamId och childId krävs.");
+  }
+
+  const teamRef = db.doc(`teams/${teamId}`);
+  const teamSnap = await teamRef.get();
+  if (!teamSnap.exists) throw new HttpsError("not-found", "Teamet finns inte.");
+
+  const parentIds: string[] = teamSnap.data()?.parentIds ?? [];
+  if (!parentIds.includes(uid)) {
+    throw new HttpsError("permission-denied", "Du tillhör inte teamet.");
+  }
+
+  // Vägra ta bort den sista kalendern: appen har ingen vy för ett team
+  // helt utan barn, och användaren skulle hamna i onboarding igen med
+  // sitt schema borta. Byt namn i stället.
+  const childIds: string[] = teamSnap.data()?.childIds ?? [];
+  if (childIds.length <= 1) {
+    throw new HttpsError(
+      "failed-precondition",
+      "Det går inte att ta bort den sista kalendern. Skapa en ny först, eller byt namn på den här."
+    );
+  }
+
+  const childRef = db.doc(`teams/${teamId}/children/${childId}`);
+  if (!(await childRef.get()).exists) {
+    throw new HttpsError("not-found", "Kalendern finns inte.");
+  }
+
+  // Subkollektioner under barnet.
+  for (const sub of [
+    "childInfo",
+    "accounts",
+    "custodyCycle",
+    "dayBalance",
+    "dayBalanceHistory",
+    "balanceRequests",
+  ]) {
+    await deleteQueryInBatches(childRef.collection(sub));
+  }
+
+  // Team-nivådokument som pekar på barnet.
+  for (const col of ["shiftRequests", "packLists", "events"]) {
+    await deleteQueryInBatches(
+      db.collection(`teams/${teamId}/${col}`).where("childId", "==", childId)
+    );
+  }
+
+  await childRef.delete();
+  await teamRef.update({
+    childIds: admin.firestore.FieldValue.arrayRemove(childId),
+  });
+
+  // Prenumerationstoken för barnet blir meningslösa — ta bort dem så att
+  // en gammal ICS-länk inte ligger kvar och pekar på ett borttaget barn.
+  const tokens: Record<string, string> = teamSnap.data()?.calendarFeedTokens ?? {};
+  const staleKeys = Object.keys(tokens).filter((k) => k.startsWith(`${childId}:`));
+  if (staleKeys.length > 0) {
+    const patch: Record<string, any> = {};
+    for (const key of staleKeys) {
+      patch[`calendarFeedTokens.${key}`] = admin.firestore.FieldValue.delete();
+    }
+    await teamRef.update(patch);
+  }
+
+  return { ok: true };
+});
+
+/** Raderar alla dokument en fråga matchar, i lagom stora batchar. */
+async function deleteQueryInBatches(
+  query: admin.firestore.Query | admin.firestore.CollectionReference,
+  batchSize = 200
+): Promise<void> {
+  while (true) {
+    const snap = await query.limit(batchSize).get();
+    if (snap.empty) return;
+    const batch = db.batch();
+    for (const doc of snap.docs) batch.delete(doc.ref);
+    await batch.commit();
+    if (snap.size < batchSize) return;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // 1d. setScheduleChangeMode — växla mellan "förfrågan" och "notifiering"
 //     för hela teamet. Ligger på teamet och inte per användare: båda

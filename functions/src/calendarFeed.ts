@@ -84,7 +84,17 @@ export const createCalendarFeedToken = onCall(async (request) => {
 // HTTP: själva ICS-flödet
 // ---------------------------------------------------------------------------
 
-export const calendarFeed = onRequest({ cors: true }, async (req, res) => {
+export const calendarFeed = onRequest(
+  {
+    cors: true,
+    // Google/Apple/Outlook hämtar flödet som anonyma klienter. Utan
+    // explicit public invoker svarar Cloud Run 403 på deras hämtning,
+    // och Google visar bara "Det gick inte att lägga till kalender.
+    // Kontrollera webbadressen" — utan att avslöja att det var ett
+    // behörighetsfel. Åtkomsten skyddas av token i URL:en istället.
+    invoker: "public",
+  },
+  async (req, res) => {
   const teamId = String(req.query.team ?? "");
   const childId = String(req.query.child ?? "");
   const parentId = String(req.query.parent ?? "");
@@ -268,7 +278,8 @@ export const calendarFeed = onRequest({ cors: true }, async (req, res) => {
   res.set("Cache-Control", "public, max-age=1800");
   res.set("Content-Disposition", `inline; filename="${childId}.ics"`);
   res.status(200).send(lines.join("\r\n"));
-});
+  },
+);
 
 // ---------------------------------------------------------------------------
 // ICS-hjälpare
