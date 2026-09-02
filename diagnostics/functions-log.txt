@@ -1,0 +1,23 @@
+2026-09-02T09:17:22.210400Z	DEBUG	deletechild			Callable request verification passed	
+2026-09-02T09:17:22.059850Z	INFO	deletechild	200			
+2026-09-02T09:17:21.769216Z	INFO	deletechild	204			
+2026-09-02T09:08:26.799204Z	INFO	deletechild				Ready condition status changed to True for Service deletechild.
+2026-09-02T09:08:25.220961Z	INFO	deletechild				Ready condition status changed to True for Revision deletechild-00002-rug with message: Deploying revision succeeded in 7.56s.
+2026-09-02T09:08:17.378208Z	NOTICE	deletechild				
+2026-09-02T09:08:16.292973Z	NOTICE	deletechild				
+2026-09-02T08:48:38.042647Z	DEBUG	deletechild			Callable request verification passed	
+2026-09-02T08:48:37.919670Z	WARNING	deletechild	400			
+2026-09-02T08:48:34.149225Z	INFO	deletechild	204			
+2026-09-02T07:44:36.665482Z	DEBUG	deletechild			Callable request verification passed	
+2026-09-02T07:44:36.657615Z	WARNING	deletechild	400			
+2026-09-02T07:44:36.331403Z	INFO	deletechild	204			
+2026-09-02T07:44:24.795317Z	DEBUG	deletechild			Callable request verification passed	
+2026-09-02T07:44:24.787286Z	WARNING	deletechild	400			
+2026-09-02T07:44:24.614934Z	INFO	deletechild	204			
+2026-09-02T07:44:14.020177Z	DEBUG	deletechild			Callable request verification passed	
+2026-09-02T07:44:13.860598Z	INFO	deletechild	200			
+2026-09-02T07:44:13.477472Z	INFO	deletechild	204			
+2026-09-02T07:41:03.753720Z	INFO	deletechild				Ready condition status changed to True for Service deletechild.
+2026-09-02T07:40:59.904834Z	INFO	deletechild				Ready condition status changed to True for Revision deletechild-00001-xeq with message: Deploying revision succeeded in 25.6s.
+2026-09-02T07:40:34.026725Z	NOTICE	deletechild				
+2026-09-02T07:39:32.632533Z	NOTICE	deletechild				
