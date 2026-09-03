@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { sendTestPush } from "../lib/pushNotifications";
 import InvitePartnerBanner from "./onboarding/InvitePartnerBanner";
 
 type PushPermission = "unsupported" | "default" | "granted" | "denied" | null;
@@ -52,6 +53,24 @@ export default function SettingsView({
   const [nameDraft, setNameDraft] = useState(displayName);
   const [savingName, setSavingName] = useState(false);
   const [nameError, setNameError] = useState<string | null>(null);
+
+  /** Testnotis: idle → sending → sent, med felet separat. */
+  const [testState, setTestState] = useState<"idle" | "sending" | "sent">("idle");
+  const [testError, setTestError] = useState<string | null>(null);
+
+  async function handleTestPush() {
+    setTestState("sending");
+    setTestError(null);
+    try {
+      await sendTestPush();
+      setTestState("sent");
+    } catch (err: any) {
+      setTestState("idle");
+      // Servern formulerar de begripliga felen (utgången token, saknad
+      // registrering) — visa dem hellre än en generisk text.
+      setTestError(err?.message ?? "Kunde inte skicka testnotisen.");
+    }
+  }
 
   async function handleSaveName() {
     if (!onUpdateDisplayName) return;
@@ -157,9 +176,25 @@ export default function SettingsView({
             ser ut. Visa det ärligt i stället för att påstå att allt är
             igång. */}
         {pushPermission === "granted" && pushRegistered && !pushError && (
-          <p className="mt-2 text-[13px] text-emerald-600">
-            Notiser är på för byten och inbjudningar.
-          </p>
+          <>
+            <p className="mt-2 text-[13px] text-emerald-600">
+              Notiser är på för byten och inbjudningar.{" "}
+              <button
+                onClick={handleTestPush}
+                disabled={testState === "sending"}
+                className="font-semibold text-emerald-700 underline underline-offset-2 disabled:opacity-50"
+              >
+                {testState === "sending" ? "Skickar…" : "Testa här"}
+              </button>
+            </p>
+            {testState === "sent" && (
+              <p className="mt-1 text-[11px] leading-snug text-stone-500">
+                Testnotisen är skickad. Kommer den inte fram inom någon minut är det något med
+                enhetens notisinställningar.
+              </p>
+            )}
+            {testError && <p className="mt-1 text-[11px] leading-snug text-amber-700">{testError}</p>}
+          </>
         )}
 
         {pushPermission === "granted" && (!pushRegistered || pushError) && (

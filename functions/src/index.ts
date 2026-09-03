@@ -1377,6 +1377,72 @@ export const acceptCalendarInvite = onCall(async (request) => {
   return { teamId, childId };
 });
 
+
+// ---------------------------------------------------------------------------
+// sendTestPush — skickar en testnotis till ens EGNA enheter.
+//
+// Finns för att "notiser är på" är svårt att lita på: behörighet,
+// service worker, VAPID-nyckel och en giltig token måste alla stämma,
+// och misslyckas något av dem märks det först när en riktig notis
+// uteblir. Den här stänger den loopen — och rapporterar VAD som gick
+// fel i stället för att bara tystna.
+// ---------------------------------------------------------------------------
+
+export const sendTestPush = onCall(async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) throw new HttpsError("unauthenticated", "Du måste vara inloggad.");
+
+  const userSnap = await db.doc(`users/${uid}`).get();
+  const tokens: string[] = userSnap.data()?.fcmTokens ?? [];
+
+  if (tokens.length === 0) {
+    throw new HttpsError(
+      "failed-precondition",
+      "Den här enheten är inte registrerad för notiser än. Tryck på Försök igen först."
+    );
+  }
+
+  const response = await admin.messaging().sendEachForMulticast({
+    tokens,
+    notification: {
+      title: "Testnotis",
+      body: "Notiser fungerar. Så här ser de ut.",
+    },
+    data: { kind: "test" },
+  });
+
+  // Rensa tokens som FCM sagt är döda, så nästa test inte rapporterar
+  // samma fel igen. Utan det växer listan med gamla enheter och testet
+  // ser ut att misslyckas fast en av enheterna faktiskt fick notisen.
+  const dead: string[] = [];
+  response.responses.forEach((result, i) => {
+    const code = result.error?.code;
+    if (
+      code === "messaging/registration-token-not-registered" ||
+      code === "messaging/invalid-argument"
+    ) {
+      dead.push(tokens[i]);
+    }
+  });
+  if (dead.length > 0) {
+    await db.doc(`users/${uid}`).update({
+      fcmTokens: admin.firestore.FieldValue.arrayRemove(...dead),
+    });
+  }
+
+  if (response.successCount === 0) {
+    const firstError = response.responses.find((r) => r.error)?.error;
+    throw new HttpsError(
+      "internal",
+      dead.length > 0
+        ? "Enhetens notistoken hade gått ut. Den är borttagen nu — tryck på Försök igen och testa på nytt."
+        : `Notisen kunde inte skickas: ${firstError?.message ?? "okänt fel"}`
+    );
+  }
+
+  return { ok: true, sent: response.successCount, removed: dead.length };
+});
+
 // ---------------------------------------------------------------------------
 // 1d. setScheduleChangeMode — växla mellan "förfrågan" och "notifiering"
 //     för hela teamet. Ligger på teamet och inte per användare: båda

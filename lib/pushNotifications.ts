@@ -172,3 +172,19 @@ export async function listenForForegroundMessages(
     onMessageReceived(payload.notification?.title ?? "Varannan", payload.notification?.body ?? "");
   });
 }
+
+/**
+ * Skickar en testnotis till den inloggades egna enheter. Kastar med ett
+ * läsbart meddelande när något i kedjan (token, VAPID, service worker)
+ * inte stämmer, så felet går att visa direkt i gränssnittet.
+ */
+export async function sendTestPush(): Promise<{ sent: number; removed: number }> {
+  const { httpsCallable } = await import("firebase/functions");
+  const { functions } = await import("./firebase");
+  const fn = httpsCallable<Record<string, never>, { sent: number; removed: number }>(
+    functions,
+    "sendTestPush"
+  );
+  const res = await fn({});
+  return res.data;
+}
