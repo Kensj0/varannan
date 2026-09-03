@@ -86,6 +86,13 @@ export const createCalendarFeedToken = onCall(async (request) => {
 
 export const calendarFeed = onRequest(
   {
+    // Pinnad till us-central1 trots att övriga funktioner flyttat till
+    // europe-north1: den här URL:en ligger redan i användarnas kalender-
+    // prenumerationer (se lib/calendarExport.ts, FEED_REGION), och att
+    // byta region skulle tyst bryta varje befintlig prenumeration.
+    // Anropas dessutom av Google/Apple/Outlook server-till-server — ingen
+    // användare väntar på svaret, så regionen påverkar inte upplevd fart.
+    region: "us-central1",
     cors: true,
     // Google/Apple/Outlook hämtar flödet som anonyma klienter. Utan
     // explicit public invoker svarar Cloud Run 403 på deras hämtning,

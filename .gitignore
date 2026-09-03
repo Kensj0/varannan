@@ -7,6 +7,7 @@ functions/lib/
 .firebase/
 firestore-debug.log
 *-debug.log
+deploy-log.txt
 *.tsbuildinfo
 public/firebase-messaging-sw.js
 

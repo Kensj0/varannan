@@ -22,12 +22,28 @@ import * as crypto from "crypto";
 import { setGlobalOptions } from "firebase-functions/v2";
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { onDocumentWritten, onDocumentCreated } from "firebase-functions/v2/firestore";
-import { google } from "googleapis";
+// OBS: `googleapis` importeras lat, inne i getCalendarClientForUser. Den
+// väger ~4 MB och drog tidigare med sig laddningstid till kallstarten för
+// VARJE funktion i filen, trots att bara exportEventToGoogleCalendar
+// använder den.
 
-// Alla functions i samma region — undviker mismatch mellan Firestore-
-// triggers (Eventarc) och databasens region, vilket annars kan ge
-// "Location X is not found or access is unauthorized".
-setGlobalOptions({ region: "us-central1" });
+// Default-region: europe-north1, samma som Firestore. Nästan alla
+// användare är i Sverige, och de callables de faktiskt väntar på
+// (godkänn byte, spara schema, bjud in) gör flera Firestore-läsningar
+// i följd — med funktionen samlokaliserad med databasen försvinner
+// både Atlanten-hoppet till klienten OCH hoppen mellan funktion och db.
+//
+// UNDANTAG som pinnas till us-central1 nedan, med motivering vid varje:
+//   - Firestore-triggers (Eventarc stödde inte europe-north* när de
+//     sattes upp: "Location X is not found or access is unauthorized").
+//   - calendarFeed: dess URL ligger redan ute i användarnas kalender-
+//     prenumerationer (lib/calendarExport.ts: FEED_REGION), och den
+//     anropas server-till-server av Google/Apple/Outlook, inte av en
+//     användare som väntar — regionen spelar ingen roll för den.
+setGlobalOptions({ region: "europe-north1" });
+
+/** Region för de funktioner som av kompatibilitetsskäl måste ligga kvar. */
+const LEGACY_REGION = "us-central1";
 
 import {
   CustodyCycleDoc,
@@ -519,7 +535,9 @@ export const acceptInvite = onCall(async (request) => {
  * Håller den cachade kopian i teams/{teamId}.parentProfiles i synk när
  * en förälder byter namn eller profilbild i users/{uid}.
  */
-export const syncDisplayNameToTeam = onDocumentWritten("users/{uid}", async (event) => {
+export const syncDisplayNameToTeam = onDocumentWritten(
+  { document: "users/{uid}", region: LEGACY_REGION },
+  async (event) => {
   const after = event.data?.after?.data() as UserDoc | undefined;
   const before = event.data?.before?.data() as UserDoc | undefined;
   if (!after?.teamId) return;
@@ -1670,7 +1688,7 @@ export const applyScheduleChangeDirect = onCall(async (request) => {
 // ---------------------------------------------------------------------------
 
 export const notifyOnShiftRequestCreated = onDocumentCreated(
-  "teams/{teamId}/shiftRequests/{requestId}",
+  { document: "teams/{teamId}/shiftRequests/{requestId}", region: LEGACY_REGION },
   async (event) => {
     const request = event.data?.data() as ShiftRequestDoc | undefined;
     if (!request) return;
@@ -1729,7 +1747,7 @@ export const notifyOnShiftRequestCreated = onDocumentCreated(
 // ---------------------------------------------------------------------------
 
 export const exportEventToGoogleCalendar = onDocumentWritten(
-  "teams/{teamId}/events/{eventId}",
+  { document: "teams/{teamId}/events/{eventId}", region: LEGACY_REGION },
   async (event) => {
     const after = event.data?.after?.data() as EventDoc | undefined;
     if (!after) return; // borttaget event — hantera ev. borttag av Google-eventet separat
@@ -1774,6 +1792,8 @@ export const exportEventToGoogleCalendar = onDocumentWritten(
 // ---------------------------------------------------------------------------
 
 async function getCalendarClientForUser(refreshTokenRef: string) {
+  const { google } = await import("googleapis");
+
   // I produktion: hämta den faktiska refresh-token från Secret Manager
   // via refreshTokenRef (ALDRIG lagra token direkt i Firestore).
   const refreshToken = await resolveSecret(refreshTokenRef);
