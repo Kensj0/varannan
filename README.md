@@ -111,9 +111,25 @@ Regeln bakom uppdelningen: **klienten får aldrig skriva något den skulle
 kunna tjäna på att ljuga om.** En klient som kunde skriva sin egen
 ställning kunde nolla sin skuld.
 
-**Cloud Functions ligger i `us-central1`** medan Firestore ligger i
-`europe-north1`. Det är inte en förbiseelse — `europe-north2` stöds inte
-för Cloud Functions.
+**De user-vända callables ligger i `europe-north1`**, samma region som
+Firestore — nästan alla användare är i Sverige, och de anropen gör flera
+db-läsningar i följd, så samlokalisering tar bort både Atlanten-hoppet
+till klienten och hoppen mellan funktion och databas. `setGlobalOptions`
+i `functions/src/index.ts` sätter regionen; `lib/firebase.ts` måste
+matcha (`getFunctions(app, "europe-north1")`).
+
+Tre saker ligger kvar i `us-central1`, var och en med motivering i koden:
+
+- **Firestore-triggarna** (`syncDisplayNameToTeam`,
+  `notifyOnShiftRequestCreated`, `exportEventToGoogleCalendar`) — Eventarc
+  stödde inte europe-north\* när de sattes upp, och de körs i bakgrunden
+  så ingen väntar på dem.
+- **`calendarFeed`** — dess URL ligger redan i användarnas
+  kalenderprenumerationer (`lib/calendarExport.ts`, `FEED_REGION`), och
+  den anropas server-till-server av Google/Apple/Outlook. Att byta region
+  skulle tyst bryta varje befintlig prenumeration utan att ge något.
+
+`europe-north2` stöds fortfarande inte för Cloud Functions.
 
 ---
 

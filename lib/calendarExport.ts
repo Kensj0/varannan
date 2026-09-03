@@ -27,6 +27,10 @@ import { ParentColorId } from "../types/schema";
  * då "Det gick inte att lägga till kalender. Kontrollera webbadressen",
  * utan att det gick att se varför.
  */
+// Måste matcha regionen `calendarFeed` är pinnad till i
+// functions/src/calendarFeed.ts. Den ligger kvar i us-central1 medan
+// övriga funktioner flyttat till europe-north1, just för att den här
+// URL:en redan finns i användarnas kalenderprenumerationer.
 const FEED_REGION = "us-central1";
 
 function resolveFeedBase(): string {

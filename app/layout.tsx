@@ -29,9 +29,29 @@ export const viewport = {
   themeColor: "#24201F",
 };
 
+const PROJECT_ID = process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID;
+
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="sv">
+      <head>
+        {/*
+          Öppna TLS-anslutningen till Firebase-backendarna redan medan
+          JS-bunten laddar, så det första data-anropet inte betalar för
+          handskakningen. Firestore (WebChannel), Auth och token-refresh
+          plus callables-regionen.
+        */}
+        <link rel="preconnect" href="https://firestore.googleapis.com" crossOrigin="" />
+        <link rel="preconnect" href="https://identitytoolkit.googleapis.com" crossOrigin="" />
+        <link rel="preconnect" href="https://securetoken.googleapis.com" crossOrigin="" />
+        {PROJECT_ID && (
+          <link
+            rel="preconnect"
+            href={`https://europe-north1-${PROJECT_ID}.cloudfunctions.net`}
+            crossOrigin=""
+          />
+        )}
+      </head>
       <body className="bg-stone-100">
         <AuthProvider>
           <AuthGate>{children}</AuthGate>

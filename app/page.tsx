@@ -62,22 +62,32 @@ import {
   updateChildAccount,
   deleteChildAccount,
 } from "../lib/childInfoActions";
+import dynamic from "next/dynamic";
 import CalendarView from "../components/CalendarView";
 import BottomNav, { AppSection } from "../components/BottomNav";
 import SubTabs from "../components/SubTabs";
-import SettingsView from "../components/SettingsView";
-import CustodyCycleBuilder from "../components/onboarding/CustodyCycleBuilder";
 import BalanceCard from "../components/BalanceCard";
 import PendingShiftRequests from "../components/PendingShiftRequests";
 import PendingStructureRequests from "../components/PendingStructureRequests";
-import ChatView from "../components/ChatView";
-import PackListView from "../components/PackListView";
-import NotesView from "../components/NotesView";
-import TodoView from "../components/TodoView";
-import ChildInfoView from "../components/ChildInfoView";
-import AccountsView from "../components/AccountsView";
-import CycleSetupScreen from "../components/onboarding/CycleSetupScreen";
-import AddFirstChildScreen from "../components/onboarding/AddFirstChildScreen";
+
+/**
+ * Vyer utanför den första skärmen (kalendern) laddas i egna chunkar och
+ * hämtas först när fliken öppnas. Utan detta låg all deras kod — chatt,
+ * listor, barninfo, inställningar, onboarding-byggaren — i samma bunt
+ * som appen laddar innan något ritas. `ssr: false` är gratis här: hela
+ * appen är redan en statisk klientexport.
+ */
+const loading = () => <Centered>Laddar…</Centered>;
+const SettingsView = dynamic(() => import("../components/SettingsView"), { loading });
+const CustodyCycleBuilder = dynamic(() => import("../components/onboarding/CustodyCycleBuilder"), { loading });
+const ChatView = dynamic(() => import("../components/ChatView"), { loading });
+const PackListView = dynamic(() => import("../components/PackListView"), { loading });
+const NotesView = dynamic(() => import("../components/NotesView"), { loading });
+const TodoView = dynamic(() => import("../components/TodoView"), { loading });
+const ChildInfoView = dynamic(() => import("../components/ChildInfoView"), { loading });
+const AccountsView = dynamic(() => import("../components/AccountsView"), { loading });
+const CycleSetupScreen = dynamic(() => import("../components/onboarding/CycleSetupScreen"), { loading });
+const AddFirstChildScreen = dynamic(() => import("../components/onboarding/AddFirstChildScreen"), { loading });
 import {
   createInvite,
   addChild,
@@ -190,6 +200,21 @@ export default function HomePage() {
   const [listSubTab, setListSubTab] = useState<ListSubTab>("packlist");
   const [infoSubTab, setInfoSubTab] = useState<InfoSubTab>("childinfo");
 
+  // Realtidslyssnarna för flikarna utanför kalendern (chatt, listor,
+  // barninfo) öppnas först när fliken faktiskt besökts — och stängs inte
+  // igen. Att prenumerera på allt direkt vid inloggning innebar ett
+  // sjutal extra onSnapshot-kanaler plus en full läsning av hela
+  // shiftRequests-kollektionen innan ens kalendern hunnit ritas.
+  const [visitedSections, setVisitedSections] = useState<Set<AppSection>>(
+    () => new Set<AppSection>(["calendar"])
+  );
+  useEffect(() => {
+    setVisitedSections((prev) => (prev.has(section) ? prev : new Set(prev).add(section)));
+  }, [section]);
+  const chatVisited = visitedSections.has("chat");
+  const listsVisited = visitedSections.has("lists");
+  const infoVisited = visitedSections.has("info");
+
   // Välj första barnet automatiskt så fort listan laddats.
   const activeChildId = selectedChildId ?? children[0]?.id ?? null;
   // Kalendern ÄR barnet: barninfo, konton, listor och chatt visar samma
@@ -265,13 +290,23 @@ export default function HomePage() {
   const { data: structureRequests } = useStructureRequests(teamId, activeChildId);
   const { data: pendingBalanceRequests } = usePendingBalanceRequests(teamId, activeChildId);
   const { data: events } = useEventsForMonth(teamId, monthDate);
-  const { data: allShiftRequests } = useAllShiftRequests(teamId);
-  const { data: chatMessages } = useChatMessages(teamId, 100, activeChildId, isFallbackCalendar);
-  const { data: packLists } = usePackLists(teamId, activeChildId);
-  const { data: notes } = useNotes(teamId, activeChildId, isFallbackCalendar);
-  const { data: todos } = useTodos(teamId, false, activeChildId, isFallbackCalendar);
-  const { data: childInfo } = useChildInfo(teamId, activeInfoChildId);
-  const { data: childAccounts } = useChildAccounts(teamId, activeInfoChildId);
+  const { data: allShiftRequests } = useAllShiftRequests(chatVisited ? teamId : null);
+  const { data: chatMessages } = useChatMessages(
+    chatVisited ? teamId : null,
+    100,
+    activeChildId,
+    isFallbackCalendar
+  );
+  const { data: packLists } = usePackLists(listsVisited ? teamId : null, activeChildId);
+  const { data: notes } = useNotes(listsVisited ? teamId : null, activeChildId, isFallbackCalendar);
+  const { data: todos } = useTodos(
+    listsVisited ? teamId : null,
+    false,
+    activeChildId,
+    isFallbackCalendar
+  );
+  const { data: childInfo } = useChildInfo(infoVisited ? teamId : null, activeInfoChildId);
+  const { data: childAccounts } = useChildAccounts(infoVisited ? teamId : null, activeInfoChildId);
 
   // Förälder-metadata från teamets cachade profiler (users/{uid} är bara
   // läsbart för ägaren själv, därför ligger namnen i team-dokumentet).
