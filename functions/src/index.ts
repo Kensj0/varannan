@@ -81,9 +81,30 @@ export const setCustomSwitchHour = onCall(async (request) => {
   if (!parentIds.includes(uid)) throw new HttpsError("permission-denied", "Du tillhör inte teamet.");
 
   const cycleRef = db.doc(`teams/${teamId}/children/${childId}/custodyCycle/main`);
-  await cycleRef.update({ switchHour });
+  const currentHour = (await cycleRef.get()).data()?.switchHour ?? "08:00";
 
-  return { ok: true };
+  const counterpart = await counterpartFor(teamId, childId, uid);
+  if (await structureChangeAppliesDirectly(teamId, counterpart)) {
+    await cycleRef.update({ switchHour });
+    if (counterpart) {
+      const name = teamSnap.data()?.parentProfiles?.[uid]?.displayName ?? "Den andra föräldern";
+      await sendPushToUsers(db, [counterpart], {
+        title: "Bytestiden ändrades",
+        body: `${name} ändrade bytestiden till ${switchHour}.`,
+      });
+    }
+    return { ok: true, pending: false };
+  }
+
+  return createStructureRequest({
+    teamId,
+    childId,
+    requestedBy: uid,
+    addressedTo: counterpart!,
+    kind: "switchHour",
+    payload: { teamId, childId, switchHour },
+    summary: `bytestid ${currentHour} → ${switchHour}`,
+  });
 });
 
 
@@ -517,6 +538,132 @@ export const syncDisplayNameToTeam = onDocumentWritten("users/{uid}", async (eve
   });
 });
 
+
+// ---------------------------------------------------------------------------
+// Strukturändringar: grundschema och bytestid.
+//
+// De skriver om hela grundmönstret och påverkar alla framtida dagar, så
+// de följer samma regel som en enskild dag: motpartens läge avgör om
+// ändringen gäller direkt eller måste godkännas först.
+// ---------------------------------------------------------------------------
+
+/** Vem ska svara på en ändring i den här kalendern? Null om man är ensam. */
+async function counterpartFor(
+  teamId: string,
+  childId: string,
+  uid: string,
+): Promise<string | null> {
+  const [teamSnap, childSnap] = await Promise.all([
+    db.doc(`teams/${teamId}`).get(),
+    db.doc(`teams/${teamId}/children/${childId}`).get(),
+  ]);
+  const members = calendarParentIds(childSnap.data() as any, teamSnap.data() as any);
+  return members.find((id) => id !== uid && id !== PENDING_PARTNER_ID) ?? null;
+}
+
+/**
+ * Ska ändringen gälla direkt? Ja om man är ensam i kalendern, eller om
+ * motparten valt notifiering. Nej om motparten vill godkänna först.
+ */
+async function structureChangeAppliesDirectly(
+  teamId: string,
+  counterpart: string | null,
+): Promise<boolean> {
+  if (!counterpart) return true;
+  const teamSnap = await db.doc(`teams/${teamId}`).get();
+  return scheduleChangeModeFor(teamSnap.data() as any, counterpart) === "notify";
+}
+
+async function createStructureRequest(args: {
+  teamId: string;
+  childId: string;
+  requestedBy: string;
+  addressedTo: string;
+  kind: "cycle" | "switchHour";
+  payload: Record<string, unknown>;
+  summary: string;
+}): Promise<{ pending: true; requestId: string }> {
+  const ref = db.collection(`teams/${args.teamId}/scheduleStructureRequests`).doc();
+  await ref.set({
+    id: ref.id,
+    ...args,
+    status: "pending",
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+
+  const teamSnap = await db.doc(`teams/${args.teamId}`).get();
+  const name =
+    teamSnap.data()?.parentProfiles?.[args.requestedBy]?.displayName ?? "Den andra föräldern";
+  await sendPushToUsers(db, [args.addressedTo], {
+    title: "Förslag på schemaändring",
+    body: `${name} vill ändra: ${args.summary}`,
+  });
+
+  return { pending: true, requestId: ref.id };
+}
+
+/** Verkställer en strukturändring. Delas av direktvägen och godkännandet. */
+async function applyStructureChange(
+  kind: "cycle" | "switchHour",
+  payload: any,
+  uid: string,
+): Promise<void> {
+  if (kind === "switchHour") {
+    await db
+      .doc(`teams/${payload.teamId}/children/${payload.childId}/custodyCycle/main`)
+      .update({ switchHour: payload.switchHour });
+    return;
+  }
+  await setupCustodyCycle(onboardingDb, { ...payload, updatedBy: uid });
+}
+
+export const respondToStructureRequest = onCall(async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) throw new HttpsError("unauthenticated", "Du måste vara inloggad.");
+
+  const { teamId, requestId, decision } = request.data as {
+    teamId?: string;
+    requestId?: string;
+    decision?: "approved" | "declined";
+  };
+  if (!teamId || !requestId || !decision) {
+    throw new HttpsError("invalid-argument", "teamId, requestId och decision krävs.");
+  }
+
+  const ref = db.doc(`teams/${teamId}/scheduleStructureRequests/${requestId}`);
+  const snap = await ref.get();
+  if (!snap.exists) throw new HttpsError("not-found", "Förslaget finns inte.");
+  const req = snap.data() as any;
+
+  if (req.status !== "pending") {
+    throw new HttpsError("failed-precondition", "Förslaget är redan besvarat.");
+  }
+  // Bara den som förslaget riktades till får svara — annars kunde
+  // förslagsställaren godkänna sitt eget förslag.
+  if (req.addressedTo !== uid) {
+    throw new HttpsError("permission-denied", "Det här förslaget är inte ställt till dig.");
+  }
+
+  if (decision === "approved") {
+    await applyStructureChange(req.kind, req.payload, req.requestedBy);
+  }
+
+  await ref.update({
+    status: decision,
+    respondedBy: uid,
+    respondedAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+
+  const teamSnap = await db.doc(`teams/${teamId}`).get();
+  const name = teamSnap.data()?.parentProfiles?.[uid]?.displayName ?? "Den andra föräldern";
+  await sendPushToUsers(db, [req.requestedBy], {
+    title: decision === "approved" ? "Schemaändring godkänd" : "Schemaändring avböjd",
+    body: `${name} ${decision === "approved" ? "godkände" : "avböjde"}: ${req.summary}`,
+  });
+
+  return { ok: true };
+});
+
 export const saveCustodyCycle = onCall(async (request) => {
   const uid = request.auth?.uid;
   if (!uid) throw new HttpsError("unauthenticated", "Du måste vara inloggad.");
@@ -539,8 +686,35 @@ export const saveCustodyCycle = onCall(async (request) => {
     throw new HttpsError("invalid-argument", "cycleStartDate måste vara YYYY-MM-DD.");
   }
 
-  await setupCustodyCycle(onboardingDb, { ...raw, updatedBy: uid });
-  return { ok: true };
+  // Ett schema som sätts upp FÖRSTA gången (onboarding) har ingen
+  // motpart att fråga och inget tidigare schema att skriva över, så det
+  // gäller alltid direkt. Det är bara ändringar av ett befintligt
+  // schema som kan behöva godkännas.
+  const cycleRef = db.doc(`teams/${raw.teamId}/children/${raw.childId}/custodyCycle/main`);
+  const isFirstSetup = !(await cycleRef.get()).exists;
+
+  const counterpart = await counterpartFor(raw.teamId, raw.childId, uid);
+  if (isFirstSetup || (await structureChangeAppliesDirectly(raw.teamId, counterpart))) {
+    await setupCustodyCycle(onboardingDb, { ...raw, updatedBy: uid });
+    if (!isFirstSetup && counterpart) {
+      const name = teamSnap.data()?.parentProfiles?.[uid]?.displayName ?? "Den andra föräldern";
+      await sendPushToUsers(db, [counterpart], {
+        title: "Grundschemat ändrades",
+        body: `${name} gjorde om grundschemat.`,
+      });
+    }
+    return { ok: true, pending: false };
+  }
+
+  return createStructureRequest({
+    teamId: raw.teamId,
+    childId: raw.childId,
+    requestedBy: uid,
+    addressedTo: counterpart!,
+    kind: "cycle",
+    payload: raw as any,
+    summary: "nytt grundschema",
+  });
 });
 
 // ---------------------------------------------------------------------------

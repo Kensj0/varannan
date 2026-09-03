@@ -363,3 +363,16 @@ export async function submitShiftChangeBatch(args: {
     })),
   });
 }
+
+/**
+ * Svarar på ett förslag om ändrat grundschema eller ändrad bytestid.
+ * Godkännande verkställer ändringen på servern.
+ */
+export async function respondToStructureRequest(args: {
+  teamId: string;
+  requestId: string;
+  decision: "approved" | "declined";
+}): Promise<void> {
+  const fn = httpsCallable(functions, "respondToStructureRequest");
+  await fn(args);
+}

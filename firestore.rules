@@ -99,6 +99,14 @@ service cloud.firestore {
         allow read, write: if isTeamMember(teamId);
       }
 
+      // Förslag på ändring av grundschema eller bytestid. Skapas och
+      // besvaras bara via callables — att verkställa ett godkännande
+      // kräver samma validering som när ändringen görs direkt.
+      match /scheduleStructureRequests/{requestId} {
+        allow read: if isTeamMember(teamId);
+        allow write: if false;
+      }
+
       match /shiftRequests/{requestId} {
         allow read: if isTeamMember(teamId);
         allow create: if isTeamMember(teamId)

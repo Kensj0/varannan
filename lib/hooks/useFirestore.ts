@@ -17,6 +17,7 @@ import {
   CustodyCycleDoc,
   DayBalanceDoc,
   ShiftRequestDoc,
+  ScheduleStructureRequestDoc,
   BalanceRequestDoc,
   EventDoc,
   TeamDoc,
@@ -574,4 +575,45 @@ export function useEventsForMonth(
     loading: ranged.loading || recurring.loading,
     error: ranged.error ?? recurring.error,
   };
+}
+
+/**
+ * Väntande förslag på ändring av grundschema eller bytestid för en
+ * kalender. Skilda från shiftRequests, som gäller enstaka dagar.
+ */
+export function useStructureRequests(
+  teamId: string | null | undefined,
+  childId: string | null | undefined
+): ListenerState<ScheduleStructureRequestDoc[]> {
+  const [state, setState] = useState<ListenerState<ScheduleStructureRequestDoc[]>>({
+    data: [],
+    loading: true,
+    error: null,
+  });
+
+  useEffect(() => {
+    if (!teamId || !childId) {
+      setState({ data: [], loading: false, error: null });
+      return;
+    }
+    const q = query(
+      collection(db, `teams/${teamId}/scheduleStructureRequests`),
+      where("status", "==", "pending")
+    );
+    const unsub = onSnapshot(
+      q,
+      (snap) =>
+        setState({
+          data: snap.docs
+            .map((d) => d.data() as ScheduleStructureRequestDoc)
+            .filter((r) => r.childId === childId),
+          loading: false,
+          error: null,
+        }),
+      (error) => setState({ data: [], loading: false, error })
+    );
+    return unsub;
+  }, [teamId, childId]);
+
+  return state;
 }

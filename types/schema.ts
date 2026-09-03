@@ -191,6 +191,33 @@ export function scheduleChangeModeFor(
   );
 }
 
+/**
+ * En föreslagen ändring av schemats STRUKTUR — grundschemat eller
+ * bytestiden — som väntar på den andra förälderns svar.
+ *
+ * Skild från ShiftRequestDoc, som gäller enstaka dagar. En
+ * strukturändring skriver om hela grundmönstret och påverkar alla
+ * framtida dagar, så den behöver samma godkännandesteg som en enskild
+ * dag när motparten valt "förfrågan".
+ */
+export interface ScheduleStructureRequestDoc {
+  id: string;
+  teamId: string;
+  childId: string;
+  requestedBy: string;
+  /** Vem som ska svara. Läget som gäller är den här personens. */
+  addressedTo: string;
+  kind: "cycle" | "switchHour";
+  /** Argumenten till setupCustodyCycle, respektive { switchHour }. */
+  payload: Record<string, unknown>;
+  /** Kort beskrivning att visa i listan, t.ex. "Bytestid 08:00 → 18:00". */
+  summary: string;
+  status: ShiftRequestStatus;
+  respondedBy?: string;
+  respondedAt?: FirestoreTimestamp;
+  createdAt: FirestoreTimestamp;
+}
+
 export const SCHEDULE_CHANGE_MODES: {
   id: ScheduleChangeMode;
   label: string;
