@@ -159,12 +159,8 @@ export default function HomePage() {
   const hasPushToken = (userDoc?.fcmTokens?.length ?? 0) > 0;
   useEffect(() => {
     if (!user || pushPermission !== "granted" || hasPushToken) return;
-    ensurePushTokenRegistered(user.uid).then((ok) => {
-      if (!ok) {
-        setPushError(
-          "Notiser är tillåtna, men appen kunde inte registrera din enhet. Tryck för att försöka igen."
-        );
-      }
+    ensurePushTokenRegistered(user.uid).then((result) => {
+      setPushError(result.ok ? null : result.reason ?? null);
     });
   }, [user, pushPermission, hasPushToken]);
 

@@ -59,7 +59,14 @@ export async function requestAndSavePushToken(uid: string): Promise<PushSetupRes
   }
 
   const { isSupported, getMessaging, getToken } = await import("firebase/messaging");
-  if (!(await isSupported())) return { permission: "unsupported", registered: false };
+  if (!(await isSupported())) {
+    return {
+      permission: "unsupported",
+      registered: false,
+      error:
+        "Webbläsaren stöder inte webbpush. På iPhone måste appen läggas till på hemskärmen — i Safari-fliken fungerar notiser inte.",
+    };
+  }
 
   const permission = await Notification.requestPermission();
   if (permission !== "granted") {
@@ -88,7 +95,7 @@ export async function requestAndSavePushToken(uid: string): Promise<PushSetupRes
       return {
         permission: "granted",
         registered: false,
-        error: "Kunde inte hämta någon notistoken. Försök igen, eller ladda om sidan.",
+        error: "Ingen notistoken kunde hämtas. Ladda om sidan och försök igen.",
       };
     }
 
@@ -111,32 +118,77 @@ export async function requestAndSavePushToken(uid: string): Promise<PushSetupRes
  * "notiser på" i månader utan att någonsin få en enda, eftersom den
  * sparade token slutat gälla och ingenting hämtade en ny.
  */
-export async function ensurePushTokenRegistered(uid: string): Promise<boolean> {
-  if (typeof window === "undefined" || !("Notification" in window)) return false;
-  if (Notification.permission !== "granted") return false;
+export interface PushRegistrationCheck {
+  ok: boolean;
+  /** Läsbar orsak när det INTE gick. Visas rakt av för användaren. */
+  reason?: string;
+}
+
+/**
+ * Ser till att en giltig token finns när lov redan getts.
+ *
+ * Returnerar en LÄSBAR orsak i stället för bara false. Kedjan som måste
+ * hålla — stöd, behörighet, VAPID-nyckel, service worker, getToken,
+ * skrivning till users/{uid} — har sex länkar, och tidigare gav alla
+ * brott samma intetsägande "inte registrerad än". Utan att veta vilken
+ * länk som brast går felet inte att åtgärda.
+ */
+export async function ensurePushTokenRegistered(uid: string): Promise<PushRegistrationCheck> {
+  if (typeof window === "undefined" || !("Notification" in window)) {
+    return { ok: false, reason: "Den här webbläsaren stöder inte notiser." };
+  }
+  if (Notification.permission !== "granted") {
+    return { ok: false, reason: "Notiser är inte tillåtna i webbläsaren." };
+  }
 
   const { isSupported, getMessaging, getToken } = await import("firebase/messaging");
-  if (!(await isSupported())) return false;
+  if (!(await isSupported())) {
+    return {
+      ok: false,
+      reason:
+        "Webbläsaren stöder inte webbpush. På iPhone måste appen läggas till på hemskärmen — i Safari-fliken fungerar notiser inte.",
+    };
+  }
 
   const vapidKey = process.env.NEXT_PUBLIC_FIREBASE_VAPID_KEY;
-  if (!vapidKey) return false;
+  if (!vapidKey) {
+    return {
+      ok: false,
+      reason:
+        "Appen saknar VAPID-nyckeln som krävs för notiser. Det är ett konfigurationsfel i appen (NEXT_PUBLIC_FIREBASE_VAPID_KEY), inte något fel på din enhet.",
+    };
+  }
+
+  let registration: ServiceWorkerRegistration;
+  try {
+    registration = await navigator.serviceWorker.register("/firebase-messaging-sw.js");
+    // getToken misslyckas tyst om service workern inte hunnit bli aktiv.
+    await navigator.serviceWorker.ready;
+  } catch (err: any) {
+    return {
+      ok: false,
+      reason: `Kunde inte starta bakgrundstjänsten för notiser: ${err?.message ?? "okänt fel"}`,
+    };
+  }
 
   try {
-    const registration = await navigator.serviceWorker.register("/firebase-messaging-sw.js");
-    await navigator.serviceWorker.ready;
-    const token = await getToken(messaging_(getMessaging), { vapidKey, serviceWorkerRegistration: registration });
-    if (!token) return false;
+    const token = await getToken(getMessaging(app), {
+      vapidKey,
+      serviceWorkerRegistration: registration,
+    });
+    if (!token) {
+      return { ok: false, reason: "Ingen notistoken kunde hämtas. Ladda om sidan och försök igen." };
+    }
     await updateDoc(doc(db, "users", uid), { fcmTokens: arrayUnion(token) });
-    return true;
-  } catch {
-    return false;
+    return { ok: true };
+  } catch (err: any) {
+    return {
+      ok: false,
+      reason: `Notistoken kunde inte hämtas: ${err?.message ?? "okänt fel"}`,
+    };
   }
 }
 
-/** Liten omväg så getMessaging bara anropas när modulen laddats. */
-function messaging_(getMessaging: (a: typeof app) => any) {
-  return getMessaging(app);
-}
 
 /** Städa bort den här enhetens token, t.ex. vid utloggning. */
 export async function removePushToken(uid: string, token: string): Promise<void> {
