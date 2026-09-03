@@ -1,0 +1,52 @@
+# Netlify-konfiguration.
+#
+# Appen är en ren statisk export (next.config.js: output "export"), så
+# Netlify behöver bara bygga och servera out/. Ingen Next.js-runtime och
+# inget plugin krävs — och det ska förbli så: en Route Handler eller en
+# sida med force-dynamic bryter exporten och därmed den här uppsättningen.
+#
+# Cloud Functions och Firestore-regler ligger kvar hos Firebase och
+# deployas separat via GitHub Actions. Netlify hostar alltså bara
+# frontenden; datalagret flyttar inte.
+
+[build]
+  command = "npm run build"
+  publish = "out"
+
+[build.environment]
+  # Samma major som CI och Cloud Functions, så byggen inte skiljer sig
+  # åt beroende på var de körs.
+  NODE_VERSION = "20"
+
+# --- Cachning -------------------------------------------------------------
+# Samma policy som firebase.json hade: hashade chunkar cachas för alltid,
+# allt som kan ändras utan namnbyte cachas inte alls.
+
+[[headers]]
+  for = "/_next/static/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
+
+[[headers]]
+  for = "/*.html"
+  [headers.values]
+    Cache-Control = "no-cache, must-revalidate"
+
+[[headers]]
+  for = "/"
+  [headers.values]
+    Cache-Control = "no-cache, must-revalidate"
+
+# Service workern MÅSTE vara ocachad. Cachas den ligger en gammal
+# Firebase-konfiguration kvar i webbläsaren och notiser slutar fungera
+# tyst, utan att något syns i appen.
+[[headers]]
+  for = "/firebase-messaging-sw.js"
+  [headers.values]
+    Cache-Control = "no-cache, must-revalidate"
+
+[[headers]]
+  for = "/manifest.webmanifest"
+  [headers.values]
+    Cache-Control = "no-cache, must-revalidate"
+    Content-Type = "application/manifest+json"
