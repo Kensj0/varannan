@@ -15,6 +15,7 @@ import {
   useDayBalance,
   useApprovedShiftRequests,
   usePendingShiftRequests,
+  useStructureRequests,
   usePendingBalanceRequests,
   useAllShiftRequests,
   useEventsForMonth,
@@ -29,6 +30,7 @@ import {
   createEvent,
   respondToShiftRequest,
   respondToShiftRequestBatch,
+  respondToStructureRequest,
   submitShiftChange,
   submitShiftChangeBatch,
   setScheduleChangeMode,
@@ -66,6 +68,7 @@ import SettingsView from "../components/SettingsView";
 import CustodyCycleBuilder from "../components/onboarding/CustodyCycleBuilder";
 import BalanceCard from "../components/BalanceCard";
 import PendingShiftRequests from "../components/PendingShiftRequests";
+import PendingStructureRequests from "../components/PendingStructureRequests";
 import ChatView from "../components/ChatView";
 import PackListView from "../components/PackListView";
 import NotesView from "../components/NotesView";
@@ -244,6 +247,7 @@ export default function HomePage() {
   const { data: balance } = useDayBalance(teamId, activeChildId);
   const { data: approvedShifts } = useApprovedShiftRequests(teamId, activeChildId);
   const { data: pendingShifts } = usePendingShiftRequests(teamId, activeChildId);
+  const { data: structureRequests } = useStructureRequests(teamId, activeChildId);
   const { data: pendingBalanceRequests } = usePendingBalanceRequests(teamId, activeChildId);
   const { data: events } = useEventsForMonth(teamId, monthDate);
   const { data: allShiftRequests } = useAllShiftRequests(teamId);
@@ -717,6 +721,15 @@ export default function HomePage() {
                     />
                   </div>
                 )}
+
+                <PendingStructureRequests
+                  requests={structureRequests}
+                  currentUserId={user!.uid}
+                  otherParentName={parentNames[otherParentId] ?? "Andra föräldern"}
+                  onRespond={async (requestId, decision) => {
+                    await respondToStructureRequest({ teamId: teamId!, requestId, decision });
+                  }}
+                />
 
                 {pendingShifts.length > 0 && (
                   <div className="mb-4">
