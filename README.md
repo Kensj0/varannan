@@ -111,12 +111,14 @@ Regeln bakom uppdelningen: **klienten får aldrig skriva något den skulle
 kunna tjäna på att ljuga om.** En klient som kunde skriva sin egen
 ställning kunde nolla sin skuld.
 
-**De user-vända callables ligger i `europe-north1`**, samma region som
-Firestore — nästan alla användare är i Sverige, och de anropen gör flera
-db-läsningar i följd, så samlokalisering tar bort både Atlanten-hoppet
-till klienten och hoppen mellan funktion och databas. `setGlobalOptions`
-i `functions/src/index.ts` sätter regionen; `lib/firebase.ts` måste
-matcha (`getFunctions(app, "europe-north1")`).
+**De user-vända callables ligger i `europe-north1`** (Hamina). Firestore
+ligger i `europe-north2` (Stockholm), som inte stödjer Cloud Functions —
+`europe-north1` är närmaste region som gör det, ~1 ms längre bort. Nästan
+alla användare är i Sverige, och anropen gör flera db-läsningar i följd:
+hoppet funktion→databas går från ~110 ms (Iowa→Stockholm) till ~15 ms,
+och Atlanten-hoppet till klienten försvinner. `setGlobalOptions` i
+`functions/src/index.ts` sätter regionen; `lib/firebase.ts` måste matcha
+(`getFunctions(app, "europe-north1")`).
 
 Tre saker ligger kvar i `us-central1`, var och en med motivering i koden:
 

@@ -27,11 +27,14 @@ import { onDocumentWritten, onDocumentCreated } from "firebase-functions/v2/fire
 // VARJE funktion i filen, trots att bara exportEventToGoogleCalendar
 // använder den.
 
-// Default-region: europe-north1, samma som Firestore. Nästan alla
-// användare är i Sverige, och de callables de faktiskt väntar på
-// (godkänn byte, spara schema, bjud in) gör flera Firestore-läsningar
-// i följd — med funktionen samlokaliserad med databasen försvinner
-// både Atlanten-hoppet till klienten OCH hoppen mellan funktion och db.
+// Default-region: europe-north1 (Hamina). Firestore ligger i
+// europe-north2 (Stockholm), som INTE stödjer Cloud Functions v2 —
+// europe-north1 är den närmaste region som gör det (~1 ms extra mot
+// Stockholm). Nästan alla användare är i Sverige, och de callables de
+// faktiskt väntar på (godkänn byte, spara schema, bjud in) gör flera
+// Firestore-läsningar i följd: hoppet funktion→db går från ~110 ms
+// (Iowa→Stockholm) till ~15 ms, plus att Atlanten-hoppet till klienten
+// försvinner.
 //
 // UNDANTAG som pinnas till us-central1 nedan, med motivering vid varje:
 //   - Firestore-triggers (Eventarc stödde inte europe-north* när de
