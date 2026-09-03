@@ -43,7 +43,16 @@ function timeStringInTimeZone(instant: Date, timeZone: string): string {
 }
 
 export const sendHandoffReminders = onSchedule(
-  { schedule: "every day 08:00", timeZone: "Europe/Stockholm" },
+  {
+    schedule: "every day 08:00",
+    timeZone: "Europe/Stockholm",
+    // Pinnad till us-central1, till skillnad från övriga callables som
+    // ligger i europe-north1: Cloud Scheduler finns INTE i europe-north1
+    // ("Location 'europe-north1' is not a valid location"), och utan
+    // schemajobb triggas funktionen aldrig. Det här är ett bakgrundsjobb
+    // en gång om dygnet — ingen väntar på svaret, så regionen är likgiltig.
+    region: "us-central1",
+  },
   async () => {
     const db = admin.firestore();
     const teamsSnap = await db.collection("teams").get();
