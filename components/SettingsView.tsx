@@ -12,6 +12,9 @@ interface SettingsViewProps {
   onSignOut: () => Promise<void>;
   pushPermission: PushPermission;
   onEnablePush: () => Promise<void> | void;
+  /** Sant först när en FCM-token faktiskt sparats för enheten. */
+  pushRegistered: boolean;
+  pushError: string | null;
   reminderPrefs: { dayBefore: boolean; sameDay: boolean };
   onUpdateReminderPrefs: (prefs: { dayBefore: boolean; sameDay: boolean }) => void;
   hasPartner: boolean;
@@ -33,6 +36,8 @@ export default function SettingsView({
   onSignOut,
   pushPermission,
   onEnablePush,
+  pushRegistered,
+  pushError,
   reminderPrefs,
   onUpdateReminderPrefs,
   hasPartner,
@@ -147,10 +152,29 @@ export default function SettingsView({
       <div className="rounded-2xl bg-white p-4 shadow-sm">
         <p className="text-xs font-semibold uppercase tracking-wide text-stone-400">Notiser</p>
 
-        {pushPermission === "granted" && (
+        {/* "Lov givet" och "fungerar" är två olika saker: utan en
+            registrerad token kommer inga notiser fram, hur grönt det än
+            ser ut. Visa det ärligt i stället för att påstå att allt är
+            igång. */}
+        {pushPermission === "granted" && pushRegistered && !pushError && (
           <p className="mt-2 text-[13px] text-emerald-600">
             Notiser är på för byten och inbjudningar.
           </p>
+        )}
+
+        {pushPermission === "granted" && (!pushRegistered || pushError) && (
+          <>
+            <p className="mt-2 text-[13px] leading-snug text-amber-700">
+              {pushError ??
+                "Notiser är tillåtna, men den här enheten är inte registrerad än — så inget kommer fram."}
+            </p>
+            <button
+              onClick={() => onEnablePush()}
+              className="mt-3 w-full rounded-lg bg-amber-50 px-3 py-2 text-sm font-medium text-amber-800 hover:bg-amber-100"
+            >
+              Försök igen
+            </button>
+          </>
         )}
 
         {pushPermission === "default" && (

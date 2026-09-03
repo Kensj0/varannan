@@ -13,7 +13,7 @@ import {
   sendPasswordResetEmail,
 } from "firebase/auth";
 import { auth, db } from "../firebase";
-import { doc, updateDoc } from "firebase/firestore";
+import { doc, updateDoc, onSnapshot } from "firebase/firestore";
 import { ensureUserDocument } from "./ensureUserDocument";
 import { UserDoc } from "../../types/schema";
 
@@ -40,17 +40,46 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    // Lyssnare på users/{uid}, inte en engångshämtning. Dokumentet
+    // ändras även utanför den här fliken — påminnelseinställningar,
+    // fcmTokens, teamId från en Cloud Function — och med en engångs-
+    // hämtning låg UI:t kvar på gamla värden tills sidan laddades om.
+    // Det gjorde t.ex. att växlarna för påminnelser såg helt döda ut:
+    // skrivningen gick igenom, men ingenting i vyn ändrades.
+    let unsubUserDoc: (() => void) | undefined;
+
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       setUser(firebaseUser);
-      if (firebaseUser) {
-        const doc = await ensureUserDocument(firebaseUser);
-        setUserDoc(doc);
-      } else {
+      unsubUserDoc?.();
+      unsubUserDoc = undefined;
+
+      if (!firebaseUser) {
         setUserDoc(null);
+        setLoading(false);
+        return;
       }
+
+      // Skapar dokumentet om det saknas, så lyssnaren har något att läsa.
+      const initial = await ensureUserDocument(firebaseUser);
+      setUserDoc(initial);
       setLoading(false);
+
+      unsubUserDoc = onSnapshot(
+        doc(db, "users", firebaseUser.uid),
+        (snap) => {
+          if (snap.exists()) setUserDoc(snap.data() as UserDoc);
+        },
+        (error) => {
+          // eslint-disable-next-line no-console
+          console.error("[auth] kunde inte lyssna på users-dokumentet:", error);
+        }
+      );
     });
-    return unsubscribe;
+
+    return () => {
+      unsubUserDoc?.();
+      unsubscribe();
+    };
   }, []);
 
   async function refreshUserDoc() {

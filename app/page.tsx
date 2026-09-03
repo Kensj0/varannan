@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "../lib/auth/AuthProvider";
 import {
   requestAndSavePushToken,
+  ensurePushTokenRegistered,
   getPushPermissionState,
   listenForForegroundMessages,
   updateHandoffReminderPrefs,
@@ -130,6 +131,8 @@ export default function HomePage() {
     "unsupported" | "default" | "granted" | "denied" | null
   >(null);
   const [pushToast, setPushToast] = useState<{ title: string; body: string } | null>(null);
+  /** Fel efter att lov getts — t.ex. saknad VAPID-nyckel. */
+  const [pushError, setPushError] = useState<string | null>(null);
 
   useEffect(() => {
     getPushPermissionState().then(setPushPermission);
@@ -146,8 +149,24 @@ export default function HomePage() {
   async function enablePushNotifications() {
     if (!user) return;
     const result = await requestAndSavePushToken(user.uid);
-    setPushPermission(result);
+    setPushPermission(result.permission);
+    setPushError(result.error ?? null);
   }
+
+  // Lov kan vara givet utan att någon giltig token finns: nyckeln kan ha
+  // saknats vid första försöket, eller så har token roterat sedan dess.
+  // Utan det här stod det "notiser är på" medan ingenting kom fram.
+  const hasPushToken = (userDoc?.fcmTokens?.length ?? 0) > 0;
+  useEffect(() => {
+    if (!user || pushPermission !== "granted" || hasPushToken) return;
+    ensurePushTokenRegistered(user.uid).then((ok) => {
+      if (!ok) {
+        setPushError(
+          "Notiser är tillåtna, men appen kunde inte registrera din enhet. Tryck för att försöka igen."
+        );
+      }
+    });
+  }, [user, pushPermission, hasPushToken]);
 
   // Påminnelser om överlämning (dagen innan / samma dag) — sparas per
   // användare på users/{uid}, läses av den schemalagda Cloud Functionen.
@@ -684,6 +703,8 @@ export default function HomePage() {
                 onSignOut={signOutUser}
                 pushPermission={pushPermission}
                 onEnablePush={enablePushNotifications}
+                pushRegistered={hasPushToken}
+                pushError={pushError}
                 hasPartner={hasPartner}
                 teamName={team?.name}
                 onCreateInvite={() => createInvite(teamId!)}
