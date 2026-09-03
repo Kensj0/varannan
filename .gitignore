@@ -5,6 +5,8 @@ out/
 .env.local
 functions/lib/
 .firebase/
+firestore-debug.log
+*-debug.log
 *.tsbuildinfo
 public/firebase-messaging-sw.js
 
