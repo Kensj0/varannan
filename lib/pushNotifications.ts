@@ -35,29 +35,107 @@ export async function getPushPermissionState(): Promise<PushPermissionState> {
  * användarinitierad händelse (t.ex. en knapptryckning) — annars
  * blockerar vissa webbläsare behörighetsdialogen.
  */
-export async function requestAndSavePushToken(uid: string): Promise<PushPermissionState> {
-  if (typeof window === "undefined" || !("Notification" in window)) return "unsupported";
+export interface PushSetupResult {
+  permission: PushPermissionState;
+  /** Sant bara när en token faktiskt hämtats OCH sparats på användaren. */
+  registered: boolean;
+  /** Ifylld när något gick fel efter att lov getts. Visas för användaren. */
+  error?: string;
+}
+
+/**
+ * Frågar om lov, registrerar service workern och sparar en FCM-token.
+ *
+ * Returnerar `registered` separat från `permission`: att webbläsaren
+ * gett lov betyder INTE att notiser fungerar. Utan giltig VAPID-nyckel,
+ * eller om getToken misslyckas, finns ingen token att skicka till — och
+ * då kommer inga notiser fram trots att behörigheten ser rätt ut.
+ * Tidigare rapporterades bara behörigheten, vilket gjorde att appen
+ * påstod att notiser var på när de i själva verket var trasiga.
+ */
+export async function requestAndSavePushToken(uid: string): Promise<PushSetupResult> {
+  if (typeof window === "undefined" || !("Notification" in window)) {
+    return { permission: "unsupported", registered: false };
+  }
 
   const { isSupported, getMessaging, getToken } = await import("firebase/messaging");
-  if (!(await isSupported())) return "unsupported";
+  if (!(await isSupported())) return { permission: "unsupported", registered: false };
 
   const permission = await Notification.requestPermission();
-  if (permission !== "granted") return permission as PushPermissionState;
+  if (permission !== "granted") {
+    return { permission: permission as PushPermissionState, registered: false };
+  }
 
-  const registration = await navigator.serviceWorker.register("/firebase-messaging-sw.js");
-  const messaging = getMessaging(app);
   const vapidKey = process.env.NEXT_PUBLIC_FIREBASE_VAPID_KEY;
   if (!vapidKey) {
-    // eslint-disable-next-line no-console
-    console.error("NEXT_PUBLIC_FIREBASE_VAPID_KEY saknas — kan inte hämta push-token.");
-    return "denied";
+    return {
+      permission: "granted",
+      registered: false,
+      error:
+        "Appen saknar nyckeln som krävs för notiser (VAPID). Det är ett konfigurationsfel i appen, inte i din telefon.",
+    };
   }
 
-  const token = await getToken(messaging, { vapidKey, serviceWorkerRegistration: registration });
-  if (token) {
+  try {
+    const registration = await navigator.serviceWorker.register("/firebase-messaging-sw.js");
+    // Vänta in service workern: getToken misslyckas tyst om den ännu
+    // inte är aktiv, vilket är vanligt precis efter första laddningen.
+    await navigator.serviceWorker.ready;
+
+    const messaging = getMessaging(app);
+    const token = await getToken(messaging, { vapidKey, serviceWorkerRegistration: registration });
+    if (!token) {
+      return {
+        permission: "granted",
+        registered: false,
+        error: "Kunde inte hämta någon notistoken. Försök igen, eller ladda om sidan.",
+      };
+    }
+
     await updateDoc(doc(db, "users", uid), { fcmTokens: arrayUnion(token) });
+    return { permission: "granted", registered: true };
+  } catch (err: any) {
+    return {
+      permission: "granted",
+      registered: false,
+      error: err?.message ?? "Något gick fel när notiser skulle aktiveras.",
+    };
   }
-  return "granted";
+}
+
+/**
+ * Ser till att en giltig token finns när lov redan getts.
+ *
+ * FCM-tokens roteras och kan bli ogiltiga (ny webbläsarinstallation,
+ * rensad lagring, utgången token). Utan det här kunde en användare ha
+ * "notiser på" i månader utan att någonsin få en enda, eftersom den
+ * sparade token slutat gälla och ingenting hämtade en ny.
+ */
+export async function ensurePushTokenRegistered(uid: string): Promise<boolean> {
+  if (typeof window === "undefined" || !("Notification" in window)) return false;
+  if (Notification.permission !== "granted") return false;
+
+  const { isSupported, getMessaging, getToken } = await import("firebase/messaging");
+  if (!(await isSupported())) return false;
+
+  const vapidKey = process.env.NEXT_PUBLIC_FIREBASE_VAPID_KEY;
+  if (!vapidKey) return false;
+
+  try {
+    const registration = await navigator.serviceWorker.register("/firebase-messaging-sw.js");
+    await navigator.serviceWorker.ready;
+    const token = await getToken(messaging_(getMessaging), { vapidKey, serviceWorkerRegistration: registration });
+    if (!token) return false;
+    await updateDoc(doc(db, "users", uid), { fcmTokens: arrayUnion(token) });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Liten omväg så getMessaging bara anropas när modulen laddats. */
+function messaging_(getMessaging: (a: typeof app) => any) {
+  return getMessaging(app);
 }
 
 /** Städa bort den här enhetens token, t.ex. vid utloggning. */
