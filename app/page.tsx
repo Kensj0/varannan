@@ -566,6 +566,16 @@ export default function HomePage() {
 
   const otherParentId = parents.find((p) => p.id !== balance?.referenceParentId)?.id ?? parents[1].id;
 
+  // Vem som avgör om en dagändring gäller direkt eller blir en förfrågan:
+  // MOTPARTEN till den som gör ändringen — den som annars skulle godkänna.
+  // Det är alltid "den andra än jag", oavsett vem ställningen är signerad
+  // mot. Skilt från otherParentId ovan ("andra sidan av ställningen"),
+  // som bara sammanfaller med det här när referensföräldern gör ändringen.
+  // applyScheduleChangeDirect på servern gör exakt samma val (id !== uid);
+  // matchar de inte får klienten 400 failed-precondition.
+  const counterpartId =
+    parents.find((p) => p.id !== user?.uid && p.id !== PENDING_PARTNER_ID)?.id ?? otherParentId;
+
   // Barnväljaren visas bara när det faktiskt finns flera barn — annars
   // äter den höjd i onödan. Övriga rubriker är borttagna: månad och
   // barnets namn står redan i kalenderns egen header.
@@ -851,7 +861,7 @@ export default function HomePage() {
                       takingOverParentId,
                       // Bytet sker vid schemats bytestid, inte midnatt.
                       startAt: atSwitchHour(date, cycle.switchHour),
-                      mode: scheduleChangeModeFor(team, otherParentId),
+                      mode: scheduleChangeModeFor(team, counterpartId),
                     });
                   }}
                   onProposeShiftBatch={async (changes) => {
@@ -861,7 +871,7 @@ export default function HomePage() {
                       requestedBy: user!.uid,
                       switchHour: cycle.switchHour,
                       changes,
-                      mode: scheduleChangeModeFor(team, otherParentId),
+                      mode: scheduleChangeModeFor(team, counterpartId),
                     });
                   }}
                   pushPermission={pushPermission}
