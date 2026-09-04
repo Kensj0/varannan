@@ -253,9 +253,11 @@ export const repairPendingPartner = onCall(async (request) => {
  */
 /**
  * Godkända avvikelser som överlappar en period. Två motsatta godkännanden
- * för samma dag gör schemat tvetydigt — kalendern kan bara visa en av dem,
- * och vilken blev tidigare godtyckligt. Därför avvisas ett godkännande som
- * krockar med en redan godkänd avvikelse.
+ * för samma dag gör schemat tvetydigt — kalendern kan bara visa en av dem.
+ * En NY godkänd ändring som HELT täcker en äldre ersätter den (se
+ * splitContainedOverlap + cancelSupersededInTx); bara en avvikelse som
+ * sticker ut UTANFÖR den nya perioden går inte att ersätta rent och
+ * avvisas fortfarande.
  */
 async function findOverlappingApproved(
   teamId: string,
@@ -281,6 +283,72 @@ async function findOverlappingApproved(
     const otherEnd = e ?? Infinity;
     return s < overlapEnd && otherEnd > startMs;
   });
+}
+
+/**
+ * Delar upp krockande godkända avvikelser i två högar:
+ *  - `contained`: ligger HELT inom [startMs, endMs) — ersätts av den nya
+ *    ändringen (avbryts + balans backas).
+ *  - `partial`: sticker ut utanför perioden — går inte att dela, så det
+ *    är fortfarande en hård krock som anroparen får avvisa.
+ * En öppen befintlig period (utan endAt) räknas som contained bara om
+ * den nya perioden också är öppen (endMs === null), annars partial.
+ */
+function splitContainedOverlap(
+  clash: admin.firestore.QueryDocumentSnapshot[],
+  startMs: number,
+  endMs: number | null
+): { contained: admin.firestore.QueryDocumentSnapshot[]; partial: admin.firestore.QueryDocumentSnapshot[] } {
+  const newEnd = endMs ?? Infinity;
+  const contained: admin.firestore.QueryDocumentSnapshot[] = [];
+  const partial: admin.firestore.QueryDocumentSnapshot[] = [];
+  for (const d of clash) {
+    const data = d.data();
+    const s = (data.startAt?.seconds ?? 0) * 1000;
+    const e = data.endAt ? data.endAt.seconds * 1000 : Infinity;
+    if (s >= startMs && e <= newEnd) contained.push(d);
+    else partial.push(d);
+  }
+  return { contained, partial };
+}
+
+/**
+ * Avbryter godkända avvikelser som ersätts av en nyare godkänd ändring och
+ * backar deras balans-delta — samma mekanik som clearApprovedShiftsFrom,
+ * fast för en explicit lista och inuti en pågående transaktion. Returnerar
+ * summan av balanceDeltaDays som ska dras av från balanceDays (0 om inget
+ * ersattes). Skriver en historikpost för reverseringen om den inte är noll.
+ */
+function cancelSupersededInTx(
+  tx: admin.firestore.Transaction,
+  teamId: string,
+  childId: string,
+  superseded: admin.firestore.QueryDocumentSnapshot[],
+  uid: string,
+  balanceDaysBeforeReversal: number
+): number {
+  let reversedDelta = 0;
+  for (const d of superseded) {
+    reversedDelta += (d.data().balanceDeltaDays as number | undefined) ?? 0;
+    tx.update(d.ref, {
+      status: "cancelled",
+      cancelledBy: uid,
+      cancelledAt: admin.firestore.FieldValue.serverTimestamp(),
+      cancelledReason: "superseded_by_newer_change",
+    });
+  }
+  if (reversedDelta !== 0) {
+    const historyRef = db.collection(`teams/${teamId}/children/${childId}/dayBalanceHistory`).doc();
+    tx.set(historyRef, {
+      id: historyRef.id,
+      childId,
+      shiftRequestId: "",
+      deltaDays: -reversedDelta,
+      balanceAfter: balanceDaysBeforeReversal - reversedDelta,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+  }
+  return reversedDelta;
 }
 
 export const clearApprovedShiftsFrom = onCall(async (request) => {
@@ -778,6 +846,14 @@ export const approveShiftRequest = onCall(async (request) => {
           [shiftRequestId]
         )
       : [];
+  // En äldre godkänd avvikelse som HELT täcks av den här förfrågan ersätts
+  // (avbryts) i stället för att blockera godkännandet. En som sticker ut
+  // utanför perioden går inte att dela och är kvar som hård krock.
+  const { contained: supersededApproved, partial: partialOverlap } = splitContainedOverlap(
+    overlapping,
+    preData?.startAt ? preData.startAt.seconds * 1000 : 0,
+    preData?.endAt ? preData.endAt.seconds * 1000 : null
+  );
 
   await db.runTransaction(async (tx) => {
     const [teamSnap, requestSnap] = await Promise.all([tx.get(teamRef), tx.get(requestRef)]);
@@ -801,10 +877,10 @@ export const approveShiftRequest = onCall(async (request) => {
     notifyRequestedBy = shiftRequest.requestedBy;
     responderName = teamSnap.data()?.parentProfiles?.[uid]?.displayName ?? responderName;
 
-    if (decision === "approved" && overlapping.length > 0) {
+    if (decision === "approved" && partialOverlap.length > 0) {
       throw new HttpsError(
         "failed-precondition",
-        "Perioden krockar med en ändring som redan är godkänd. Avböj den ena först."
+        "Perioden överlappar bara delvis en redan godkänd ändring och går inte att ersätta automatiskt. Avböj den ena först."
       );
     }
 
@@ -824,13 +900,28 @@ export const approveShiftRequest = onCall(async (request) => {
     const cycle = cycleSnap.data() as CustodyCycleDoc;
     const currentBalance = balanceSnap.data() as DayBalanceDoc;
 
+    // Avbryt äldre godkända avvikelser som helt täcks av den här och backa
+    // deras balans-delta, sedan appliceras den nya ovanpå.
+    let baseBalance = currentBalance;
+    if (supersededApproved.length > 0) {
+      const reversed = cancelSupersededInTx(
+        tx,
+        teamId,
+        childId,
+        supersededApproved,
+        uid,
+        currentBalance.balanceDays
+      );
+      baseBalance = { ...currentBalance, balanceDays: currentBalance.balanceDays - reversed };
+    }
+
     const approvedRequest: ShiftRequestDoc = {
       ...shiftRequest,
       status: "approved",
       respondedBy: uid,
     };
 
-    const { updatedBalance, deltaDays } = applyApprovedShiftToBalance(currentBalance, cycle, approvedRequest);
+    const { updatedBalance, deltaDays } = applyApprovedShiftToBalance(baseBalance, cycle, approvedRequest);
 
     tx.update(requestRef, {
       status: "approved",
@@ -897,8 +988,10 @@ export const approveShiftRequestBatch = onCall(async (request) => {
   let dayCount = 0;
 
   // Överlappskoll före transaktionen, av samma skäl som i
-  // approveShiftRequest: en batch som krockar med redan godkända dagar
-  // skulle göra schemat tvetydigt.
+  // approveShiftRequest. Äldre godkända avvikelser som HELT täcks av en dag
+  // i batchen ersätts (avbryts); bara en som sticker ut utanför är kvar som
+  // hård krock.
+  const supersededById = new Map<string, admin.firestore.QueryDocumentSnapshot>();
   if (decision === "approved") {
     const preBatch = await db
       .collection(`teams/${teamId}/shiftRequests`)
@@ -907,21 +1000,20 @@ export const approveShiftRequestBatch = onCall(async (request) => {
     const batchIds = preBatch.docs.map((d) => d.id);
     for (const d of preBatch.docs) {
       const data = d.data() as ShiftRequestDoc;
-      const clash = await findOverlappingApproved(
-        teamId,
-        childId,
-        data.startAt.seconds * 1000,
-        data.endAt ? data.endAt.seconds * 1000 : null,
-        batchIds
-      );
-      if (clash.length > 0) {
+      const startMs = data.startAt.seconds * 1000;
+      const endMs = data.endAt ? data.endAt.seconds * 1000 : null;
+      const clash = await findOverlappingApproved(teamId, childId, startMs, endMs, batchIds);
+      const { contained, partial } = splitContainedOverlap(clash, startMs, endMs);
+      if (partial.length > 0) {
         throw new HttpsError(
           "failed-precondition",
-          "En eller flera dagar krockar med en ändring som redan är godkänd. Avböj den ena först."
+          "En eller flera dagar överlappar bara delvis en redan godkänd ändring och går inte att ersätta automatiskt. Avböj den ena först."
         );
       }
+      for (const c of contained) supersededById.set(c.id, c);
     }
   }
+  const superseded = [...supersededById.values()];
 
   await db.runTransaction(async (tx) => {
     const teamSnap = await tx.get(teamRef);
@@ -969,6 +1061,13 @@ export const approveShiftRequestBatch = onCall(async (request) => {
     const cycle = cycleSnap.data() as CustodyCycleDoc;
     let runningBalance = balanceSnap.data() as DayBalanceDoc;
     let totalDelta = 0;
+
+    // Avbryt äldre godkända avvikelser som helt täcks av den här batchen och
+    // backa deras balans-delta innan batchens dagar appliceras ovanpå.
+    if (superseded.length > 0) {
+      const reversed = cancelSupersededInTx(tx, teamId, childId, superseded, uid, runningBalance.balanceDays);
+      runningBalance = { ...runningBalance, balanceDays: runningBalance.balanceDays - reversed };
+    }
 
     // Applicera varje förfrågan i tur och ordning — nästa förfrågans
     // avvikelse räknas mot ställningen EFTER föregåendes justering.
@@ -1584,17 +1683,24 @@ export const applyScheduleChangeDirect = onCall(async (request) => {
     return { startMs, endMs, takingOverParentId: c.takingOverParentId };
   });
 
-  // Samma överlappskoll som vid godkännande — en direktändring ovanpå en
-  // redan godkänd avvikelse skulle göra schemat tvetydigt.
+  // En direktändring ovanpå en redan godkänd avvikelse skulle göra schemat
+  // tvetydigt. Men om den nya perioden HELT täcker den gamla ersätter den
+  // gamla i stället för att vägra — annars fastnar man på dagar man själv
+  // ändrat, utan väg tillbaka. Bara en gammal avvikelse som sticker ut
+  // utanför den nya perioden är kvar som hård krock.
+  const supersededById = new Map<string, admin.firestore.QueryDocumentSnapshot>();
   for (const p of parsed) {
     const clash = await findOverlappingApproved(teamId, childId, p.startMs, p.endMs, []);
-    if (clash.length > 0) {
+    const { contained, partial } = splitContainedOverlap(clash, p.startMs, p.endMs);
+    if (partial.length > 0) {
       throw new HttpsError(
         "failed-precondition",
-        "Perioden krockar med en ändring som redan är godkänd. Ta bort den först."
+        "Perioden överlappar bara delvis en redan godkänd ändring och går inte att ersätta automatiskt. Ta bort den först."
       );
     }
+    for (const d of contained) supersededById.set(d.id, d);
   }
+  const superseded = [...supersededById.values()];
 
   // Flera perioder som skickas ihop hör ihop i UI:t, precis som en batch
   // av förslag gör.
@@ -1607,6 +1713,13 @@ export const applyScheduleChangeDirect = onCall(async (request) => {
 
     const cycle = cycleSnap.data() as CustodyCycleDoc;
     let runningBalance = balanceSnap.data() as DayBalanceDoc;
+
+    // Ersätt gamla godkända avvikelser som helt täcks av den nya ändringen:
+    // avbryt dem och backa deras balans-delta innan den nya appliceras.
+    if (superseded.length > 0) {
+      const reversed = cancelSupersededInTx(tx, teamId, childId, superseded, uid, runningBalance.balanceDays);
+      runningBalance = { ...runningBalance, balanceDays: runningBalance.balanceDays - reversed };
+    }
 
     for (const p of parsed) {
       const ref = db.collection(`teams/${teamId}/shiftRequests`).doc();
