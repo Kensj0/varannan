@@ -214,8 +214,11 @@ export async function proposeShiftRequestBatch(args: {
   });
   await Promise.all(writes);
 
+  // childId MÅSTE med, samma skäl som i proposeShiftRequest: chatten är
+  // kalenderbunden, så utan det hamnar batchens chattpost på fel barns kalender.
   await sendChatMessage({
     teamId: args.teamId,
+    childId: args.childId,
     senderId: args.requestedBy,
     text: args.note ?? `Föreslår ändring av ${sorted.length} dag${sorted.length === 1 ? "" : "ar"}.`,
     linkedShiftRequestId: batchId,
