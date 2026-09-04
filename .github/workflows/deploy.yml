@@ -75,7 +75,11 @@ jobs:
         run: echo '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}' > /tmp/gcp-key.json
 
       - name: Deploya
-        run: firebase deploy --only ${{ github.event.inputs.target }} --non-interactive --project varannan-familj
+        # --force krävs för att CLI:t ska få radera funktioner som finns
+        # kvar i produktion men inte i lokal källkod (t.ex. gamla
+        # regionversioner efter en regionflytt) — annars avbryter den
+        # icke-interaktivt istället för att fråga.
+        run: firebase deploy --only ${{ github.event.inputs.target }} --non-interactive --force --project varannan-familj
         env:
           GOOGLE_APPLICATION_CREDENTIALS: /tmp/gcp-key.json
           FIREBASE_SUPPRESS_REGION_WARNING: "true"
