@@ -854,13 +854,23 @@ export default function HomePage() {
                     });
                   }}
                   onProposeShift={async (date, takingOverParentId) => {
+                    // Bytet sker vid schemats bytestid, inte midnatt.
+                    const startAt = atSwitchHour(date, cycle.switchHour);
                     await submitShiftChange({
                       teamId: teamId!,
                       childId: activeChild.id,
                       requestedBy: user!.uid,
                       takingOverParentId,
-                      // Bytet sker vid schemats bytestid, inte midnatt.
-                      startAt: atSwitchHour(date, cycle.switchHour),
+                      startAt,
+                      // Enkeldagsändringar sparades tidigare UTAN endAt.
+                      // findOverlappingApproved (functions/src/index.ts) tolkar
+                      // saknat endAt som Infinity, så EN godkänd ändring
+                      // blockerade varje senare datum för barnet. Bind den
+                      // uttryckligen till nästa ordinarie byte — samma innebörd
+                      // som dayBalance.ts redan antar (getNextOrdinaryHandoff)
+                      // och som schema.ts dokumenterar — så lagrad data betyder
+                      // samma sak för kalendern OCH för överlappskollen.
+                      endAt: getNextOrdinaryHandoff(cycle, startAt),
                       mode: scheduleChangeModeFor(team, counterpartId),
                     });
                   }}
