@@ -3,6 +3,10 @@ node_modules/
 .next/
 out/
 .env.local
+
+# Google service-account-nycklar — får ALDRIG committas
+*-firebase-adminsdk-*.json
+gcp-key.json
 functions/lib/
 .firebase/
 firestore-debug.log
