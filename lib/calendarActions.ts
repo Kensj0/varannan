@@ -90,8 +90,12 @@ export async function proposeShiftRequest(args: {
 
   // Lägg in förfrågan i chatten också, så båda föräldrarna har hela
   // historiken över förfrågningar och godkännanden på ett ställe.
+  // childId MÅSTE med: chatten är kalenderbunden sedan delningen flyttades
+  // ner på barnet, så utan det hamnar varje förfrågans chattpost på den
+  // FÖRSTA kalendern i stället för på rätt barn.
   await sendChatMessage({
     teamId: args.teamId,
+    childId: args.childId,
     senderId: args.requestedBy,
     text: args.note ?? "",
     linkedShiftRequestId: ref.id,
@@ -302,6 +306,13 @@ async function applyScheduleChangeDirect(args: {
 /**
  * Enda ingången för "ändra en dag" från kalendern. Väljer väg utifrån
  * teamets läge, så att anropande UI slipper känna till skillnaden.
+ *
+ * `endAt` är OBLIGATORISKT: en enkeldagsändring utan slut lagras som en
+ * öppen period, och findOverlappingApproved på servern läser det som
+ * "pågår i all evighet" — då blockerar en enda godkänd ändring alla
+ * framtida datum. Anroparen (app/page.tsx) sätter det till nästa
+ * ordinarie byte via getNextOrdinaryHandoff. Gäller BÅDA vägarna nedan
+ * (applyScheduleChangeDirect och proposeShiftRequest).
  */
 export async function submitShiftChange(args: {
   teamId: string;
@@ -309,7 +320,7 @@ export async function submitShiftChange(args: {
   requestedBy: string;
   takingOverParentId: string;
   startAt: Date;
-  endAt?: Date;
+  endAt: Date;
   note?: string;
   mode: ScheduleChangeMode;
 }): Promise<void> {
