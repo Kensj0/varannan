@@ -787,7 +787,7 @@ export default function HomePage() {
                 <PendingStructureRequests
                   requests={structureRequests}
                   currentUserId={user!.uid}
-                  otherParentName={parentNames[otherParentId] ?? "Andra föräldern"}
+                  otherParentName={parentNames[counterpartId] ?? "Andra föräldern"}
                   onRespond={async (requestId, decision) => {
                     await respondToStructureRequest({ teamId: teamId!, requestId, decision });
                   }}
@@ -906,16 +906,16 @@ export default function HomePage() {
                         : null
                   }
                   otherFeedLinks={
-                    feedTokens?.[user!.uid] && teamId && activeChild && otherParentId
+                    feedTokens?.[user!.uid] && teamId && activeChild && counterpartId
                       ? buildFeedLinks(teamId, activeChild.id, user!.uid, feedTokens[user!.uid], {
-                          onlyParentId: otherParentId,
+                          onlyParentId: counterpartId,
                           // Aktiviteter ligger redan i det egna flödet —
                           // utan detta dubbleras de när man lägger till båda.
                           includeActivities: false,
                         })
                       : null
                   }
-                  otherParentName={parentNames[otherParentId] ?? "Andra föräldern"}
+                  otherParentName={parentNames[counterpartId] ?? "Andra föräldern"}
                   onCreateFeed={handleCreateFeed}
                   onChangeSwitchHour={handleChangeSwitchHour}
                   onEditStructure={
