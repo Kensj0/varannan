@@ -61,6 +61,9 @@ async function main() {
   let candidates = 0;
   let skippedNoCycle = 0;
   let applied = 0;
+  let totalScanned = 0;
+  let totalWithEndAt = 0;
+  let totalWrongStatus = 0;
 
   const batches: FirebaseFirestore.WriteBatch[] = [];
   let currentBatch = db.batch();
@@ -69,11 +72,19 @@ async function main() {
   for (const teamDoc of teamsSnap.docs) {
     const teamId = teamDoc.id;
     const shiftReqsSnap = await db.collection(`teams/${teamId}/shiftRequests`).get();
+    console.log(`team ${teamId}: ${shiftReqsSnap.size} shiftRequests totalt.`);
 
     for (const doc of shiftReqsSnap.docs) {
       const data = doc.data() as ShiftRequestDoc;
-      if (data.endAt) continue; // redan satt — t.ex. batch-dokument
-      if (data.status !== "pending" && data.status !== "approved") continue;
+      totalScanned++;
+      if (data.endAt) {
+        totalWithEndAt++;
+        continue; // redan satt — t.ex. batch-dokument
+      }
+      if (data.status !== "pending" && data.status !== "approved") {
+        totalWrongStatus++;
+        continue;
+      }
 
       const cycle = await getCycle(teamId, data.childId);
       if (!cycle) {
@@ -114,6 +125,8 @@ async function main() {
   } else {
     console.log(
       `\nInventering klar (read-only, inget skrevs).\n` +
+        `${totalScanned} shiftRequests skannade totalt: ${totalWithEndAt} hade redan endAt, ` +
+        `${totalWrongStatus} hade annan status (declined/cancelled).\n` +
         `${candidates} kandidater hittade` +
         (skippedNoCycle > 0 ? `, ${skippedNoCycle} hoppade över (saknar custodyCycle)` : "") +
         `.\n\nGranska listan ovan. Kör sedan med --apply för att faktiskt skriva.`
