@@ -299,8 +299,20 @@ export default function CalendarView({
     try {
       await onProposeShiftBatch(pendingChangesSummary);
       exitEditMode();
-    } catch {
-      setSubmitError("Kunde inte skicka förslaget. Försök igen.");
+    } catch (err) {
+      // Servern (applyScheduleChangeDirect) formulerar begripliga fel som
+      // kräver olika åtgärd — t.ex. "Perioden krockar med en ändring som
+      // redan är godkänd. Ta bort den först." Visa den texten hellre än
+      // "Försök igen", som inte hjälper när problemet är en krock. Fel från
+      // förfrågningsvägens Firestore-skrivning är inte begripliga för
+      // användaren, så de faller tillbaka på den generiska texten.
+      const code = (err as { code?: string })?.code ?? "";
+      const message = (err as { message?: string })?.message ?? "";
+      setSubmitError(
+        code.startsWith("functions/") && message
+          ? message
+          : "Kunde inte skicka förslaget. Försök igen."
+      );
     } finally {
       setSubmitting(false);
     }
