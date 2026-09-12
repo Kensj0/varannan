@@ -215,56 +215,54 @@ export const calendarFeed = onRequest(
       : []),
   ];
 
-  // --- Ansvarsblock: ett event per sammanhängande period hos en förälder ---
-  let blockStart: Date | null = null;
-  let blockParent: string | null = null;
+  // --- Ansvarsblock: ETT event per KALENDERDAG (stabil identitet) ---
+  //
+  // Tidigare slogs sammanhängande dagar med samma förälder ihop till EN
+  // flerdagshändelse, med UID baserat på blockets STARTTID. Problemet:
+  // varje schemaändring (byte, godkännande, avslag, eller en ny ändring
+  // som ersätter en gammal — se cancelSupersededInTx) flyttar block-
+  // gränserna, vilket byter UID på händelserna kring ändringen. Google
+  // Kalenders URL-prenumeration är dålig på att TA BORT händelser vars
+  // UID försvinner ur flödet — den lägger gärna till nya men städar inte
+  // alltid bort gamla. Resultatet blev överlappande/dubbla händelser
+  // efter i princip vilken schemaändring som helst.
+  //
+  // Nu får varje kalenderdag sin egen händelse, med UID knutet till
+  // childId + ISO-datum — helt oberoende av schemat. En ändring byter
+  // bara SUMMARY på de dagar den berör (matchas via samma UID = en
+  // uppdatering på plats), aldrig en ny eller borttagen händelse. Det
+  // tar bort själva mekanismen som orsakade dubbletterna, på bekostnad
+  // av fler (mindre) händelser i Google Cal istället för sammanslagna
+  // flerdagsblock.
+  if (!activitiesOnly) {
+    for (
+      let day = new Date(rangeStart);
+      day < rangeEnd;
+      day.setDate(day.getDate() + 1)
+    ) {
+      const dayIso = isoDate(day);
+      const dayStart = switchInstantForDate(cycle, dayIso);
+      const nextDay = new Date(day);
+      nextDay.setDate(nextDay.getDate() + 1);
+      const dayEnd = switchInstantForDate(cycle, isoDate(nextDay));
+      const parentId = resolveResponsibleParent(cycle, approvedShifts, dayStart);
 
-  for (
-    let day = activitiesOnly ? new Date(rangeEnd) : new Date(rangeStart);
-    day < rangeEnd;
-    day.setDate(day.getDate() + 1)
-  ) {
-    const instant = switchInstantForDate(cycle, isoDate(day));
-    const parentId = resolveResponsibleParent(cycle, approvedShifts, instant);
+      if (only && parentId !== only) continue;
 
-    if (blockParent === null) {
-      blockParent = parentId;
-      blockStart = instant;
-    } else if (parentId !== blockParent) {
-      if (!only || blockParent === only) {
-        lines.push(
-          ...vevent({
-            uid: `custody-${childId}-${blockStart!.getTime()}@varannan`,
-            start: blockStart!,
-            end: instant,
-            summary: `${childName} hos ${nameFor(blockParent)}`,
-            timezone,
-            colorHex: parentColorGoogleHex(
-              profiles[blockParent]?.colorId,
-              (teamSnap.data()?.parentIds ?? []).indexOf(blockParent),
-            ),
-          }),
-        );
-      }
-      blockParent = parentId;
-      blockStart = instant;
+      lines.push(
+        ...vevent({
+          uid: `custody-${childId}-${dayIso}@varannan`,
+          start: dayStart,
+          end: dayEnd,
+          summary: `${childName} hos ${nameFor(parentId)}`,
+          timezone,
+          colorHex: parentColorGoogleHex(
+            profiles[parentId]?.colorId,
+            (teamSnap.data()?.parentIds ?? []).indexOf(parentId),
+          ),
+        }),
+      );
     }
-  }
-
-  if (!activitiesOnly && blockParent && blockStart && (!only || blockParent === only)) {
-    lines.push(
-      ...vevent({
-        uid: `custody-${childId}-${blockStart.getTime()}@varannan`,
-        start: blockStart,
-        end: switchInstantForDate(cycle, isoDate(rangeEnd)),
-        summary: `${childName} hos ${nameFor(blockParent)}`,
-        timezone,
-        colorHex: parentColorGoogleHex(
-          profiles[blockParent]?.colorId,
-          (teamSnap.data()?.parentIds ?? []).indexOf(blockParent),
-        ),
-      }),
-    );
   }
 
   // --- Aktiviteter ---
