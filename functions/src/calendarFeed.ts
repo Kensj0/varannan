@@ -215,54 +215,85 @@ export const calendarFeed = onRequest(
       : []),
   ];
 
-  // --- Ansvarsblock: ETT event per KALENDERDAG (stabil identitet) ---
+  // --- Ansvarsblock: ett event per sammanhängande period hos en förälder ---
   //
-  // Tidigare slogs sammanhängande dagar med samma förälder ihop till EN
-  // flerdagshändelse, med UID baserat på blockets STARTTID. Problemet:
-  // varje schemaändring (byte, godkännande, avslag, eller en ny ändring
-  // som ersätter en gammal — se cancelSupersededInTx) flyttar block-
-  // gränserna, vilket byter UID på händelserna kring ändringen. Google
-  // Kalenders URL-prenumeration är dålig på att TA BORT händelser vars
-  // UID försvinner ur flödet — den lägger gärna till nya men städar inte
-  // alltid bort gamla. Resultatet blev överlappande/dubbla händelser
-  // efter i princip vilken schemaändring som helst.
+  // UID:et baseras på blockets STARTTID. Varje schemaändring (byte,
+  // godkännande, avslag, eller en ny ändring som ersätter en gammal —
+  // se cancelSupersededInTx) kan flytta blockgränserna, vilket byter
+  // UID på händelserna kring ändringen. En ren URL-prenumeration är
+  // skrivskyddad och enkelriktad — vi kan aldrig aktivt skicka en
+  // "radera"-instruktion till Google, bara styra vad som finns i
+  // flödet NÄSTA gång det hämtas. Om ett UID bara tyst försvinner ur
+  // flödet är kalenderklienter (Google i synnerhet) opålitliga på att
+  // själva upptäcka och ta bort den gamla händelsen — det blev
+  // överlappande/dubbla händelser efter i princip vilken ändring som
+  // helst.
   //
-  // Nu får varje kalenderdag sin egen händelse, med UID knutet till
-  // childId + ISO-datum — helt oberoende av schemat. En ändring byter
-  // bara SUMMARY på de dagar den berör (matchas via samma UID = en
-  // uppdatering på plats), aldrig en ny eller borttagen händelse. Det
-  // tar bort själva mekanismen som orsakade dubbletterna, på bekostnad
-  // av fler (mindre) händelser i Google Cal istället för sammanslagna
-  // flerdagsblock.
-  if (!activitiesOnly) {
-    for (
-      let day = new Date(rangeStart);
-      day < rangeEnd;
-      day.setDate(day.getDate() + 1)
-    ) {
-      const dayIso = isoDate(day);
-      const dayStart = switchInstantForDate(cycle, dayIso);
-      const nextDay = new Date(day);
-      nextDay.setDate(nextDay.getDate() + 1);
-      const dayEnd = switchInstantForDate(cycle, isoDate(nextDay));
-      const parentId = resolveResponsibleParent(cycle, approvedShifts, dayStart);
+  // Fix: vi minns vilka UID:n vi skickade FÖRRA gången (per barn +
+  // `only`-variant, i calendarFeedState/{barn}/{feedStateKey}). Ett
+  // UID som fanns förra gången men inte finns nu får en uttrycklig
+  // STATUS:CANCELLED-post med SAMMA UID — RFC 5545:s egna sätt att
+  // säga "den här specifika händelsen ska bort", istället för att lita
+  // på att klienten själv märker att den försvann.
+  const feedStateKey = only ?? "both";
+  const feedStateRef = activitiesOnly
+    ? null
+    : db.doc(`teams/${teamId}/children/${childId}/calendarFeedState/${feedStateKey}`);
+  const previousUids: string[] = activitiesOnly
+    ? []
+    : ((await feedStateRef!.get()).data()?.uids as string[] | undefined) ?? [];
+  const currentUids: string[] = [];
 
-      if (only && parentId !== only) continue;
+  let blockStart: Date | null = null;
+  let blockParent: string | null = null;
 
-      lines.push(
-        ...vevent({
-          uid: `custody-${childId}-${dayIso}@varannan`,
-          start: dayStart,
-          end: dayEnd,
-          summary: `${childName} hos ${nameFor(parentId)}`,
-          timezone,
-          colorHex: parentColorGoogleHex(
-            profiles[parentId]?.colorId,
-            (teamSnap.data()?.parentIds ?? []).indexOf(parentId),
-          ),
-        }),
-      );
+  const pushBlock = (start: Date, end: Date, parentId: string) => {
+    const uid = `custody-${childId}-${start.getTime()}@varannan`;
+    currentUids.push(uid);
+    lines.push(
+      ...vevent({
+        uid,
+        start,
+        end,
+        summary: `${childName} hos ${nameFor(parentId)}`,
+        timezone,
+        colorHex: parentColorGoogleHex(
+          profiles[parentId]?.colorId,
+          (teamSnap.data()?.parentIds ?? []).indexOf(parentId),
+        ),
+      }),
+    );
+  };
+
+  for (
+    let day = activitiesOnly ? new Date(rangeEnd) : new Date(rangeStart);
+    day < rangeEnd;
+    day.setDate(day.getDate() + 1)
+  ) {
+    const instant = switchInstantForDate(cycle, isoDate(day));
+    const parentId = resolveResponsibleParent(cycle, approvedShifts, instant);
+
+    if (blockParent === null) {
+      blockParent = parentId;
+      blockStart = instant;
+    } else if (parentId !== blockParent) {
+      if (!only || blockParent === only) pushBlock(blockStart!, instant, blockParent);
+      blockParent = parentId;
+      blockStart = instant;
     }
+  }
+
+  if (!activitiesOnly && blockParent && blockStart && (!only || blockParent === only)) {
+    pushBlock(blockStart, switchInstantForDate(cycle, isoDate(rangeEnd)), blockParent);
+  }
+
+  // Avboka UID:n som publicerades förra gången men inte finns kvar nu.
+  if (!activitiesOnly) {
+    const staleUids = previousUids.filter((u) => !currentUids.includes(u));
+    for (const uid of staleUids) lines.push(...cancelledVevent(uid));
+    await feedStateRef!.set(
+      { uids: currentUids, updatedAt: admin.firestore.FieldValue.serverTimestamp() },
+    );
   }
 
   // --- Aktiviteter ---
@@ -321,6 +352,27 @@ function vevent(opts: {
     `DTEND:${utcStamp(opts.end)}`,
     ...foldLine(`SUMMARY:${escapeText(opts.summary)}`),
     ...(opts.colorHex ? [`COLOR:${opts.colorHex}`] : []),
+    "END:VEVENT",
+  ];
+}
+
+/**
+ * En uttrycklig avbokning av ett UID som publicerades i en tidigare
+ * version av flödet men inte längre finns kvar (t.ex. ett ansvarsblock
+ * vars gränser flyttades av en schemaändring). RFC 5545 kräver DTSTART
+ * även för en avbokning, men tidpunkten spelar ingen roll här — klienten
+ * bryr sig bara om att UID:et ska tas bort. SEQUENCE höjs så klienter som
+ * jämför sekvensnummer inte tror att det här är en äldre, inaktuell
+ * version av händelsen.
+ */
+function cancelledVevent(uid: string): string[] {
+  return [
+    "BEGIN:VEVENT",
+    `UID:${uid}`,
+    `DTSTAMP:${utcStamp(new Date())}`,
+    `DTSTART:${utcStamp(new Date())}`,
+    "STATUS:CANCELLED",
+    "SEQUENCE:1",
     "END:VEVENT",
   ];
 }
