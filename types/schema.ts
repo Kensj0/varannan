@@ -470,6 +470,17 @@ export interface EventDoc {
   startAt: FirestoreTimestamp;
   endAt: FirestoreTimestamp;
   recurrence?: RecurrenceRule;
+  /**
+   * Enskilda tillfällen som tagits bort ur en återkommande serie, som
+   * ISO-strängar för tillfällets starttid (samma värde som
+   * EventOccurrence.startAt.toISOString()).
+   *
+   * Designval: vi lagrar undantag i stället för att materialisera varje
+   * tillfälle som en egen rad — samma princip som recurrence.ts bygger
+   * på. "Ta bort bara den här gången" blir då ett tillägg i den här
+   * listan, medan "ta bort alla" raderar hela dokumentet.
+   */
+  excludedOccurrences?: string[];
   photoUrl?: string;
   createdBy: string;
   createdAt: FirestoreTimestamp;

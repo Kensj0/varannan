@@ -29,6 +29,8 @@ import {
 } from "../lib/hooks/useFirestore";
 import {
   createEvent,
+  deleteEvent,
+  excludeEventOccurrence,
   respondToShiftRequest,
   respondToShiftRequestBatch,
   respondToStructureRequest,
@@ -852,6 +854,19 @@ export default function HomePage() {
                         : undefined,
                       createdBy: user!.uid,
                     });
+                  }}
+                  onDeleteActivity={async (occurrence, scope) => {
+                    // "Bara den här gången" lagras som ett undantag på
+                    // serien; "alla tillfällen" raderar hela aktiviteten.
+                    if (scope === "occurrence") {
+                      await excludeEventOccurrence({
+                        teamId: teamId!,
+                        eventId: occurrence.eventId,
+                        occurrenceStart: occurrence.startAt,
+                      });
+                    } else {
+                      await deleteEvent({ teamId: teamId!, eventId: occurrence.eventId });
+                    }
                   }}
                   onProposeShift={async (date, takingOverParentId) => {
                     // Bytet sker vid schemats bytestid, inte midnatt.

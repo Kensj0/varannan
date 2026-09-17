@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { CustodyCycleDoc } from "../types/schema";
 import { getNextOrdinaryHandoff } from "../lib/custodyCycle";
+import { EventOccurrence } from "../lib/recurrence";
 
 interface ParentMeta {
   id: string;
@@ -10,14 +11,20 @@ interface ParentMeta {
   color: string;
 }
 
+/** "bara det här tillfället" eller "hela serien". */
+export type DeleteActivityScope = "occurrence" | "series";
+
 interface DayActionModalProps {
   date: Date;
   childName: string;
   scheduledParent: ParentMeta;
   otherParent: ParentMeta;
   cycle: CustodyCycleDoc;
+  /** Dagens aktiviteter, så de kan tas bort härifrån. */
+  events: EventOccurrence[];
   onClose: () => void;
   onCreateActivity: (date: Date, title: string, recurring: boolean) => void;
+  onDeleteActivity: (occurrence: EventOccurrence, scope: DeleteActivityScope) => void;
   onProposeShift: (date: Date, takingOverParentId: string) => void;
 }
 
@@ -33,11 +40,15 @@ export default function DayActionModal({
   scheduledParent,
   otherParent,
   cycle,
+  events,
   onClose,
   onCreateActivity,
+  onDeleteActivity,
   onProposeShift,
 }: DayActionModalProps) {
   const [step, setStep] = useState<ModalStep>("choose");
+  /** Aktiviteten användaren vill ta bort — null när inget är på gång. */
+  const [deleting, setDeleting] = useState<EventOccurrence | null>(null);
 
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 sm:items-center" onClick={onClose}>
@@ -45,33 +56,48 @@ export default function DayActionModal({
         className="w-full max-w-sm rounded-t-3xl bg-white p-6 shadow-xl sm:rounded-3xl"
         onClick={(e) => e.stopPropagation()}
       >
-        {step === "choose" && (
-          <ChooseStep
-            date={date}
-            onPickActivity={() => setStep("activity")}
-            onPickShift={() => setStep("shift")}
-            onClose={onClose}
+        {deleting ? (
+          <DeleteActivityStep
+            occurrence={deleting}
+            onCancel={() => setDeleting(null)}
+            onConfirm={(scope) => {
+              onDeleteActivity(deleting, scope);
+              setDeleting(null);
+            }}
           />
-        )}
+        ) : (
+          <>
+            {step === "choose" && (
+              <ChooseStep
+                date={date}
+                events={events}
+                onPickActivity={() => setStep("activity")}
+                onPickShift={() => setStep("shift")}
+                onDeleteActivity={setDeleting}
+                onClose={onClose}
+              />
+            )}
 
-        {step === "activity" && (
-          <ActivityStep
-            date={date}
-            onCancel={() => setStep("choose")}
-            onSave={(d, title, recurring) => onCreateActivity(d, title, recurring)}
-          />
-        )}
+            {step === "activity" && (
+              <ActivityStep
+                date={date}
+                onCancel={() => setStep("choose")}
+                onSave={(d, title, recurring) => onCreateActivity(d, title, recurring)}
+              />
+            )}
 
-        {step === "shift" && (
-          <ShiftStep
-            date={date}
-            childName={childName}
-            currentParent={scheduledParent}
-            takingOverParent={otherParent}
-            cycle={cycle}
-            onCancel={() => setStep("choose")}
-            onPropose={(d) => onProposeShift(d, otherParent.id)}
-          />
+            {step === "shift" && (
+              <ShiftStep
+                date={date}
+                childName={childName}
+                currentParent={scheduledParent}
+                takingOverParent={otherParent}
+                cycle={cycle}
+                onCancel={() => setStep("choose")}
+                onPropose={(d) => onProposeShift(d, otherParent.id)}
+              />
+            )}
+          </>
         )}
       </div>
     </div>
@@ -84,13 +110,17 @@ export default function DayActionModal({
 
 function ChooseStep({
   date,
+  events,
   onPickActivity,
   onPickShift,
+  onDeleteActivity,
   onClose,
 }: {
   date: Date;
+  events: EventOccurrence[];
   onPickActivity: () => void;
   onPickShift: () => void;
+  onDeleteActivity: (occurrence: EventOccurrence) => void;
   onClose: () => void;
 }) {
   return (
@@ -101,6 +131,27 @@ function ChooseStep({
           ✕
         </button>
       </div>
+
+      {events.length > 0 && (
+        <div className="mb-3 space-y-1">
+          {events.map((ev) => (
+            <div
+              key={ev.occurrenceId}
+              className="flex items-center gap-2 rounded-lg bg-amber-100 px-3 py-2"
+            >
+              <span className="min-w-0 flex-1 truncate text-sm font-medium text-amber-900">{ev.title}</span>
+              <button
+                onClick={() => onDeleteActivity(ev)}
+                className="shrink-0 text-amber-700 hover:text-rose-600"
+                aria-label={`Ta bort ${ev.title}`}
+              >
+                ✕
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
       <button
         onClick={onPickActivity}
         className="mb-2 flex w-full items-center gap-3 rounded-xl bg-rose-50 px-4 py-3 text-left font-semibold text-rose-600 hover:bg-rose-100"
@@ -114,6 +165,64 @@ function ChooseStep({
       >
         <span className="grid h-8 w-8 place-items-center rounded-full bg-amber-400 text-white">⇄</span>
         Ändra ansvar
+      </button>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Ta bort aktivitet
+// ---------------------------------------------------------------------------
+
+/**
+ * En engångsaktivitet tas bort direkt. En återkommande måste först
+ * besvara frågan om det gäller det här tillfället eller hela serien —
+ * de två är olika operationer (undantag respektive radering).
+ */
+function DeleteActivityStep({
+  occurrence,
+  onCancel,
+  onConfirm,
+}: {
+  occurrence: EventOccurrence;
+  onCancel: () => void;
+  onConfirm: (scope: DeleteActivityScope) => void;
+}) {
+  const recurring = occurrence.hasRecurrence;
+
+  return (
+    <div>
+      <h3 className="mb-1 text-lg font-bold text-stone-800">Ta bort aktivitet</h3>
+      <p className="mb-5 text-sm text-stone-500">
+        {occurrence.title} · {formatDate(occurrence.startAt)}
+      </p>
+
+      {recurring ? (
+        <div className="mb-5 space-y-2">
+          <button
+            onClick={() => onConfirm("occurrence")}
+            className="w-full rounded-xl bg-stone-100 px-4 py-3 text-left font-semibold text-stone-700 hover:bg-stone-200"
+          >
+            Bara den här gången
+          </button>
+          <button
+            onClick={() => onConfirm("series")}
+            className="w-full rounded-xl bg-rose-50 px-4 py-3 text-left font-semibold text-rose-600 hover:bg-rose-100"
+          >
+            Alla tillfällen
+          </button>
+        </div>
+      ) : (
+        <button
+          onClick={() => onConfirm("series")}
+          className="mb-5 w-full rounded-full bg-rose-500 py-3 font-semibold text-white"
+        >
+          Ta bort
+        </button>
+      )}
+
+      <button onClick={onCancel} className="w-full py-1 text-sm font-semibold text-stone-500">
+        Avbryt
       </button>
     </div>
   );
