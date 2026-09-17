@@ -1,4 +1,4 @@
-import { collection, doc, setDoc, Timestamp } from "firebase/firestore";
+import { arrayUnion, collection, deleteDoc, doc, setDoc, Timestamp, updateDoc } from "firebase/firestore";
 import { httpsCallable } from "firebase/functions";
 import { db, functions } from "./firebase";
 import { sendChatMessage } from "./chatActions";
@@ -41,6 +41,33 @@ export async function createEvent(args: {
   };
   await setDoc(ref, event);
   return ref.id;
+}
+
+/**
+ * Tar bort en aktivitet HELT — hela serien om den är återkommande.
+ * Google Calendar städas av ICS-flödet, som avbokar de UID:n som
+ * försvinner (se functions/src/calendarFeed.ts).
+ */
+export async function deleteEvent(args: { teamId: string; eventId: string }): Promise<void> {
+  await deleteDoc(doc(db, `teams/${args.teamId}/events/${args.eventId}`));
+}
+
+/**
+ * Tar bort ETT tillfälle ur en återkommande serie, resten ligger kvar.
+ * Tillfället lagras som undantag i stället för att serien skrivs om —
+ * se EventDoc.excludedOccurrences.
+ *
+ * `occurrenceStart` måste vara tillfällets starttid, dvs samma värde som
+ * EventOccurrence.startAt.
+ */
+export async function excludeEventOccurrence(args: {
+  teamId: string;
+  eventId: string;
+  occurrenceStart: Date;
+}): Promise<void> {
+  await updateDoc(doc(db, `teams/${args.teamId}/events/${args.eventId}`), {
+    excludedOccurrences: arrayUnion(args.occurrenceStart.toISOString()),
+  });
 }
 
 /** Bygger ett Firestore-dokument för en shiftRequest, utan undefined-fält. */

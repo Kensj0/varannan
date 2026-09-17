@@ -235,13 +235,23 @@ export const calendarFeed = onRequest(
   // STATUS:CANCELLED-post med SAMMA UID — RFC 5545:s egna sätt att
   // säga "den här specifika händelsen ska bort", istället för att lita
   // på att klienten själv märker att den försvann.
-  const feedStateKey = only ?? "both";
-  const feedStateRef = activitiesOnly
-    ? null
-    : db.doc(`teams/${teamId}/children/${childId}/calendarFeedState/${feedStateKey}`);
-  const previousUids: string[] = activitiesOnly
-    ? []
-    : ((await feedStateRef!.get()).data()?.uids as string[] | undefined) ?? [];
+  // Nyckeln måste skilja flödets VARIANTER åt. Samma barn kan
+  // prenumereras på som "bara mina dagar", "bara aktiviteter" eller
+  // "allt" — de innehåller olika UID:n. Med en gemensam nyckel skulle
+  // varje hämtning se den andra variantens UID:n som försvunna och
+  // avboka dem hos fel prenumerant. Standardvarianten (båda
+  // föräldrarna, med aktiviteter) behåller sin gamla nyckel, så redan
+  // lagrat tillstånd fortsätter gälla.
+  const feedStateKey = activitiesOnly
+    ? `${only ?? "both"}-actonly`
+    : includeActivities
+      ? (only ?? "both")
+      : `${only ?? "both"}-noact`;
+  const feedStateRef = db.doc(
+    `teams/${teamId}/children/${childId}/calendarFeedState/${feedStateKey}`,
+  );
+  const previousUids: string[] =
+    ((await feedStateRef.get()).data()?.uids as string[] | undefined) ?? [];
   const currentUids: string[] = [];
 
   let blockStart: Date | null = null;
@@ -287,15 +297,6 @@ export const calendarFeed = onRequest(
     pushBlock(blockStart, switchInstantForDate(cycle, isoDate(rangeEnd)), blockParent);
   }
 
-  // Avboka UID:n som publicerades förra gången men inte finns kvar nu.
-  if (!activitiesOnly) {
-    const staleUids = previousUids.filter((u) => !currentUids.includes(u));
-    for (const uid of staleUids) lines.push(...cancelledVevent(uid));
-    await feedStateRef!.set(
-      { uids: currentUids, updatedAt: admin.firestore.FieldValue.serverTimestamp() },
-    );
-  }
-
   // --- Aktiviteter ---
   if (includeActivities) {
     const eventsSnap = await db.collection(`teams/${teamId}/events`).get();
@@ -304,9 +305,11 @@ export const calendarFeed = onRequest(
       .filter((e) => !e.childId || e.childId === childId);
 
     for (const occurrence of expandEvents(events, rangeStart, rangeEnd)) {
+      const uid = `event-${occurrence.eventId}-${occurrence.startAt.getTime()}@varannan`;
+      currentUids.push(uid);
       lines.push(
         ...vevent({
-          uid: `event-${occurrence.eventId}-${occurrence.startAt.getTime()}@varannan`,
+          uid,
           start: occurrence.startAt,
           end: occurrence.endAt,
           summary: occurrence.title,
@@ -315,6 +318,17 @@ export const calendarFeed = onRequest(
       );
     }
   }
+
+  // Avboka UID:n som publicerades förra gången men inte finns kvar nu.
+  // Ligger EFTER aktiviteterna, så att både ansvarsblock och borttagna
+  // aktiviteter omfattas — en aktivitet som tas bort i appen försvinner
+  // annars bara tyst ur flödet, vilket Google Kalender inte städar upp.
+  const staleUids = previousUids.filter((u) => !currentUids.includes(u));
+  for (const uid of staleUids) lines.push(...cancelledVevent(uid));
+  await feedStateRef.set({
+    uids: currentUids,
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
 
   lines.push("END:VCALENDAR");
 

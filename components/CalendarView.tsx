@@ -8,7 +8,7 @@ import { addDays } from "../lib/calendarActions";
 import { PushPermissionState } from "../lib/pushNotifications";
 import { ParentColorId, ScheduleChangeMode, parentColorHex } from "../types/schema";
 import { CalendarFeedLinks } from "../lib/calendarExport";
-import DayActionModal from "./DayActionModal";
+import DayActionModal, { DeleteActivityScope } from "./DayActionModal";
 import CalendarSettingsPanel from "./CalendarSettingsPanel";
 import CalendarManagerPanel from "./CalendarManagerPanel";
 import CalendarExportGuide from "./CalendarExportGuide";
@@ -48,6 +48,7 @@ interface CalendarViewProps {
   currentUserId: string;
   onChangeMonth: (date: Date) => void;
   onCreateActivity: (date: Date, title: string, recurring: boolean) => void;
+  onDeleteActivity: (occurrence: EventOccurrence, scope: DeleteActivityScope) => void;
   onProposeShift: (date: Date, takingOverParentId: string) => void;
   onProposeShiftBatch: (changes: DayChange[]) => Promise<void>;
   pushPermission: PushPermissionState | null;
@@ -99,6 +100,7 @@ export default function CalendarView({
   events,
   onChangeMonth,
   onCreateActivity,
+  onDeleteActivity,
   onProposeShift,
   onProposeShiftBatch,
   pushPermission,
@@ -736,10 +738,12 @@ export default function CalendarView({
           scheduledParent={afternoonParent(activeDay, false)}
           cycle={cycle}
           onClose={() => setActiveDay(null)}
+          events={eventsByDay.get(dayKey(activeDay)) ?? []}
           onCreateActivity={(date, title, recurring) => {
             onCreateActivity(date, title, recurring);
             setActiveDay(null);
           }}
+          onDeleteActivity={(occurrence, scope) => onDeleteActivity(occurrence, scope)}
           onProposeShift={(date, takingOverParentId) => {
             onProposeShift(date, takingOverParentId);
             setActiveDay(null);

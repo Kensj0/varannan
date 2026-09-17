@@ -23,6 +23,14 @@ export interface EventOccurrence {
   childId?: string;
   /** true om detta är ett genererat tillfälle, inte originaldatumet. */
   isRecurring: boolean;
+  /**
+   * true om moder-eventet har en återkommanderegel — till skillnad från
+   * `isRecurring` gäller det ÄVEN seriens första tillfälle. Det är det
+   * här fältet UI:t ska fråga på ("ta bort alla eller bara den här?"),
+   * eftersom seriens originaldatum annars hade behandlats som en
+   * engångsaktivitet.
+   */
+  hasRecurrence: boolean;
 }
 
 const MAX_OCCURRENCES = 500; // skyddsnät mot oändliga loopar vid trasig data
@@ -36,10 +44,16 @@ export function expandEvent(event: EventDoc, rangeStart: Date, rangeEnd: Date): 
   const end = fromTs(event.endAt);
   const durationMs = Math.max(0, end.getTime() - start.getTime());
 
+  // Tillfällen som tagits bort en och en ur serien ("bara den här
+  // gången") — filtreras bort efter expansionen, se EventDoc.
+  const excluded = new Set(event.excludedOccurrences ?? []);
+  const keep = (occurrences: EventOccurrence[]) =>
+    excluded.size === 0 ? occurrences : occurrences.filter((o) => !excluded.has(o.startAt.toISOString()));
+
   if (!event.recurrence) {
-    return start >= rangeStart && start < rangeEnd
-      ? [toOccurrence(event, start, durationMs, false)]
-      : [];
+    return keep(
+      start >= rangeStart && start < rangeEnd ? [toOccurrence(event, start, durationMs, false)] : []
+    );
   }
 
   const rule = event.recurrence;
@@ -71,9 +85,11 @@ export function expandEvent(event: EventDoc, rangeStart: Date, rangeEnd: Date): 
   // Dedupliceras och sorteras — byWeekday-grenen kan ge dubbletter i
   // gränsfall när intervallet spänner över samma vecka två gånger.
   const seen = new Set<string>();
-  return occurrences
-    .filter((o) => (seen.has(o.occurrenceId) ? false : seen.add(o.occurrenceId)))
-    .sort((a, b) => a.startAt.getTime() - b.startAt.getTime());
+  return keep(
+    occurrences
+      .filter((o) => (seen.has(o.occurrenceId) ? false : seen.add(o.occurrenceId)))
+      .sort((a, b) => a.startAt.getTime() - b.startAt.getTime())
+  );
 }
 
 /** Expanderar en hel lista events — det UI:t faktiskt anropar. */
@@ -129,6 +145,7 @@ function toOccurrence(event: EventDoc, startAt: Date, durationMs: number, isRecu
     endAt: new Date(startAt.getTime() + durationMs),
     childId: event.childId,
     isRecurring,
+    hasRecurrence: !!event.recurrence,
   };
 }
 
