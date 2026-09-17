@@ -34,6 +34,7 @@ interface CalendarSettingsPanelProps {
   /** Förfrågan vs notifiering — gäller alla schemaändringar, se schema.ts. */
   scheduleChangeMode: ScheduleChangeMode;
   onChangeScheduleChangeMode: (mode: ScheduleChangeMode) => Promise<void>;
+  onOpenAgreement: () => void;
 }
 
 export default function CalendarSettingsPanel({
@@ -54,6 +55,7 @@ export default function CalendarSettingsPanel({
   childName,
   scheduleChangeMode,
   onChangeScheduleChangeMode,
+  onOpenAgreement,
 }: CalendarSettingsPanelProps) {
   const [creatingFeed, setCreatingFeed] = useState(false);
   const [feedError, setFeedError] = useState<string | null>(null);
@@ -85,8 +87,8 @@ export default function CalendarSettingsPanel({
       <div className="absolute right-0 top-12 z-50 max-h-[75vh] w-72 overflow-y-auto rounded-2xl bg-white p-4 text-left shadow-xl ring-1 ring-stone-100">
         <Section title="Schemaändringar" first />
         <p className="mb-2 text-[11px] leading-snug text-stone-400">
-          Gäller alla ändringar av schemat — enstaka dagar såväl som ändringsläget. Inställningen är
-          gemensam för er båda.
+          Gäller enstaka dagar. Ändring av grundschemat kräver alltid godkännande från er båda,
+          oavsett vilket läge ni väljer här — se Avtal nedan.
         </p>
         <div className="space-y-1">
           {SCHEDULE_CHANGE_MODES.map((option) => {
@@ -127,6 +129,13 @@ export default function CalendarSettingsPanel({
           })}
         </div>
         {modeError && <p className="mt-1 text-[11px] text-rose-600">{modeError}</p>}
+
+        <button
+          onClick={onOpenAgreement}
+          className="mt-3 w-full rounded-lg bg-stone-50 px-3 py-2 text-sm font-medium text-stone-700 hover:bg-stone-100"
+        >
+          Avtal
+        </button>
 
         <Section title="Visning" />
 

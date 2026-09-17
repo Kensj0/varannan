@@ -103,7 +103,7 @@ export const setCustomSwitchHour = onCall(async (request) => {
   const currentHour = (await cycleRef.get()).data()?.switchHour ?? "08:00";
 
   const counterpart = await counterpartFor(teamId, childId, uid);
-  if (await structureChangeAppliesDirectly(teamId, counterpart)) {
+  if (structureChangeAppliesDirectly(counterpart)) {
     await cycleRef.update({ switchHour });
     if (counterpart) {
       const name = teamSnap.data()?.parentProfiles?.[uid]?.displayName ?? "Den andra föräldern";
@@ -651,16 +651,15 @@ async function counterpartFor(
 }
 
 /**
- * Ska ändringen gälla direkt? Ja om man är ensam i kalendern, eller om
- * motparten valt notifiering. Nej om motparten vill godkänna först.
+ * Ska en STRUKTURändring (grundschema/bytestid) gälla direkt? Bara om
+ * man är ensam i kalendern (ingen motpart att fråga än, t.ex. under
+ * onboarding). Finns en motpart krävs ALLTID uttryckligt godkännande —
+ * till skillnad från enskilda dagsbyten (ShiftRequestDoc) styrs detta
+ * INTE av förälderns notify/request-val. Se avtalstexten i appen
+ * (lib/agreementText.ts): grundschemat kan aldrig ändras ensidigt.
  */
-async function structureChangeAppliesDirectly(
-  teamId: string,
-  counterpart: string | null,
-): Promise<boolean> {
-  if (!counterpart) return true;
-  const teamSnap = await db.doc(`teams/${teamId}`).get();
-  return scheduleChangeModeFor(teamSnap.data() as any, counterpart) === "notify";
+function structureChangeAppliesDirectly(counterpart: string | null): boolean {
+  return !counterpart;
 }
 
 async function createStructureRequest(args: {
@@ -783,7 +782,7 @@ export const saveCustodyCycle = onCall(async (request) => {
   const isFirstSetup = !(await cycleRef.get()).exists;
 
   const counterpart = await counterpartFor(raw.teamId, raw.childId, uid);
-  if (isFirstSetup || (await structureChangeAppliesDirectly(raw.teamId, counterpart))) {
+  if (isFirstSetup || structureChangeAppliesDirectly(counterpart)) {
     await setupCustodyCycle(onboardingDb, { ...raw, updatedBy: uid });
     if (!isFirstSetup && counterpart) {
       const name = teamSnap.data()?.parentProfiles?.[uid]?.displayName ?? "Den andra föräldern";
