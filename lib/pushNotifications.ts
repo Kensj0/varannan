@@ -197,12 +197,12 @@ export async function removePushToken(uid: string, token: string): Promise<void>
 
 /**
  * Sparar när överlämnings-påminnelser ska skickas (dagen innan / samma
- * dag). Läses av den schemalagda Cloud Functionen
+ * dag / mail utöver push). Läses av den schemalagda Cloud Functionen
  * (functions/src/handoffReminders.ts) för just den här användaren.
  */
 export async function updateHandoffReminderPrefs(
   uid: string,
-  prefs: { dayBefore: boolean; sameDay: boolean }
+  prefs: { dayBefore: boolean; sameDay: boolean; email?: boolean }
 ): Promise<void> {
   await updateDoc(doc(db, "users", uid), { handoffReminderPrefs: prefs });
 }

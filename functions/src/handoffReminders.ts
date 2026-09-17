@@ -8,6 +8,17 @@
  *
  *   - "Samma dag": skickas dagen bytet sker, om det sker senare idag.
  *   - "Dagen innan": skickas dagen innan, om bytet sker imorgon.
+ *   - "Mail": om påslaget, skickas SAMMA påminnelse som mail också,
+ *     utöver push — en fallback för den som inte litar på att push
+ *     kommer fram (se email.ts). Kräver secrets GMAIL_USER och
+ *     GMAIL_APP_PASSWORD (Firebase Secret Manager), sätts EN gång:
+ *
+ *       firebase functions:secrets:set GMAIL_USER
+ *       firebase functions:secrets:set GMAIL_APP_PASSWORD
+ *
+ *     GMAIL_APP_PASSWORD är ett Google-"app-lösenord" (kräver
+ *     2-stegsverifiering på Google-kontot), inte det vanliga
+ *     lösenordet: myaccount.google.com/apppasswords.
  *
  * Föräldern som TAR ÖVER får "Du tar över ansvaret", föräldern som
  * LÄMNAR ÖVER får "Du lämnar över ansvaret" — båda med antal opackade
@@ -21,6 +32,7 @@ import { CustodyCycleDoc, ShiftRequestDoc, PackListDoc, UserDoc, DEFAULT_HANDOFF
 import { switchInstantForDate } from "../../lib/custodyCycle";
 import { findHandoffOnDate, HandoffOnDate } from "../../lib/handoffPreview";
 import { sendPushToUser } from "./notifications";
+import { sendEmail, GMAIL_USER, GMAIL_APP_PASSWORD } from "./email";
 
 function addDaysToDateString(dateStr: string, days: number): string {
   const [y, m, d] = dateStr.split("-").map(Number);
@@ -52,6 +64,7 @@ export const sendHandoffReminders = onSchedule(
     // schemajobb triggas funktionen aldrig. Det här är ett bakgrundsjobb
     // en gång om dygnet — ingen väntar på svaret, så regionen är likgiltig.
     region: "us-central1",
+    secrets: [GMAIL_USER, GMAIL_APP_PASSWORD],
   },
   async () => {
     const db = admin.firestore();
@@ -118,14 +131,22 @@ async function remindForChild(
       if (uid !== handoff.toParentId && uid !== handoff.fromParentId) continue;
 
       const userSnap = await db.doc(`users/${uid}`).get();
-      const prefs = (userSnap.data() as UserDoc | undefined)?.handoffReminderPrefs ?? DEFAULT_HANDOFF_REMINDER_PREFS;
+      const user = userSnap.data() as UserDoc | undefined;
+      const prefs = user?.handoffReminderPrefs ?? DEFAULT_HANDOFF_REMINDER_PREFS;
       if (!prefs[prefKey]) continue;
 
       const title = uid === handoff.toParentId ? "Du tar över ansvaret" : "Du lämnar över ansvaret";
-      await sendPushToUser(db, uid, {
-        title,
-        body: `Byte kl ${time} ${whenLabel}${packNote}${childName}`,
-      });
+      const body = `Byte kl ${time} ${whenLabel}${packNote}${childName}`;
+
+      await sendPushToUser(db, uid, { title, body });
+
+      // Mail är ett TILLÄGG till push (fallback för den som inte litar
+      // på att push kommer fram), inte en ersättning — skickas därför
+      // alltid utöver push när användaren slagit på det, oavsett om
+      // push-anropet ovan lyckades eller inte (vi kan inte veta det).
+      if (prefs.email && user?.email) {
+        await sendEmail(user.email, title, body);
+      }
     }
   }
 

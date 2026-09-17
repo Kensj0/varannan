@@ -28,6 +28,7 @@ interface DayChange {
 interface ReminderPrefs {
   dayBefore: boolean;
   sameDay: boolean;
+  email?: boolean;
 }
 
 interface CalendarViewProps {
