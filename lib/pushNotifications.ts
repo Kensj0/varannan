@@ -226,17 +226,25 @@ export async function listenForForegroundMessages(
 }
 
 /**
- * Skickar en testnotis till den inloggades egna enheter. Kastar med ett
- * läsbart meddelande när något i kedjan (token, VAPID, service worker)
- * inte stämmer, så felet går att visa direkt i gränssnittet.
+ * Skickar en testnotis till den inloggades egna enheter, och — om
+ * mailkanalen är påslagen — även ett testmail. Kastar med ett läsbart
+ * meddelande när något i kedjan (token, VAPID, service worker) inte
+ * stämmer, så felet går att visa direkt i gränssnittet.
+ *
+ * `email` är "sent" när testmailet kom fram, "off" när kanalen är
+ * avslagen, "no-address" när kontot saknar mailadress, annars en
+ * feltext från mailservern.
  */
-export async function sendTestPush(): Promise<{ sent: number; removed: number }> {
+export interface TestPushResult {
+  sent: number;
+  removed: number;
+  email: string;
+}
+
+export async function sendTestPush(): Promise<TestPushResult> {
   const { httpsCallable } = await import("firebase/functions");
   const { functions } = await import("./firebase");
-  const fn = httpsCallable<Record<string, never>, { sent: number; removed: number }>(
-    functions,
-    "sendTestPush"
-  );
+  const fn = httpsCallable<Record<string, never>, TestPushResult>(functions, "sendTestPush");
   const res = await fn({});
   return res.data;
 }

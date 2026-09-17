@@ -34,19 +34,28 @@ function getTransporter() {
 }
 
 /**
+ * Skickar ett enkelt textmail och KASTAR vid fel. Används där någon
+ * väntar på svaret och behöver veta om det gick vägen — t.ex.
+ * testknappen i inställningarna.
+ */
+export async function sendEmailOrThrow(to: string, subject: string, body: string): Promise<void> {
+  const transporter = getTransporter();
+  await transporter.sendMail({
+    from: `Varannan <${GMAIL_USER.value()}>`,
+    to,
+    subject,
+    text: body,
+  });
+}
+
+/**
  * Skickar ett enkelt textmail. Kastar ALDRIG — ett misslyckat mail ska
  * inte få hela påminnelse-jobbet (som skickar till flera föräldrar och
  * barn i en enda körning) att stanna av. Fel loggas bara.
  */
 export async function sendEmail(to: string, subject: string, body: string): Promise<void> {
   try {
-    const transporter = getTransporter();
-    await transporter.sendMail({
-      from: `Varannan <${GMAIL_USER.value()}>`,
-      to,
-      subject,
-      text: body,
-    });
+    await sendEmailOrThrow(to, subject, body);
   } catch (err) {
     console.error(`[email] Kunde inte skicka till ${to}:`, err);
   }

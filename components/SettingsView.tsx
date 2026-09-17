@@ -57,12 +57,16 @@ export default function SettingsView({
   /** Testnotis: idle → sending → sent, med felet separat. */
   const [testState, setTestState] = useState<"idle" | "sending" | "sent">("idle");
   const [testError, setTestError] = useState<string | null>(null);
+  /** Vad som hände med testmailet — null när testet inte körts än. */
+  const [testEmail, setTestEmail] = useState<string | null>(null);
 
   async function handleTestPush() {
     setTestState("sending");
     setTestError(null);
+    setTestEmail(null);
     try {
-      await sendTestPush();
+      const result = await sendTestPush();
+      setTestEmail(result.email);
       setTestState("sent");
     } catch (err: any) {
       setTestState("idle");
@@ -70,6 +74,14 @@ export default function SettingsView({
       // registrering) — visa dem hellre än en generisk text.
       setTestError(err?.message ?? "Kunde inte skicka testnotisen.");
     }
+  }
+
+  /** Kort rad om mailkanalen, visas under testresultatet. */
+  function testEmailNote(status: string): string {
+    if (status === "sent") return "Testmail skickat också.";
+    if (status === "off") return "Mailkanalen är avslagen.";
+    if (status === "no-address") return "Kontot saknar mailadress, inget mail skickades.";
+    return `Mailet gick inte fram — ${status}`;
   }
 
   async function handleSaveName() {
@@ -191,6 +203,7 @@ export default function SettingsView({
               <p className="mt-1 text-[11px] leading-snug text-stone-500">
                 Testnotisen är skickad. Kommer den inte fram inom någon minut är det något med
                 enhetens notisinställningar.
+                {testEmail && <> {testEmailNote(testEmail)}</>}
               </p>
             )}
             {testError && <p className="mt-1 text-[11px] leading-snug text-amber-700">{testError}</p>}

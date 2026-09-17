@@ -22,6 +22,7 @@ import * as crypto from "crypto";
 import { setGlobalOptions } from "firebase-functions/v2";
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { onDocumentWritten, onDocumentCreated } from "firebase-functions/v2/firestore";
+import { sendEmailOrThrow, GMAIL_USER, GMAIL_APP_PASSWORD } from "./email";
 // OBS: `googleapis` importeras lat, inne i getCalendarClientForUser. Den
 // väger ~4 MB och drog tidigare med sig laddningstid till kallstarten för
 // VARJE funktion i filen, trots att bara exportEventToGoogleCalendar
@@ -54,6 +55,7 @@ import {
   ShiftRequestDoc,
   EventDoc,
   UserDoc,
+  DEFAULT_HANDOFF_REMINDER_PREFS,
   TeamParentProfile,
   ScheduleChangeMode,
   scheduleChangeModeFor,
@@ -1507,17 +1509,49 @@ export const acceptCalendarInvite = onCall(async (request) => {
 // fel i stället för att bara tystna.
 // ---------------------------------------------------------------------------
 
-export const sendTestPush = onCall(async (request) => {
+export const sendTestPush = onCall(
+  { secrets: [GMAIL_USER, GMAIL_APP_PASSWORD] },
+  async (request) => {
   const uid = request.auth?.uid;
   if (!uid) throw new HttpsError("unauthenticated", "Du måste vara inloggad.");
 
   const userSnap = await db.doc(`users/${uid}`).get();
-  const tokens: string[] = userSnap.data()?.fcmTokens ?? [];
+  const user = userSnap.data() as UserDoc | undefined;
+  const tokens: string[] = user?.fcmTokens ?? [];
+  const prefs = user?.handoffReminderPrefs ?? DEFAULT_HANDOFF_REMINDER_PREFS;
+
+  /**
+   * Mailkanalen testas SEPARAT från push och innan push-felen kastas.
+   * Poängen med hela knappen är att stänga loopen om vad som faktiskt
+   * fungerar — om push är trasigt är det just då man som mest behöver
+   * veta att mailet kom fram, så ett push-fel får inte dölja svaret.
+   * Mail skickas bara när användaren slagit på kanalen; annars vore
+   * testet ett mail till någon som valt bort mail.
+   */
+  let emailStatus: "sent" | "off" | "no-address" | string = "off";
+  if (prefs.email) {
+    if (!user?.email) {
+      emailStatus = "no-address";
+    } else {
+      try {
+        await sendEmailOrThrow(
+          user.email,
+          "Testnotis",
+          "Mailpåminnelser fungerar. Så här ser de ut."
+        );
+        emailStatus = "sent";
+      } catch (err: any) {
+        emailStatus = `fel: ${err?.message ?? "okänt fel"}`;
+      }
+    }
+  }
 
   if (tokens.length === 0) {
     throw new HttpsError(
       "failed-precondition",
-      "Den här enheten är inte registrerad för notiser än. Tryck på Försök igen först."
+      emailStatus === "sent"
+        ? "Mailet skickades, men den här enheten är inte registrerad för push än. Tryck på Försök igen först."
+        : "Den här enheten är inte registrerad för notiser än. Tryck på Försök igen först."
     );
   }
 
@@ -1551,15 +1585,17 @@ export const sendTestPush = onCall(async (request) => {
 
   if (response.successCount === 0) {
     const firstError = response.responses.find((r) => r.error)?.error;
-    throw new HttpsError(
-      "internal",
+    const pushProblem =
       dead.length > 0
         ? "Enhetens notistoken hade gått ut. Den är borttagen nu — tryck på Försök igen och testa på nytt."
-        : `Notisen kunde inte skickas: ${firstError?.message ?? "okänt fel"}`
+        : `Notisen kunde inte skickas: ${firstError?.message ?? "okänt fel"}`;
+    throw new HttpsError(
+      "internal",
+      emailStatus === "sent" ? `${pushProblem} (Mailet kom däremot fram.)` : pushProblem
     );
   }
 
-  return { ok: true, sent: response.successCount, removed: dead.length };
+  return { ok: true, sent: response.successCount, removed: dead.length, email: emailStatus };
 });
 
 // ---------------------------------------------------------------------------
