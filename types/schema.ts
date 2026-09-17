@@ -41,19 +41,26 @@ export interface UserDoc {
   /** Web push-tokens (en per enhet/webbläsare som aktiverat notiser). */
   fcmTokens?: string[];
   /**
-   * Påminnelser om överlämning (push), styrs i kalenderns inställnings-
-   * panel. Saknas fältet helt = defaultbeteendet (båda på), se
-   * DEFAULT_HANDOFF_REMINDER_PREFS.
+   * Påminnelser om överlämning, styrs i kalenderns inställnings-
+   * panel. Saknas fältet helt = defaultbeteendet (dayBefore/sameDay
+   * på, email av), se DEFAULT_HANDOFF_REMINDER_PREFS.
    */
   handoffReminderPrefs?: {
     dayBefore: boolean;
     sameDay: boolean;
+    /**
+     * Skicka SAMMA påminnelse som mail också, utöver push. Tänkt som
+     * fallback för den som inte litar på att push kommer fram (t.ex.
+     * webbläsare/OS som stryper bakgrundspush på installerade
+     * webbappar) — inte en ersättning för push i sig.
+     */
+    email?: boolean;
   };
   createdAt: FirestoreTimestamp;
 }
 
 /** Default när users/{uid}.handoffReminderPrefs saknas (ny användare). */
-export const DEFAULT_HANDOFF_REMINDER_PREFS = { dayBefore: true, sameDay: true } as const;
+export const DEFAULT_HANDOFF_REMINDER_PREFS = { dayBefore: true, sameDay: true, email: false } as const;
 
 // ---------------------------------------------------------------------------
 // TEAMS (familjen / föräldraparet)

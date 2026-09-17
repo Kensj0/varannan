@@ -16,8 +16,8 @@ interface SettingsViewProps {
   /** Sant först när en FCM-token faktiskt sparats för enheten. */
   pushRegistered: boolean;
   pushError: string | null;
-  reminderPrefs: { dayBefore: boolean; sameDay: boolean };
-  onUpdateReminderPrefs: (prefs: { dayBefore: boolean; sameDay: boolean }) => void;
+  reminderPrefs: { dayBefore: boolean; sameDay: boolean; email?: boolean };
+  onUpdateReminderPrefs: (prefs: { dayBefore: boolean; sameDay: boolean; email?: boolean }) => void;
   hasPartner: boolean;
   teamName?: string;
   onCreateInvite: () => Promise<{ code: string; shareUrl: string }>;
@@ -257,6 +257,16 @@ export default function SettingsView({
               onChange={(v) => onUpdateReminderPrefs({ ...reminderPrefs, sameDay: v })}
             />
           </label>
+          <label className="flex items-center justify-between py-1.5">
+            <span className="text-sm text-stone-600">Mail (utöver push)</span>
+            <Toggle
+              checked={reminderPrefs.email ?? false}
+              onChange={(v) => onUpdateReminderPrefs({ ...reminderPrefs, email: v })}
+            />
+          </label>
+          <p className="mt-1 text-[11px] leading-snug text-stone-400">
+            Bra som extra säkerhet om push inte kommer fram på din telefon.
+          </p>
         </div>
       </div>
 

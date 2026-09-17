@@ -177,7 +177,7 @@ export default function HomePage() {
   // Påminnelser om överlämning (dagen innan / samma dag) — sparas per
   // användare på users/{uid}, läses av den schemalagda Cloud Functionen.
   const reminderPrefs = userDoc?.handoffReminderPrefs ?? DEFAULT_HANDOFF_REMINDER_PREFS;
-  async function handleUpdateReminderPrefs(prefs: { dayBefore: boolean; sameDay: boolean }) {
+  async function handleUpdateReminderPrefs(prefs: { dayBefore: boolean; sameDay: boolean; email?: boolean }) {
     if (!user) return;
     await updateHandoffReminderPrefs(user.uid, prefs);
   }
