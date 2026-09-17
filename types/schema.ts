@@ -197,8 +197,12 @@ export function scheduleChangeModeFor(
  *
  * Skild från ShiftRequestDoc, som gäller enstaka dagar. En
  * strukturändring skriver om hela grundmönstret och påverkar alla
- * framtida dagar, så den behöver samma godkännandesteg som en enskild
- * dag när motparten valt "förfrågan".
+ * framtida dagar, så den kräver ALLTID uttryckligt godkännande av
+ * motparten — till skillnad från enskilda dagsbyten påverkas detta
+ * INTE av parternas notify/request-val (se structureChangeAppliesDirectly
+ * i functions/src/index.ts, och avtalstexten i lib/agreementText.ts).
+ * Undantaget är om det inte finns någon motpart än (t.ex. under
+ * onboarding), då gäller ändringen direkt.
  */
 export interface ScheduleStructureRequestDoc {
   id: string;

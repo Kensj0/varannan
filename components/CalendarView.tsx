@@ -12,6 +12,7 @@ import DayActionModal from "./DayActionModal";
 import CalendarSettingsPanel from "./CalendarSettingsPanel";
 import CalendarManagerPanel from "./CalendarManagerPanel";
 import CalendarExportGuide from "./CalendarExportGuide";
+import AgreementDialog from "./AgreementDialog";
 
 interface ParentMeta {
   id: string;
@@ -141,6 +142,7 @@ export default function CalendarView({
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [managerOpen, setManagerOpen] = useState(false);
   const [exportGuideOpen, setExportGuideOpen] = useState(false);
+  const [agreementOpen, setAgreementOpen] = useState(false);
 
   const [editMode, setEditMode] = useState(false);
   const [shiftOffsetDays, setShiftOffsetDays] = useState(0);
@@ -417,6 +419,7 @@ export default function CalendarView({
             otherParentName={otherParentName}
             onCreateFeed={onCreateFeed}
             onOpenExportGuide={() => setExportGuideOpen(true)}
+            onOpenAgreement={() => setAgreementOpen(true)}
             onEditStructure={onEditStructure}
             switchHour={switchHour}
             onChangeSwitchHour={onChangeSwitchHour}
@@ -700,6 +703,8 @@ export default function CalendarView({
       )}
       </div>
 
+
+      {agreementOpen && <AgreementDialog onClose={() => setAgreementOpen(false)} />}
 
       {exportGuideOpen && feedLinks && (
         <CalendarExportGuide
