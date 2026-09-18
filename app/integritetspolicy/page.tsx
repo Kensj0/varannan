@@ -84,7 +84,7 @@ export default function PrivacyPolicyPage() {
 
       <Section title="Kontakt">
         <p>
-          Frågor om den här policyn eller din data: <a className="underline" href="mailto:kenny@dalvolt.se">kenny@dalvolt.se</a>.
+          Frågor om den här policyn eller din data: <a className="underline" href="mailto:kenny.sjostedt@gmail.com">kenny.sjostedt@gmail.com</a>.
         </p>
       </Section>
     </main>
