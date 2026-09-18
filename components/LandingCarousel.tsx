@@ -40,7 +40,7 @@ export default function LandingCarousel() {
         ref={scrollerRef}
         className="flex snap-x snap-mandatory overflow-x-auto scroll-smooth [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
       >
-        <Slide><CalendarMock /></Slide>
+        <Slide flush><ScheduleScreenshot /></Slide>
         <Slide><HandoffMock /></Slide>
         <Slide><ActivityMock /></Slide>
         <Slide><AgreementMock /></Slide>
@@ -62,57 +62,43 @@ export default function LandingCarousel() {
   );
 }
 
-function Slide({ children }: { children: React.ReactNode }) {
+function Slide({ children, flush = false }: { children: React.ReactNode; flush?: boolean }) {
   return (
     <div className="flex w-full shrink-0 snap-center justify-center px-2">
-      <PhoneFrame>{children}</PhoneFrame>
+      <PhoneFrame flush={flush}>{children}</PhoneFrame>
     </div>
   );
 }
 
 /** Enkel "telefonram" som mockup-vyerna ritas inuti. */
-function PhoneFrame({ children }: { children: React.ReactNode }) {
+function PhoneFrame({ children, flush = false }: { children: React.ReactNode; flush?: boolean }) {
   return (
     <div className="w-[220px] overflow-hidden rounded-[28px] border-4 border-stone-800 bg-white shadow-lg">
-      <div className="h-full min-h-[380px] bg-stone-50 p-3">{children}</div>
+      <div className={`h-full min-h-[380px] bg-stone-50 ${flush ? "" : "p-3"}`}>{children}</div>
     </div>
+  );
+}
+
+/**
+ * Den enda RIKTIGA skärmdumpen i carousellen — tagen från själva
+ * appkoden (CalendarView.tsx) med påhittade namn (Mamma/Pappa/Barn),
+ * inte en handritad mockup som de andra tre. Ligger i /public/
+ * screenshots/schema.png. Se README/kommentarer i den commit som
+ * lade till den för hur bilden genererades.
+ */
+function ScheduleScreenshot() {
+  return (
+    <img
+      src="/screenshots/schema.png"
+      alt="Skärmdump av schemat i Varannan, med Mamma och Pappa som exempelnamn"
+      className="h-full w-full object-cover"
+    />
   );
 }
 
 // ---------------------------------------------------------------------------
 // Mockup-vyer. Allt innehåll är påhittat.
 // ---------------------------------------------------------------------------
-
-function CalendarMock() {
-  // Fast, påhittat mönster (inte kopplat till någon riktig cykel) —
-  // bara till för att visa hur färgblocken ser ut i schemat.
-  const pattern = ["M", "M", "M", "M", "P", "P", "P", "P", "P", "M", "M", "M", "M", "M", "P", "P", "P", "P", "P", "M", "M"];
-  return (
-    <div>
-      <p className="mb-2 text-center text-xs font-semibold text-stone-600">September</p>
-      <div className="grid grid-cols-7 gap-1">
-        {pattern.map((who, i) => (
-          <div
-            key={i}
-            className={`grid h-6 w-6 place-items-center rounded-md text-[9px] font-semibold ${
-              who === "M" ? "bg-rose-100 text-rose-600" : "bg-amber-100 text-amber-700"
-            }`}
-          >
-            {i + 1}
-          </div>
-        ))}
-      </div>
-      <div className="mt-3 flex gap-3 text-[10px] text-stone-500">
-        <span className="flex items-center gap-1">
-          <span className="h-2 w-2 rounded-full bg-rose-400" /> Mamma
-        </span>
-        <span className="flex items-center gap-1">
-          <span className="h-2 w-2 rounded-full bg-amber-400" /> Pappa
-        </span>
-      </div>
-    </div>
-  );
-}
 
 function HandoffMock() {
   return (
