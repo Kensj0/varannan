@@ -1,5 +1,7 @@
 "use client";
 
+import LandingCarousel from "./LandingCarousel";
+
 /**
  * Publik hemsida, visas för webbläsarbesökare som inte är inloggade
  * (se AuthGate.tsx). Krävs av Google Clouds branding-granskning för
@@ -20,6 +22,8 @@ export default function LandingPage({ onLogin }: { onLogin: () => void }) {
         tur det är, föreslå ansvarsbyten, och håll koll på aktiviteter — på ett ställe båda
         hushållen kommer åt.
       </p>
+
+      <LandingCarousel />
 
       <ul className="mb-10 space-y-3 text-stone-600">
         <Feature text="Ett gemensamt schema, synligt för båda föräldrarna" />
