@@ -37,13 +37,14 @@ export default function LandingPage({ onLogin }: { onLogin: () => void }) {
         <div className="flex flex-col">
           <h1 className="mb-3 text-4xl font-bold text-stone-800 md:text-5xl">Varannan</h1>
           <p className="mb-6 text-lg leading-relaxed text-stone-600">
-            En delad kalender för föräldrar som samarbetar kring vårdnad och barnpassning. Se
-            vems tur det är, föreslå ansvarsbyten, och håll koll på aktiviteter — på ett ställe
-            båda hushållen kommer åt.
+            En delad kalender för föräldrar som samarbetar kring vårdnad och barnpassning. Ställ
+            in ert grundschema precis som ni redan gör det — varannan vecka, 3-2-2, eller något
+            annat — och se vems tur det är, föreslå ansvarsbyten, och håll koll på aktiviteter på
+            ett ställe båda hushållen kommer åt.
           </p>
 
           <ul className="hidden space-y-3 text-stone-600 md:block">
-            <Feature text="Ett gemensamt schema, synligt för båda föräldrarna" />
+            <Feature text="Grundschemat sätts efter er egen rytm — varannan vecka, 3-2-2, vad ni vill" />
             <Feature text="Föreslå och godkänn ansvarsbyten utan krångel" />
             <Feature text="Synk till Google Kalender, Apple Kalender eller Outlook" />
             <Feature text="Mail- och pushpåminnelser inför varje överlämning" />
@@ -65,7 +66,7 @@ export default function LandingPage({ onLogin }: { onLogin: () => void }) {
         </div>
 
         <ul className="mt-8 space-y-3 text-stone-600 md:hidden">
-          <Feature text="Ett gemensamt schema, synligt för båda föräldrarna" />
+          <Feature text="Grundschemat sätts efter er egen rytm — varannan vecka, 3-2-2, vad ni vill" />
           <Feature text="Föreslå och godkänn ansvarsbyten utan krångel" />
           <Feature text="Synk till Google Kalender, Apple Kalender eller Outlook" />
           <Feature text="Mail- och pushpåminnelser inför varje överlämning" />
