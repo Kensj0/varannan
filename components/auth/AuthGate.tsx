@@ -20,14 +20,16 @@ import { createFamilyTeam, createInvite, addChild, saveCustodyCycle } from "../.
  * har lyssnarna. Tidigare låg den logiken bara som en återvändsgränd
  * med en utloggningsknapp.
  *
- * Undantag: /join hanterar sitt eget flöde, eftersom man kan bli
- * inbjuden innan man har ett konto.
+ * Undantag: /join och /integritetspolicy hanterar sig själva utanför
+ * inloggningskravet — /join eftersom man kan bli inbjuden innan man
+ * har ett konto, /integritetspolicy eftersom Google (OAuth-granskning)
+ * och besökare måste kunna läsa den utan att logga in.
  */
 export default function AuthGate({ children }: { children: ReactNode }) {
   const { user, userDoc, loading, refreshUserDoc } = useAuth();
   const pathname = usePathname();
 
-  if (pathname === "/join") {
+  if (pathname === "/join" || pathname === "/integritetspolicy") {
     return <>{children}</>;
   }
 
