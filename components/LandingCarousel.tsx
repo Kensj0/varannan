@@ -70,11 +70,21 @@ function Slide({ children, flush = false }: { children: React.ReactNode; flush?:
   );
 }
 
-/** Enkel "telefonram" som mockup-vyerna ritas inuti. */
+/**
+ * Telefonram som mockup-vyerna ritas inuti. Fast bildförhållande
+ * (808:1172, samma som den riktiga skärmdumpen i schema.png) i
+ * stället för en godtycklig min-höjd — annars skars skärmdumpen i
+ * kanterna när object-cover fick fylla en ram med FEL proportioner
+ * mot bilden. Alla fyra slides delar samma ram nu, så det blir ingen
+ * hoppig storleksändring när man swipar mellan dem.
+ */
 function PhoneFrame({ children, flush = false }: { children: React.ReactNode; flush?: boolean }) {
   return (
-    <div className="w-[220px] overflow-hidden rounded-[28px] border-4 border-stone-800 bg-white shadow-lg">
-      <div className={`h-full min-h-[380px] bg-stone-50 ${flush ? "" : "p-3"}`}>{children}</div>
+    <div
+      className="w-[240px] overflow-hidden rounded-[28px] border-4 border-stone-800 bg-white shadow-lg"
+      style={{ aspectRatio: "808 / 1172" }}
+    >
+      <div className={`h-full w-full bg-stone-50 ${flush ? "" : "p-3"}`}>{children}</div>
     </div>
   );
 }
