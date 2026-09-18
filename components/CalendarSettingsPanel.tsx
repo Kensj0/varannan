@@ -12,8 +12,6 @@ import { CustodyCycleDoc } from "../types/schema";
 
 interface CalendarSettingsPanelProps {
   onClose: () => void;
-  showWeekNumbers: boolean;
-  onToggleShowWeekNumbers: (value: boolean) => void;
   myColorId?: ParentColorId;
   onSelectColor: (colorId: ParentColorId) => Promise<void>;
   otherParentColorHex: string;
@@ -39,8 +37,6 @@ interface CalendarSettingsPanelProps {
 
 export default function CalendarSettingsPanel({
   onClose,
-  showWeekNumbers,
-  onToggleShowWeekNumbers,
   myColorId,
   onSelectColor,
   otherParentColorHex,
@@ -136,13 +132,6 @@ export default function CalendarSettingsPanel({
         >
           Avtal
         </button>
-
-        <Section title="Visning" />
-
-        <label className="flex items-center justify-between py-2">
-          <span className="text-sm text-stone-700">Visa veckonummer</span>
-          <Toggle checked={showWeekNumbers} onChange={onToggleShowWeekNumbers} />
-        </label>
 
         <Section title="Bytestid" />
         <p className="mb-2 text-[11px] leading-snug text-stone-400">
@@ -269,22 +258,5 @@ function Section({ title, first = false }: { title: string; first?: boolean }) {
     >
       {title}
     </p>
-  );
-}
-
-function Toggle({ checked, onChange }: { checked: boolean; onChange: (value: boolean) => void }) {
-  return (
-    <button
-      role="switch"
-      aria-checked={checked}
-      onClick={() => onChange(!checked)}
-      className={`relative h-6 w-10 shrink-0 rounded-full transition ${checked ? "bg-rose-500" : "bg-stone-200"}`}
-    >
-      <span
-        className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition ${
-          checked ? "left-[18px]" : "left-0.5"
-        }`}
-      />
-    </button>
   );
 }

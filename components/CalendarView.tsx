@@ -88,7 +88,6 @@ const LONG_PRESS_MS = 500;
 const ONE_MINUTE_MS = 60 * 1000;
 /** Total lucka vid en bytespunkt; halva dras in från vardera stapeln. */
 const BAR_GAP_PX = 6;
-const SHOW_WEEK_NUMBERS_KEY = "varannan:showWeekNumbers";
 
 export default function CalendarView({
   monthDate,
@@ -132,15 +131,11 @@ export default function CalendarView({
   const myColorHex = parentColorHex(myColorId, 0);
   const switchHour = cycle.switchHour;
 
-  const [showWeekNumbers, setShowWeekNumbers] = useState(true);
-  useEffect(() => {
-    const stored = typeof window !== "undefined" ? window.localStorage.getItem(SHOW_WEEK_NUMBERS_KEY) : null;
-    if (stored !== null) setShowWeekNumbers(stored === "1");
-  }, []);
-  function toggleShowWeekNumbers(value: boolean) {
-    setShowWeekNumbers(value);
-    if (typeof window !== "undefined") window.localStorage.setItem(SHOW_WEEK_NUMBERS_KEY, value ? "1" : "0");
-  }
+  // Veckonummer ska ALLTID synas — ingen inställning för det längre
+  // (togglen togs bort; en osynkad, per-enhet localStorage-inställning
+  // för något så grundläggande som veckonumrering var förvirrande: samma
+  // förälder kunde se olika saker på olika enheter).
+  const showWeekNumbers = true;
 
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [managerOpen, setManagerOpen] = useState(false);
@@ -412,8 +407,6 @@ export default function CalendarView({
         {settingsOpen && (
           <CalendarSettingsPanel
             onClose={() => setSettingsOpen(false)}
-            showWeekNumbers={showWeekNumbers}
-            onToggleShowWeekNumbers={toggleShowWeekNumbers}
             myColorId={myColorId}
             onSelectColor={onSelectColor}
             otherParentColorHex={otherParentColorHex}
