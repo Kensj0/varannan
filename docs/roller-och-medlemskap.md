@@ -4,7 +4,10 @@ Levande dokument. Uppdateras efterhand som etapper blir klara, så att
 nästa session (eller nästa person) ser var arbetet står utan att gräva
 i commit-historiken.
 
-**Status:** Etapp 1 pågår.
+**Status:** Etapp 1 — datamodell, migreringsskript och de känsligaste
+reglerna (childInfo/accounts/dayBalance/children-dokumentet) klara.
+Regeltester skrivna men INTE körda (kräver lokal emulator). Se
+"Läge just nu" längst ner innan du fortsätter.
 
 ---
 
@@ -144,3 +147,54 @@ varje — det kan jag inte göra åt honom.
 - `calendarParentIds()` i `types/schema.ts` faller tillbaka på teamets
   `parentIds` när barnet saknar egna. Den fallbacken måste överleva
   migreringen, annars tappar gamla kalendrar sina medlemmar.
+
+## Läge just nu (efter denna session)
+
+**Klart:**
+- `types/schema.ts`: `ChildDoc.members`/`memberUids`, `calendarRoleFor()`,
+  `ShiftRequestDoc.requiredApprovers`/`approvedBy` (för etapp 4),
+  `TeamInviteDoc`-typ förberedd (för etapp 2).
+- `functions/src/index.ts`: `addChild` och `acceptCalendarInvite`
+  sätter `members`/`memberUids` samtidigt som `parentIds` — nya
+  kalendrar behöver aldrig migreringsskriptet.
+- `firestore.rules`: nya helpers (`isCalendarParticipant`, `myRole`,
+  `isParentOfCalendar`, `canViewCalendarContent`). Hårdat: `childInfo`,
+  `accounts`, `dayBalance`, `dayBalanceHistory`, `balanceRequests`
+  (kräver nu explicit förälderroll — en anhörig kan INTE läsa dessa
+  längre). `custodyCycle` öppnad för `relative` (behövs för att visa
+  schemat). `children/{childId}`: läsning breddad till
+  `isCalendarParticipant` (så en anhörig utan `users.teamId` på just
+  det teamet ändå ser kalendern), skrivning helt stängd för klienten
+  (`allow write: if false`) — bekräftat att `addChild`/`renameChild`/
+  `deleteChild` redan är Cloud Function-callables, så inget i
+  produktion skriver dit direkt idag.
+- `functions/src/scripts/migrateChildMembers.ts`: additivt,
+  idempotent migreringsskript (samma två-stegs mönster som
+  `migrateEndAt.ts`). INTE KÖRT ÄN.
+- `test/firestore.rules.test.ts`: regeltester för allt ovan +
+  bakåtkompatibilitet (en kalender utan `members` beter sig som idag)
+  + att en anhörig inte kan ge sig själv rollen `parent`. Kompilerar,
+  men KÖRDES ALDRIG mot en riktig emulator (ingen nätverksåtkomst till
+  Firebase-emulatorns binärer i den sandbox där koden skrevs).
+
+**Medvetet OGJORT i denna omgång:** `events`, `packLists`, `notes`,
+`todos`, `chatMessages`, `shiftRequests`, `scheduleStructureRequests`
+är kvar på `isTeamMember`, orört. Ingen anhörig kan skapas i produktion
+än (inbjudningsflödet är etapp 2), så det finns inget att testa mot
+och ingen verklig risk minskar av att bygga om dem nu. Ta med det när
+etapp 2 (inbjudan) byggs — annars kan en inbjuden anhörig få tillgång
+till chatten via `isTeamMember`, vilket bryter mot regeltabellen ovan.
+
+**Innan deploy — kör i ordning, lokalt:**
+1. `cd functions && npm install && npm run build`
+2. `firebase emulators:exec --only firestore "npm run test:rules"`
+   (kör från repo-roten, inte från `functions/`) — ALLA tester ska bli
+   gröna innan reglerna deployas.
+3. Inventeringssteget av migreringen (read-only, skriver inget):
+   `GOOGLE_APPLICATION_CREDENTIALS=/sökväg/till/nyckel.json node lib/functions/src/scripts/migrateChildMembers.js`
+   — granska listan, den ska matcha antalet kalendrar du faktiskt har.
+4. Deploya reglerna: `firebase deploy --only firestore:rules`
+5. Deploya functions: `firebase deploy --only functions`
+6. Kör migreringen på riktigt: samma kommando som i steg 3 + `--apply`
+7. Testa som riktig användare — logga in som båda föräldrarna, se att
+   allt (schema, childInfo, ställning, chatt) fortfarande fungerar.

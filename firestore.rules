@@ -29,6 +29,62 @@ service cloud.firestore {
     }
 
     // ---------------------------------------------------------------
+    // Roller (etapp 1, docs/roller-och-medlemskap.md)
+    //
+    // Medlemskapet flyttar till barnet: child.memberUids/members är
+    // sanningen framöver, men saknas fältet (kalendrar migreringen
+    // inte nått, eller skapade innan roller fanns) faller allt tillbaka
+    // på calendarMembers()/isCalendarMember() ovan och alla i den
+    // gruppen räknas som "parent" — exakt dagens beteende, oförändrat.
+    // ---------------------------------------------------------------
+    function childDoc(teamId, childId) {
+      return get(/databases/$(database)/documents/teams/$(teamId)/children/$(childId)).data;
+    }
+
+    // Läser child.members[uid].role om fältet finns, annars null.
+    function memberRole(teamId, childId, uid) {
+      let child = childDoc(teamId, childId);
+      return child.get("members", {}).get(uid, {}).get("role", null);
+    }
+
+    // Är uid alls med på kalendern — antingen via members eller (fallback)
+    // via calendarMembers()? Kräver INTE isTeamMember, till skillnad från
+    // isCalendarMember, eftersom en anhörig inte nödvändigtvis har
+    // users.teamId satt till just det här teamet.
+    function isCalendarParticipant(teamId, childId) {
+      let child = childDoc(teamId, childId);
+      return isSignedIn() && (
+        request.auth.uid in child.get("memberUids", []) ||
+        request.auth.uid in calendarMembers(teamId, childId)
+      );
+    }
+
+    // Rollen för den inloggade användaren på kalendern, eller null om
+    // man inte är med alls. Faller tillbaka på "parent" för alla i
+    // calendarMembers() när members/memberUids saknar uid:t.
+    function myRole(teamId, childId) {
+      let explicit = memberRole(teamId, childId, request.auth.uid);
+      return explicit != null
+        ? explicit
+        : (request.auth.uid in calendarMembers(teamId, childId) ? "parent" : null);
+    }
+
+    function isParentOfCalendar(teamId, childId) {
+      return isCalendarParticipant(teamId, childId) && myRole(teamId, childId) == "parent";
+    }
+
+    // parent eller relative — får se schema/aktiviteter/listor, men inte
+    // childInfo/accounts/chatt/inställningar (se isParentOfCalendar).
+    function canViewCalendarContent(teamId, childId) {
+      return isCalendarParticipant(teamId, childId) && myRole(teamId, childId) != "viewer";
+    }
+
+    // parent eller relative — får lägga in aktiviteter.
+    function canEditCalendarContent(teamId, childId) {
+      return isCalendarParticipant(teamId, childId) && myRole(teamId, childId) != "viewer";
+    }
+
+    // ---------------------------------------------------------------
     // users/{uid}
     // ---------------------------------------------------------------
     match /users/{uid} {
@@ -52,43 +108,60 @@ service cloud.firestore {
       allow write: if false;
 
       match /children/{childId} {
-        // Listningen av barn måste vara läsbar för hela teamet — annars
-        // kan klienten inte avgöra vilka kalendrar man är med i. Vilket
-        // INNEHÅLL som visas styrs av reglerna nedan.
-        allow read, write: if isTeamMember(teamId);
+        // Listningen av barn måste vara läsbar — annars kan klienten
+        // inte avgöra vilka kalendrar man är med i. Vilket INNEHÅLL som
+        // visas styrs av reglerna nedan. En anhörig/utomstående har
+        // inte nödvändigtvis users.teamId satt till DET HÄR teamet
+        // (samma person kan höra till flera familjers kalendrar), så
+        // isCalendarParticipant() krävs som alternativ till isTeamMember.
+        allow read: if isTeamMember(teamId) || isCalendarParticipant(teamId, childId);
+        // addChild/renameChild/deleteChild är redan Cloud Function-
+        // callables (se lib/onboardingClient.ts) — klienten skriver
+        // aldrig hit direkt. Håll det så: annars kunde en anhörig
+        // skriva sig själv till members med rollen "parent".
+        allow write: if false;
 
         match /childInfo/{docId} {
           // Barninfo innehåller personnummer, passnummer och
-          // medicinsk information. Endast teamets två föräldrar får
-          // läsa/skriva — ingen delning, ingen collectionGroup-fråga
-          // (se saknaden av index på dessa fält i firestore.indexes.json:
-          // fälten ska ALDRIG indexeras, då de annars blir sökbara).
-          allow read, write: if isCalendarMember(teamId, childId);
+          // medicinsk information. Bara föräldrar på KALENDERN får
+          // läsa/skriva — inte en anhörig eller utomstående, även om de
+          // delar schemat. Ingen collectionGroup-fråga (se saknaden av
+          // index på dessa fält i firestore.indexes.json: fälten ska
+          // ALDRIG indexeras, då de annars blir sökbara).
+          allow read, write: if isParentOfCalendar(teamId, childId);
         }
         match /accounts/{accountId} {
           // Inloggningar och PIN-koder till barnens tjänster.
           // Samma restriktion som childInfo.
-          allow read, write: if isCalendarMember(teamId, childId);
+          allow read, write: if isParentOfCalendar(teamId, childId);
         }
         match /custodyCycle/{docId} {
-          allow read: if isTeamMember(teamId);
+          // Grundschemat driver kalendervyn — en anhörig (relative)
+          // måste kunna läsa den för att se schemat, precis som en
+          // förälder. En viewer (utomstående) också, se tabellen i
+          // docs/roller-och-medlemskap.md.
+          allow read: if isTeamMember(teamId) || canViewCalendarContent(teamId, childId);
           // Cykeln påverkar Ställningen retroaktivt om den ändras —
           // låt bara Cloud Function skriva den (kräver explicit
           // "bekräfta"-flöde i UI:t som anropar en callable function).
           allow write: if false;
         }
         match /dayBalance/{docId} {
-          allow read: if isTeamMember(teamId);
+          // Ställningen är en förälder-till-förälder-avräkning —
+          // anhöriga/utomstående ser den inte (tabellen i
+          // docs/roller-och-medlemskap.md nämner den inte som delad,
+          // och en anhörigdag ska uttryckligen INTE synas påverka den).
+          allow read: if isParentOfCalendar(teamId, childId);
           // Skrivs ENDAST av Cloud Function (respondToShiftRequest-
           // transaktionen) — aldrig direkt av klienten.
           allow write: if false;
         }
         match /dayBalanceHistory/{docId} {
-          allow read: if isTeamMember(teamId);
+          allow read: if isParentOfCalendar(teamId, childId);
           allow write: if false;
         }
         match /balanceRequests/{docId} {
-          allow read: if isTeamMember(teamId);
+          allow read: if isParentOfCalendar(teamId, childId);
           // Skapas och besvaras via callables, så att ingen kan skriva
           // om ställningen ensidigt genom att godkänna sin egen begäran.
           allow write: if false;

@@ -1155,6 +1155,15 @@ export const addChild = onCall(async (request) => {
   }
 
   const childRef = db.collection(`teams/${teamId}/children`).doc();
+  const sharedParentIds = parentIds.filter((id: string) => id !== PENDING_PARTNER_ID);
+  const now = admin.firestore.FieldValue.serverTimestamp();
+  // members/memberUids speglar sharedParentIds som "parent" redan vid
+  // skapandet, så nya kalendrar aldrig behöver migreringsskriptet —
+  // se docs/roller-och-medlemskap.md.
+  const members: Record<string, { role: "parent"; addedAt: FirebaseFirestore.FieldValue; invitedBy: string }> = {};
+  for (const parentUid of sharedParentIds) {
+    members[parentUid] = { role: "parent", addedAt: now, invitedBy: uid };
+  }
   const batch = db.batch();
   batch.set(childRef, {
     id: childRef.id,
@@ -1162,8 +1171,10 @@ export const addChild = onCall(async (request) => {
     name: trimmed,
     // Nya kalendrar delas med teamets nuvarande föräldrar. Delningen
     // ligger på barnet så att den kan ändras per kalender senare.
-    parentIds: parentIds.filter((id: string) => id !== PENDING_PARTNER_ID),
-    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    parentIds: sharedParentIds,
+    members,
+    memberUids: sharedParentIds,
+    createdAt: now,
     ...(typeof birthYear === "number" ? { birthYear } : {}),
   });
   batch.update(teamRef, {
@@ -1464,9 +1475,23 @@ export const acceptCalendarInvite = onCall(async (request) => {
   const profile = profileFromAuth(request.auth!);
   const teamParentIds: string[] = teamSnap.data()?.parentIds ?? [];
 
+  const now = admin.firestore.FieldValue.serverTimestamp();
+  const newParentIds = [...members, uid];
   const batch = db.batch();
   batch.update(inviteRef, { used: true, usedAt: admin.firestore.FieldValue.serverTimestamp() });
-  batch.update(childRef, { parentIds: [...members, uid] });
+  batch.update(childRef, {
+    parentIds: newParentIds,
+    // Skriv members/memberUids samtidigt, för BÅDA föräldrarna — den
+    // som redan fanns kan sakna fältet om kalendern skapades innan
+    // roller fanns (migreringen har då inte nått den ännu).
+    ...Object.fromEntries(
+      newParentIds.map((parentUid) => [
+        `members.${parentUid}`,
+        { role: "parent", addedAt: now, invitedBy: parentUid === uid ? uid : invite.invitedBy ?? uid },
+      ]),
+    ),
+    memberUids: newParentIds,
+  });
 
   if (!teamParentIds.includes(uid)) {
     batch.update(teamRef, {

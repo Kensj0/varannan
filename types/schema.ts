@@ -269,6 +269,28 @@ export interface ChildDoc {
    * innan delningen flyttades hit fortsätter fungera oförändrat.
    */
   parentIds?: string[];
+  /**
+   * Alla som hör till kalendern, med roll. Föräldrar i `members` ska
+   * alltid vara en delmängd av `parentIds` (parentIds är sanningen för
+   * ställning och grundschema; members styr behörigheter). Saknas
+   * fältet helt (kalendrar från innan roller fanns) gäller samma
+   * fallback som `calendarParentIds`: alla i parentIds är parent.
+   */
+  members?: Record<
+    string /* uid */,
+    {
+      role: "parent" | "relative" | "viewer";
+      addedAt: FirestoreTimestamp;
+      invitedBy: string;
+    }
+  >;
+  /**
+   * Denormaliserad kopia av Object.keys(members). Låter
+   * firestore.rules kolla medlemskap utan att läsa in hela mappen, och
+   * driver collectionGroup-frågan som listar en persons kalendrar
+   * tvärs över team.
+   */
+  memberUids?: string[];
   createdAt: FirestoreTimestamp;
 }
 
@@ -280,6 +302,26 @@ export function calendarParentIds(
   const own = child?.parentIds;
   if (own && own.length > 0) return own;
   return team?.parentIds ?? [];
+}
+
+export type CalendarRole = "parent" | "relative" | "viewer";
+
+/**
+ * Rollen en given uid har på kalendern. Faller tillbaka på "parent"
+ * för alla i calendarParentIds() när `members` saknas eller inte
+ * täcker uid:t — dvs innan migreringen körts eller för kalendrar
+ * migreringen ännu inte nått. Ger aldrig en roll åt någon som inte är
+ * medlem alls.
+ */
+export function calendarRoleFor(
+  uid: string,
+  child: { parentIds?: string[]; members?: ChildDoc["members"] } | null | undefined,
+  team: { parentIds?: string[] } | null | undefined,
+): CalendarRole | null {
+  const fromMembers = child?.members?.[uid]?.role;
+  if (fromMembers) return fromMembers;
+  if (calendarParentIds(child, team).includes(uid)) return "parent";
+  return null;
 }
 
 /** /children/{childId}/childInfo/main */
@@ -399,6 +441,14 @@ export interface ShiftRequestDoc {
   respondedBy?: string;
   respondedAt?: FirestoreTimestamp;
   createdAt: FirestoreTimestamp;
+  /**
+   * Sätts bara när requestedBy är en anhörig (relative): då krävs BÅDA
+   * föräldrarnas ja, inte bara mottagarens. Saknas fältet gäller den
+   * vanliga en-mottagare-godkänner-logiken. Se etapp 4 i
+   * docs/roller-och-medlemskap.md.
+   */
+  requiredApprovers?: string[];
+  approvedBy?: string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -557,6 +607,36 @@ export interface ChatMessageDoc {
   /** Länk till t.ex. en shiftRequest som visas som ett kort i chatten. */
   linkedShiftRequestId?: string;
   createdAt: FirestoreTimestamp;
+}
+
+// ---------------------------------------------------------------------------
+// INBJUDNINGAR — teamInvites/{code}
+// ---------------------------------------------------------------------------
+
+/**
+ * En kalenderinbjudan. Idag (createCalendarInvite) skapas den direkt
+ * med status "sent" och gäller bara en andra förälder. Etapp 2 i
+ * docs/roller-och-medlemskap.md lägger till role/dubbelt godkännande:
+ * en inbjudan till relative/viewer skapas som "pending_approval" och
+ * blir "sent" (koden mailas) först när alla i requiredApprovers sagt
+ * ja. Fälten nedan är förberedda men oanvända tills dess.
+ */
+export interface TeamInviteDoc {
+  code: string;
+  teamId: string;
+  childId: string;
+  invitedBy: string;
+  invitedEmail?: string;
+  /** Saknas fältet = förälder, som i dagens enda flöde. */
+  role?: CalendarRole;
+  used: boolean;
+  usedAt?: FirestoreTimestamp;
+  expiresAt: FirestoreTimestamp;
+  createdAt: FirestoreTimestamp;
+  /** Kalenderns föräldrar vid inbjudningstillfället — måste alla säga ja. */
+  requiredApprovers?: string[];
+  approvedBy?: string[];
+  status?: "pending_approval" | "sent" | "used" | "expired";
 }
 
 // ---------------------------------------------------------------------------
