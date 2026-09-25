@@ -3,6 +3,42 @@
 import { useState } from "react";
 import { sendTestPush } from "../lib/pushNotifications";
 import InvitePartnerBanner from "./onboarding/InvitePartnerBanner";
+import { GoogleCalendarSyncModal } from "./GoogleCalendarSyncModal";
+import { EventDoc } from "../types/schema";
+
+// Demo-aktiviteter för Google Calendar sync-visa (inte riktiga från Firestore)
+const DEMO_EVENTS: EventDoc[] = [
+  {
+    id: "demo1",
+    teamId: "demo",
+    childId: "demo",
+    title: "Fys-träning",
+    startAt: { seconds: Math.floor((Date.now() + 2 * 24 * 60 * 60 * 1000) / 1000), nanoseconds: 0 },
+    endAt: { seconds: Math.floor((Date.now() + 2 * 24 * 60 * 60 * 1000 + 60 * 60 * 1000) / 1000), nanoseconds: 0 },
+    createdBy: "demo",
+    createdAt: { seconds: Math.floor(Date.now() / 1000), nanoseconds: 0 },
+  },
+  {
+    id: "demo2",
+    teamId: "demo",
+    childId: "demo",
+    title: "Tandläkartid",
+    startAt: { seconds: Math.floor((Date.now() + 5 * 24 * 60 * 60 * 1000) / 1000), nanoseconds: 0 },
+    endAt: { seconds: Math.floor((Date.now() + 5 * 24 * 60 * 60 * 1000 + 30 * 60 * 1000) / 1000), nanoseconds: 0 },
+    createdBy: "demo",
+    createdAt: { seconds: Math.floor(Date.now() / 1000), nanoseconds: 0 },
+  },
+  {
+    id: "demo3",
+    teamId: "demo",
+    childId: "demo",
+    title: "Skolavslutning",
+    startAt: { seconds: Math.floor((Date.now() + 10 * 24 * 60 * 60 * 1000) / 1000), nanoseconds: 0 },
+    endAt: { seconds: Math.floor((Date.now() + 10 * 24 * 60 * 60 * 1000 + 24 * 60 * 60 * 1000) / 1000), nanoseconds: 0 },
+    createdBy: "demo",
+    createdAt: { seconds: Math.floor(Date.now() / 1000), nanoseconds: 0 },
+  },
+];
 
 type PushPermission = "unsupported" | "default" | "granted" | "denied" | null;
 
@@ -48,6 +84,7 @@ export default function SettingsView({
 }: SettingsViewProps) {
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState(false);
+  const [googleSyncModalOpen, setGoogleSyncModalOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [editingName, setEditingName] = useState(false);
   const [nameDraft, setNameDraft] = useState(displayName);
@@ -284,6 +321,19 @@ export default function SettingsView({
       </div>
 
       <div className="rounded-2xl bg-white p-4 shadow-sm">
+        <p className="text-xs font-semibold uppercase tracking-wide text-stone-400">Integrationer</p>
+        <p className="mt-2 text-[13px] leading-snug text-stone-500">
+          Synka aktiviteter från Varannan till Google Calendar.
+        </p>
+        <button
+          onClick={() => setGoogleSyncModalOpen(true)}
+          className="mt-3 w-full rounded-lg bg-blue-50 px-3 py-2 text-sm font-medium text-blue-700 hover:bg-blue-100"
+        >
+          Synka till Google Calendar
+        </button>
+      </div>
+
+      <div className="rounded-2xl bg-white p-4 shadow-sm">
         <p className="text-xs font-semibold uppercase tracking-wide text-stone-400">Lösenord</p>
         <p className="mt-2 text-[13px] leading-snug text-stone-500">
           Vi skickar en länk för att byta lösenord till din mejl.
@@ -304,6 +354,13 @@ export default function SettingsView({
       >
         Logga ut
       </button>
+
+      <GoogleCalendarSyncModal
+        isOpen={googleSyncModalOpen}
+        onClose={() => setGoogleSyncModalOpen(false)}
+        events={DEMO_EVENTS}
+        childName="Barnet"
+      />
     </div>
   );
 }
