@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import {
   collection,
   doc,
+  documentId,
   onSnapshot,
   query,
   where,
@@ -92,6 +93,53 @@ export function useChildren(teamId: string | null | undefined): ListenerState<Ch
     );
     return unsub;
   }, [teamId]);
+
+  return state;
+}
+
+/**
+ * Samma sak som useChildren, men för en anhörig/utomstående på en
+ * FRÄMMANDE kalender: den ofiltrerade listfrågan ovan (hela
+ * children-kollektionen i teamet) NEKAS I SIN HELHET av reglerna för
+ * den rollen — firestore.rules kan inte bevisa att ALLA barn i teamet
+ * uppfyller isCalendarParticipant utan en matchande where(), så hela
+ * frågan (inte bara de otillåtna dokumenten) avvisas. Bekräftat med ett
+ * regeltest, se test/firestore.rules.test.ts. En riktig anhörig-
+ * testanvändare fastnade i onboardingens "lägg till barn" på grund av
+ * detta — se docs/roller-och-medlemskap.md.
+ *
+ * where(documentId(), "in", ids) är däremot en query Firestore KAN
+ * bevisa säker (ID:na är kända i förväg, ingen gissning om vad som
+ * finns i kollektionen), så den fungerar för alla tre roller. Max 10
+ * id:n per Firestore-begränsning — mer än nog för hur många kalendrar
+ * en anhörig delar inom SAMMA familj.
+ */
+export function useChildrenByIds(
+  teamId: string | null | undefined,
+  childIds: string[]
+): ListenerState<ChildDoc[]> {
+  const [state, setState] = useState<ListenerState<ChildDoc[]>>({ data: [], loading: true, error: null });
+  const idsKey = [...childIds].sort().join(",");
+
+  useEffect(() => {
+    if (!teamId || childIds.length === 0) {
+      setState({ data: [], loading: false, error: null });
+      return;
+    }
+    const q = query(
+      collection(db, `teams/${teamId}/children`),
+      where(documentId(), "in", childIds.slice(0, 10))
+    );
+    const unsub = onSnapshot(
+      q,
+      (snap) => setState({ data: snap.docs.map((d) => d.data() as ChildDoc), loading: false, error: null }),
+      (error) => setState({ data: [], loading: false, error })
+    );
+    return unsub;
+    // idsKey (sorterad, join:ad) fångar innehållet — childIds själv är en
+    // ny array-referens varje render och skulle starta om lyssnaren i onödan.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [teamId, idsKey]);
 
   return state;
 }

@@ -37,6 +37,7 @@ import {
 } from "@firebase/rules-unit-testing";
 import {
   doc,
+  documentId,
   getDoc,
   getDocs,
   setDoc,
@@ -353,6 +354,27 @@ async function main() {
     "KRITISKT: inte ens en riktig förälder kan skriva till barn-dokumentet direkt",
     () => updateDoc(doc(dbAs(PARENT_1), `teams/${TEAM_A}/children/${CHILD_A}`), { name: "Nytt namn" }),
     false
+  );
+  await check(
+    "en anhörig kan INTE lista HELA children-kollektionen ofiltrerat (useChildren i app/page.tsx " +
+      "gör exakt detta — Firestore kan inte bevisa att ALLA dokument i kollektionen uppfyller " +
+      "regeln utan en matchande where(), så hela frågan nekas, den filtreras INTE per dokument)",
+    () => getDocs(collection(dbAs(RELATIVE), `teams/${TEAM_A}/children`)),
+    false
+  );
+  await check(
+    "förälder (via isTeamMember) kan lista HELA children-kollektionen",
+    () => getDocs(collection(dbAs(PARENT_1), `teams/${TEAM_A}/children`)),
+    true
+  );
+  await check(
+    "en anhörig KAN lista children-kollektionen filtrerad på where(documentId(),'in',[egna id:n]) " +
+      "— fixen för buggen ovan (useChildrenByIds i lib/hooks/useFirestore.ts)",
+    () =>
+      getDocs(
+        query(collection(dbAs(RELATIVE), `teams/${TEAM_A}/children`), where(documentId(), "in", [CHILD_A]))
+      ),
+    true
   );
 
   console.log("\ncustodyCycle — synlig för ALLA tre roller (\"Se schema och aktiviteter\": ja/ja/ja)");
