@@ -12,6 +12,7 @@ import {
 import {
   useTeam,
   useChildren,
+  useChildrenByIds,
   useCustodyCycle,
   useDayBalance,
   useApprovedShiftRequests,
@@ -228,7 +229,27 @@ export default function HomePage() {
   // firestore.rules, isTeamMember krävs).
   const { data: homeTeam } = useTeam(homeTeamId);
   const team = isOwnTeam ? homeTeam : null;
-  const { data: children, loading: childrenLoading } = useChildren(teamId);
+  // useChildren gör en OFILTRERAD listfråga över hela children-
+  // kollektionen i teamet — firestore.rules NEKAR den i sin helhet för
+  // en anhörig/utomstående (Firestore kan inte bevisa att ALLA barn i
+  // ett främmande team uppfyller isCalendarParticipant utan en
+  // matchande where(), bekräftat med regeltest). Ett riktigt
+  // anhörig-konto fastnade därför i "lägg till barn" — se
+  // docs/roller-och-medlemskap.md. På en FRÄMMANDE kalender används
+  // useChildrenByIds i stället, begränsad till de id:n man faktiskt är
+  // medlem på (från myCalendars, samma team) — en query Firestore KAN
+  // bevisa säker.
+  const foreignChildIds = useMemo(
+    () => (!isOwnTeam && teamId ? (myCalendars ?? []).filter((c) => c.teamId === teamId).map((c) => c.childId) : []),
+    [isOwnTeam, teamId, myCalendars]
+  );
+  const { data: ownTeamChildren, loading: ownTeamChildrenLoading } = useChildren(isOwnTeam ? teamId : null);
+  const { data: foreignChildren, loading: foreignChildrenLoading } = useChildrenByIds(
+    !isOwnTeam ? teamId : null,
+    foreignChildIds
+  );
+  const children = isOwnTeam ? ownTeamChildren : foreignChildren;
+  const childrenLoading = isOwnTeam ? ownTeamChildrenLoading : foreignChildrenLoading;
 
   const [selectedChildId, setSelectedChildId] = useState<string | null>(null);
   /**
