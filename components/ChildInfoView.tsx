@@ -15,6 +15,8 @@ interface ChildInfoViewProps {
   onAddChild: (name: string) => Promise<void>;
   info: ChildInfoDoc | null;
   onSave: (patch: Partial<ChildInfoDoc>) => Promise<void>;
+  /** En anhörig ser barninfo men kan aldrig ändra den — bara förälder. */
+  readOnly?: boolean;
 }
 
 type FieldKey = keyof Omit<ChildInfoDoc, "updatedBy" | "updatedAt">;
@@ -73,6 +75,7 @@ export default function ChildInfoView({
   onAddChild,
   info,
   onSave,
+  readOnly = false,
 }: ChildInfoViewProps) {
   const [adding, setAdding] = useState(false);
   const [newName, setNewName] = useState("");
@@ -176,7 +179,7 @@ export default function ChildInfoView({
           Information som båda föräldrarna behöver komma åt. Bara ni två kan se det här.
         </p>
 
-        {adding ? (
+        {!readOnly && (adding ? (
           <div className="mt-3">
             <input
               autoFocus
@@ -220,7 +223,7 @@ export default function ChildInfoView({
           >
             + Lägg till barn
           </button>
-        )}
+        ))}
 
         {error && <p className="mt-2 text-xs text-rose-600">{error}</p>}
       </div>
@@ -235,6 +238,7 @@ export default function ChildInfoView({
                 spec={field}
                 value={(info?.[field.key] as string) ?? ""}
                 onSave={(value) => onSave({ [field.key]: value } as Partial<ChildInfoDoc>)}
+                readOnly={readOnly}
               />
             ))}
           </div>
@@ -248,10 +252,12 @@ function InfoRow({
   spec,
   value,
   onSave,
+  readOnly = false,
 }: {
   spec: FieldSpec;
   value: string;
   onSave: (value: string) => Promise<void>;
+  readOnly?: boolean;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(value);
@@ -327,16 +333,20 @@ function InfoRow({
                 {revealed ? "Dölj" : "Visa"}
               </button>
             )}
-            <button
-              onClick={() => {
-                setDraft(value);
-                setEditing(true);
-              }}
-              className="text-xs text-stone-400 hover:text-rose-500"
-            >
-              Ändra
-            </button>
+            {!readOnly && (
+              <button
+                onClick={() => {
+                  setDraft(value);
+                  setEditing(true);
+                }}
+                className="text-xs text-stone-400 hover:text-rose-500"
+              >
+                Ändra
+              </button>
+            )}
           </>
+        ) : readOnly ? (
+          <span className="text-sm text-stone-300">—</span>
         ) : (
           <button
             onClick={() => {

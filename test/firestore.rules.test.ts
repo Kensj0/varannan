@@ -282,15 +282,26 @@ async function main() {
 
   const dbAs = (uid: string) => testEnv.authenticatedContext(uid).firestore();
 
-  console.log("childInfo — bara föräldrar, aldrig anhörig/utomstående");
+  console.log(
+    "childInfo — parent+relative läser (Kenny 2026-09-26: \"det ska anhörig ha\"), " +
+      "bara parent skriver, viewer aldrig"
+  );
   await check(
     "förälder i members kan läsa",
     () => getDoc(doc(dbAs(PARENT_1), `teams/${TEAM_A}/children/${CHILD_A}/childInfo/main`)),
     true
   );
   await check(
-    "anhörig (relative) kan INTE läsa",
+    "anhörig (relative) KAN läsa",
     () => getDoc(doc(dbAs(RELATIVE), `teams/${TEAM_A}/children/${CHILD_A}/childInfo/main`)),
+    true
+  );
+  await check(
+    "anhörig (relative) kan INTE skriva",
+    () =>
+      updateDoc(doc(dbAs(RELATIVE), `teams/${TEAM_A}/children/${CHILD_A}/childInfo/main`), {
+        personnummer: "fusk",
+      }),
     false
   );
   await check(

@@ -12,6 +12,8 @@ interface AccountsViewProps {
     patch: { service?: string; username?: string; pinOrNote?: string }
   ) => Promise<void>;
   onDelete: (accountId: string) => Promise<void>;
+  /** En anhörig ser kontona men kan aldrig ändra dem — bara förälder. */
+  readOnly?: boolean;
 }
 
 /**
@@ -26,6 +28,7 @@ export default function AccountsView({
   onCreate,
   onUpdate,
   onDelete,
+  readOnly = false,
 }: AccountsViewProps) {
   const [composing, setComposing] = useState(false);
   const [service, setService] = useState("");
@@ -57,11 +60,12 @@ export default function AccountsView({
             addedByName={parentNames[account.addedBy] ?? "Förälder"}
             onUpdate={onUpdate}
             onDelete={onDelete}
+            readOnly={readOnly}
           />
         ))}
       </div>
 
-      {composing ? (
+      {!readOnly && (composing ? (
         <div className="mt-3 rounded-2xl bg-white p-4 shadow-sm">
           <input
             value={service}
@@ -104,7 +108,7 @@ export default function AccountsView({
         >
           + Lägg till konto
         </button>
-      )}
+      ))}
     </div>
   );
 }
@@ -114,6 +118,7 @@ function AccountCard({
   addedByName,
   onUpdate,
   onDelete,
+  readOnly = false,
 }: {
   account: ChildAccountDoc;
   addedByName: string;
@@ -122,6 +127,7 @@ function AccountCard({
     patch: { service?: string; username?: string; pinOrNote?: string }
   ) => Promise<void>;
   onDelete: (accountId: string) => Promise<void>;
+  readOnly?: boolean;
 }) {
   const [revealed, setRevealed] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -129,7 +135,7 @@ function AccountCard({
   const [username, setUsername] = useState(account.username ?? "");
   const [pinOrNote, setPinOrNote] = useState(account.pinOrNote ?? "");
 
-  if (editing) {
+  if (editing && !readOnly) {
     return (
       <div className="rounded-2xl bg-white p-4 shadow-sm">
         <input
@@ -183,14 +189,16 @@ function AccountCard({
     <div className="rounded-2xl bg-white p-4 shadow-sm">
       <div className="flex items-start justify-between gap-2">
         <h3 className="font-bold text-stone-800">{account.service}</h3>
-        <div className="flex shrink-0 gap-2">
-          <button onClick={() => setEditing(true)} className="text-xs text-stone-400 hover:text-rose-500">
-            Ändra
-          </button>
-          <button onClick={() => onDelete(account.id)} className="text-xs text-stone-400 hover:text-rose-500">
-            Ta bort
-          </button>
-        </div>
+        {!readOnly && (
+          <div className="flex shrink-0 gap-2">
+            <button onClick={() => setEditing(true)} className="text-xs text-stone-400 hover:text-rose-500">
+              Ändra
+            </button>
+            <button onClick={() => onDelete(account.id)} className="text-xs text-stone-400 hover:text-rose-500">
+              Ta bort
+            </button>
+          </div>
+        )}
       </div>
 
       {account.username && <p className="mt-1 text-sm text-stone-600">{account.username}</p>}

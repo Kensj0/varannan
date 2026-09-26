@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { CustodyCycleDoc, CalendarRole } from "../types/schema";
-import { getNextOrdinaryHandoff } from "../lib/custodyCycle";
+import { atSwitchHour, addDays } from "../lib/calendarActions";
 import { EventOccurrence } from "../lib/recurrence";
 
 interface ParentMeta {
@@ -318,7 +318,14 @@ function ShiftStep({
   onCancel: () => void;
   onPropose: (date: Date) => void;
 }) {
-  const nextHandoff = getNextOrdinaryHandoff(cycle, date);
+  // "Ändra ansvar" gäller ALLTID exakt ett dygn: från bytestiden den
+  // valda dagen till bytestiden nästa dag — aldrig längre, oavsett var
+  // nästa ORDINARIE byte råkar ligga i cykeln (se motsvarande
+  // kommentar vid submitShiftChange-anropet i app/page.tsx). `date`
+  // här är bara kalenderdagen (ingen klocka), så både start och slut
+  // räknas ut mot cykelns switchHour i stället för att lita på den.
+  const startAt = atSwitchHour(date, cycle.switchHour);
+  const endAt = atSwitchHour(addDays(date, 1), cycle.switchHour);
 
   return (
     <div>
@@ -329,11 +336,12 @@ function ShiftStep({
 
       <div className="mb-4 rounded-xl bg-stone-50 px-4 py-3">
         <p className="text-xs font-semibold uppercase text-stone-400">Start</p>
-        <p className="font-medium text-stone-800">{formatDate(date)}, {formatTime(date)}</p>
+        <p className="font-medium text-stone-800">{formatDate(startAt)}, {formatTime(startAt)}</p>
       </div>
 
       <p className="mb-4 text-sm italic text-stone-500">
-        {takingOverParent.name} fortsätter att ha ansvaret fram till bytet den {formatDate(nextHandoff)}
+        {takingOverParent.name} har ansvaret till {formatTime(endAt)} den {formatDate(endAt)}, då{" "}
+        {currentParent.name} tar tillbaka det enligt schemat.
       </p>
 
       <p className="mb-5 text-xs text-stone-400">
