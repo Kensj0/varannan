@@ -122,18 +122,23 @@ service cloud.firestore {
         allow write: if false;
 
         match /childInfo/{docId} {
-          // Barninfo innehåller personnummer, passnummer och
-          // medicinsk information. Bara föräldrar på KALENDERN får
-          // läsa/skriva — inte en anhörig eller utomstående, även om de
-          // delar schemat. Ingen collectionGroup-fråga (se saknaden av
-          // index på dessa fält i firestore.indexes.json: fälten ska
-          // ALDRIG indexeras, då de annars blir sökbara).
-          allow read, write: if isParentOfCalendar(teamId, childId);
+          // Barninfo innehåller personnummer, passnummer och medicinsk
+          // information. En anhörig FÅR se den (Kenny 2026-09-26: "det
+          // ska anhörig ha") men aldrig ändra den — bara föräldrar på
+          // KALENDERN skriver. Utomstående (viewer) varken läser eller
+          // skriver — canViewCalendarContent utesluter redan den
+          // rollen. Ingen collectionGroup-fråga (se saknaden av index
+          // på dessa fält i firestore.indexes.json: fälten ska ALDRIG
+          // indexeras, då de annars blir sökbara).
+          allow read: if canViewCalendarContent(teamId, childId);
+          allow write: if isParentOfCalendar(teamId, childId);
         }
         match /accounts/{accountId} {
-          // Inloggningar och PIN-koder till barnens tjänster.
-          // Samma restriktion som childInfo.
-          allow read, write: if isParentOfCalendar(teamId, childId);
+          // Inloggningar och PIN-koder till barnens tjänster. Samma
+          // restriktion som childInfo: anhörig läser, bara förälder
+          // skriver.
+          allow read: if canViewCalendarContent(teamId, childId);
+          allow write: if isParentOfCalendar(teamId, childId);
         }
         match /custodyCycle/{docId} {
           // Grundschemat driver kalendervyn — ALLA tre roller ska

@@ -45,6 +45,7 @@ import {
   proposeBalanceAdjustment,
   respondToBalanceAdjustment,
   atSwitchHour,
+  addDays,
 } from "../lib/calendarActions";
 import { sendChatMessage } from "../lib/chatActions";
 import {
@@ -279,14 +280,15 @@ export default function HomePage() {
   const listsVisited = visitedSections.has("lists");
   const infoVisited = visitedSections.has("info");
 
-  // Vilka flikar rollen på DEN AKTIVA kalendern stänger av (tabellen i
-  // docs/roller-och-medlemskap.md): viewer ser bara Schema, relative
-  // saknar Chatt och Info (barninfo/konton är bara för föräldrar).
-  // BottomNav visar dem nedtonade och gör knapptrycket till en no-op —
+  // Vilka flikar rollen på DEN AKTIVA kalendern stänger av: viewer ser
+  // bara Schema. relative saknar bara Chatt — Info (barninfo/konton) FÅR
+  // hen se (Kenny 2026-09-26), bara inte redigera (se canEditInfo och
+  // ChildInfoView/AccountsView-propparna nedan). BottomNav visar
+  // avstängda flikar nedtonade och gör knapptrycket till en no-op —
   // se BottomNav.tsx.
   const disabledSections = useMemo<Set<AppSection>>(() => {
     if (myRole === "viewer") return new Set<AppSection>(["chat", "lists", "info"]);
-    if (myRole === "relative") return new Set<AppSection>(["chat", "info"]);
+    if (myRole === "relative") return new Set<AppSection>(["chat"]);
     return new Set<AppSection>();
   }, [myRole]);
   // Om man bläddrar med öppen Chatt/Info och sen växlar (via "+") till en
@@ -468,8 +470,13 @@ export default function HomePage() {
     isFallbackCalendar,
     !isOwnTeam
   );
-  const { data: childInfo } = useChildInfo(isParentHere ? teamId : null, activeInfoChildId);
-  const { data: childAccounts } = useChildAccounts(isParentHere ? teamId : null, activeInfoChildId);
+  // Barninfo/konton: parent+relative läser (canViewCalendarContent),
+  // aldrig viewer — samma "canSeeLists"-princip som ovan, men bara en
+  // förälder får REDIGERA (se canEditInfo, skickas till
+  // ChildInfoView/AccountsView nedan).
+  const { data: childInfo } = useChildInfo(canSeeLists ? teamId : null, activeInfoChildId);
+  const { data: childAccounts } = useChildAccounts(canSeeLists ? teamId : null, activeInfoChildId);
+  const canEditInfo = isParentHere;
 
   // Förälder-metadata. På hemmateamet från teamets cachade profiler
   // (users/{uid} är bara läsbart för ägaren själv, därför ligger namnen
@@ -918,6 +925,7 @@ export default function HomePage() {
                     onSave={(patch) =>
                       updateChildInfo(teamId!, activeInfoChild!.id, patch, user!.uid)
                     }
+                    readOnly={!canEditInfo}
                   />
                 )}
 
@@ -939,6 +947,7 @@ export default function HomePage() {
                       updateChildAccount(teamId!, activeInfoChild!.id, accountId, patch)
                     }
                     onDelete={(accountId) => deleteChildAccount(teamId!, activeInfoChild!.id, accountId)}
+                    readOnly={!canEditInfo}
                   />
                 )}
               </>
@@ -1091,15 +1100,18 @@ export default function HomePage() {
                       requestedBy: user!.uid,
                       takingOverParentId,
                       startAt,
-                      // Enkeldagsändringar sparades tidigare UTAN endAt.
-                      // findOverlappingApproved (functions/src/index.ts) tolkar
-                      // saknat endAt som Infinity, så EN godkänd ändring
-                      // blockerade varje senare datum för barnet. Bind den
-                      // uttryckligen till nästa ordinarie byte — samma innebörd
-                      // som dayBalance.ts redan antar (getNextOrdinaryHandoff)
-                      // och som schema.ts dokumenterar — så lagrad data betyder
-                      // samma sak för kalendern OCH för överlappskollen.
-                      endAt: getNextOrdinaryHandoff(cycle, startAt),
+                      // "Ändra ansvar" (dagklicket) gäller ALLTID exakt ETT
+                      // dygn: från bytestiden den valda dagen till bytestiden
+                      // NÄSTA dag — aldrig längre, oavsett var nästa ORDINARIE
+                      // byte råkar ligga i cykeln. Band tidigare till
+                      // getNextOrdinaryHandoff, vilket gav en förvirrande och
+                      // FEL förhandsvisning ("Livia fortsätter till 5 okt")
+                      // och drog ställningen för flera dagar när det ordinarie
+                      // blocket var längre än ett dygn — en riktig
+                      // användartest hittade detta. Kalenderns ändringsläge
+                      // (submitShiftChangeBatch) gör redan exakt samma sak
+                      // per målad dag.
+                      endAt: atSwitchHour(addDays(date, 1), cycle.switchHour),
                       mode: isParentHere ? scheduleChangeModeFor(team, counterpartId) : "request",
                       requiredApprovers: isParentHere ? undefined : realParentIds,
                     });
