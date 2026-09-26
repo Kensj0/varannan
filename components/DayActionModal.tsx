@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { CustodyCycleDoc, CalendarRole } from "../types/schema";
 import { atSwitchHour, addDays } from "../lib/calendarActions";
+import { getScheduledParentForDate } from "../lib/custodyCycle";
 import { EventOccurrence } from "../lib/recurrence";
 
 interface ParentMeta {
@@ -335,6 +336,17 @@ function ShiftStep({
   // En anhörig tar dagen SJÄLV — "otherParent" (den andra föräldern) är
   // bara relevant när en förälder föreslår ett byte mellan de två.
   const takingOverName = requiresBothParents ? "Du" : otherParent.name;
+  // VEM som får ansvaret NÄR bytet tar slut (endAt) är INTE alltid
+  // samma person som hade den klickade dagen (currentParent) — ett
+  // grundschema kan ha en ordinarie handover MITT I den här perioden
+  // (t.ex. en 1-dagsblock-cykel). Måste räknas ut mot cykeln direkt i
+  // stället för att antas, annars visar texten fel namn på "då X tar
+  // över" dagen efter en dag som själv råkar vara en handover-dag. En
+  // riktig användartest hittade detta (Kenny, 2026-09-26).
+  const scheduledAtEndId = getScheduledParentForDate(cycle, endAt).parentId;
+  // Fallback till currentParent om id:t inte matchar någon av de två
+  // (t.ex. PENDING_PARTNER_ID — andra föräldern har inte anslutit än).
+  const revertsTo = scheduledAtEndId === otherParent.id ? otherParent : currentParent;
 
   return (
     <div>
@@ -350,8 +362,8 @@ function ShiftStep({
 
       <p className="mb-4 text-sm italic text-stone-500">
         {requiresBothParents
-          ? `Du som anhörig har ansvaret fram tills ${formatTime(endAt)} imorgon, då ${currentParent.name} tar över.`
-          : `${takingOverName} har ansvaret till ${formatTime(endAt)} den ${formatDate(endAt)}, då ${currentParent.name} tar tillbaka det enligt schemat.`}
+          ? `Du som anhörig har ansvaret fram tills ${formatTime(endAt)} imorgon, då ${revertsTo.name} tar över.`
+          : `${takingOverName} har ansvaret till ${formatTime(endAt)} den ${formatDate(endAt)}, då ${revertsTo.name} tar över enligt schemat.`}
       </p>
 
       <p className="mb-5 text-xs text-stone-400">
