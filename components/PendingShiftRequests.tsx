@@ -39,6 +39,16 @@ export default function PendingShiftRequests({
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  /**
+   * En anhörigs egen förfrågan (etapp 4) har takingOverParentId == hens
+   * EGET uid, inte en av de två riktiga föräldrarna — parentNames
+   * känner bara till de två, så utan det här visades "Andra föräldern"
+   * felaktigt för den som faktiskt tar dagen (den anhörige själv).
+   */
+  function takingOverLabel(req: ShiftRequestDoc): string {
+    return parentNames[req.takingOverParentId] ?? (req.takingOverParentId === req.requestedBy ? "En anhörig" : "Andra föräldern");
+  }
+
   const groups = useMemo(() => {
     const byBatch = new Map<string, ShiftRequestDoc[]>();
     const single: ShiftRequestDoc[] = [];
@@ -118,9 +128,7 @@ export default function PendingShiftRequests({
               <div className="mt-1 space-y-1">
                 {group.items.map((req) => (
                   <p key={req.id} className="text-sm text-stone-600">
-                    <span className="font-semibold text-stone-800">
-                      {parentNames[req.takingOverParentId] ?? "Andra föräldern"}
-                    </span>{" "}
+                    <span className="font-semibold text-stone-800">{takingOverLabel(req)}</span>{" "}
                     {formatDateTime(req.startAt)}
                     {req.endAt ? ` – ${formatDateTime(req.endAt)}` : " fram till nästa ordinarie byte"}
                   </p>
@@ -130,7 +138,7 @@ export default function PendingShiftRequests({
             ) : (
               <>
                 <p className="mt-1 font-semibold text-stone-800">
-                  {parentNames[first.takingOverParentId] ?? "Andra föräldern"} tar ansvaret för {childName}
+                  {takingOverLabel(first)} tar ansvaret för {childName}
                 </p>
                 <p className="text-sm text-stone-500">
                   Från {formatDateTime(first.startAt)}
