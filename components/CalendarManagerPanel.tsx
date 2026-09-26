@@ -8,13 +8,23 @@ export interface ManagedCalendar {
   name: string;
   /** Antal föräldrar som delar kalendern. Styr om "ta bort" är radera eller lämna. */
   memberCount: number;
+  /** Vilket team kalendern hör till — skiljer kalendrar åt över familjegränser. */
+  teamId: string;
+  /**
+   * Rollen inloggad användare har på DEN HÄR raden — kan skilja sig från
+   * den aktiva kalenderns roll när listan innehåller kalendrar i flera
+   * familjer ("+"-väljaren visar ALLA man är med på, se app/page.tsx).
+   * Bara "parent"-rader får hanteringsknappar (byt namn/ta bort/bjud in).
+   */
+  role: CalendarRole;
 }
 
 interface CalendarManagerPanelProps {
   onClose: () => void;
   calendars: ManagedCalendar[];
+  /** "teamId:childId" — unikt över familjegränser, till skillnad från bara childId. */
   activeCalendarId: string;
-  onSelectCalendar: (calendarId: string) => void;
+  onSelectCalendar: (calendar: ManagedCalendar) => void;
   onCreateCalendar: (name: string) => Promise<void>;
   onRenameCalendar: (calendarId: string, name: string) => Promise<void>;
   onDeleteCalendar: (calendarId: string) => Promise<void>;
@@ -72,7 +82,11 @@ export default function CalendarManagerPanel({
     status: "sent" | "pending_approval";
   } | null>(null);
 
-  const isLastCalendar = calendars.length <= 1;
+  // "Sista kalendern" gäller bara de man själv äger (role parent) — en
+  // anhörig-rad för en annan familjs kalender ska aldrig räknas med här,
+  // annars blockeras radering av den egna sista kalendern bara för att
+  // listan även visar kalendrar man är anhörig på någon annanstans.
+  const isLastCalendar = calendars.filter((c) => c.role === "parent").length <= 1;
 
   async function run(action: () => Promise<void>, fallbackMessage: string) {
     setBusy(true);
@@ -108,7 +122,8 @@ export default function CalendarManagerPanel({
 
         <div className="space-y-1">
           {calendars.map((calendar) => {
-            const isActive = calendar.id === activeCalendarId;
+            const isActive = `${calendar.teamId}:${calendar.id}` === activeCalendarId;
+            const canManage = calendar.role === "parent";
 
             if (renamingId === calendar.id) {
               return (
@@ -300,14 +315,14 @@ export default function CalendarManagerPanel({
 
             return (
               <div
-                key={calendar.id}
+                key={`${calendar.teamId}:${calendar.id}`}
                 className={`flex items-center gap-1 rounded-lg px-2 py-1.5 ${
                   isActive ? "bg-rose-50" : "hover:bg-stone-50"
                 }`}
               >
                 <button
                   onClick={() => {
-                    onSelectCalendar(calendar.id);
+                    onSelectCalendar(calendar);
                     onClose();
                   }}
                   className="min-w-0 flex-1 text-left"
@@ -319,69 +334,81 @@ export default function CalendarManagerPanel({
                   >
                     {calendar.name}
                   </span>
+                  {/* En kalender man bara är anhörig/utomstående på —
+                      inga hanteringsknappar (se canManage nedan), så
+                      rollen visas här i stället så det syns VARFÖR. */}
+                  {!canManage && (
+                    <span className="block text-[11px] text-stone-400">
+                      {calendar.role === "viewer" ? "Utomstående" : "Anhörig"}
+                    </span>
+                  )}
                 </button>
 
-                <button
-                  onClick={() => {
-                    setRenamingId(calendar.id);
-                    setRenameDraft(calendar.name);
-                    setError(null);
-                  }}
-                  aria-label={`Byt namn på ${calendar.name}`}
-                  className="shrink-0 rounded px-1.5 py-1 text-xs text-stone-400 hover:text-rose-600"
-                >
-                  Byt namn
-                </button>
+                {canManage && (
+                  <>
+                    <button
+                      onClick={() => {
+                        setRenamingId(calendar.id);
+                        setRenameDraft(calendar.name);
+                        setError(null);
+                      }}
+                      aria-label={`Byt namn på ${calendar.name}`}
+                      className="shrink-0 rounded px-1.5 py-1 text-xs text-stone-400 hover:text-rose-600"
+                    >
+                      Byt namn
+                    </button>
 
-                {calendar.memberCount < 2 && (
-                  <button
-                    onClick={async () => {
-                      const res = await run(
-                        async () => {
-                          const { shareUrl } = await onInviteToCalendar(calendar.id);
-                          setInviteUrl({ id: calendar.id, url: shareUrl });
-                        },
-                        "Kunde inte skapa inbjudan."
-                      );
-                      void res;
-                    }}
-                    aria-label={`Bjud in till ${calendar.name}`}
-                    className="shrink-0 rounded px-1.5 py-1 text-xs text-stone-400 hover:text-rose-600"
-                  >
-                    Bjud in
-                  </button>
+                    {calendar.memberCount < 2 && (
+                      <button
+                        onClick={async () => {
+                          const res = await run(
+                            async () => {
+                              const { shareUrl } = await onInviteToCalendar(calendar.id);
+                              setInviteUrl({ id: calendar.id, url: shareUrl });
+                            },
+                            "Kunde inte skapa inbjudan."
+                          );
+                          void res;
+                        }}
+                        aria-label={`Bjud in till ${calendar.name}`}
+                        className="shrink-0 rounded px-1.5 py-1 text-xs text-stone-400 hover:text-rose-600"
+                      >
+                        Bjud in
+                      </button>
+                    )}
+
+                    <button
+                      onClick={() => {
+                        setInvitingRelativeId(calendar.id);
+                        setRelativeEmail("");
+                        setRelativeRole("relative");
+                        setRelativeResult(null);
+                        setError(null);
+                      }}
+                      aria-label={`Bjud in anhörig till ${calendar.name}`}
+                      className="shrink-0 rounded px-1.5 py-1 text-xs text-stone-400 hover:text-rose-600"
+                    >
+                      + Anhörig
+                    </button>
+
+                    <button
+                      onClick={() => {
+                        setConfirmDeleteId(calendar.id);
+                        setError(null);
+                      }}
+                      disabled={isLastCalendar}
+                      title={
+                        isLastCalendar
+                          ? "Den sista kalendern går inte att ta bort."
+                          : `Ta bort ${calendar.name}`
+                      }
+                      aria-label={`Ta bort ${calendar.name}`}
+                      className="shrink-0 rounded px-1.5 py-1 text-xs text-stone-300 hover:text-rose-600 disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:text-stone-300"
+                    >
+                      ✕
+                    </button>
+                  </>
                 )}
-
-                <button
-                  onClick={() => {
-                    setInvitingRelativeId(calendar.id);
-                    setRelativeEmail("");
-                    setRelativeRole("relative");
-                    setRelativeResult(null);
-                    setError(null);
-                  }}
-                  aria-label={`Bjud in anhörig till ${calendar.name}`}
-                  className="shrink-0 rounded px-1.5 py-1 text-xs text-stone-400 hover:text-rose-600"
-                >
-                  + Anhörig
-                </button>
-
-                <button
-                  onClick={() => {
-                    setConfirmDeleteId(calendar.id);
-                    setError(null);
-                  }}
-                  disabled={isLastCalendar}
-                  title={
-                    isLastCalendar
-                      ? "Den sista kalendern går inte att ta bort."
-                      : `Ta bort ${calendar.name}`
-                  }
-                  aria-label={`Ta bort ${calendar.name}`}
-                  className="shrink-0 rounded px-1.5 py-1 text-xs text-stone-300 hover:text-rose-600 disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:text-stone-300"
-                >
-                  ✕
-                </button>
               </div>
             );
           })}

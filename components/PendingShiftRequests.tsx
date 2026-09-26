@@ -89,7 +89,12 @@ export default function PendingShiftRequests({
     <div className="space-y-2">
       {groups.map((group) => {
         const first = group.items[0];
-        const isMine = first.requestedBy === currentUserId;
+        // En anhörigs förslag (etapp 4) kräver BÅDA föräldrarnas ja —
+        // requiredApprovers är då satt. Har jag redan godkänt (finns i
+        // approvedBy) väntar jag på den andra föräldern, precis som den
+        // som skickade förslaget väntar på svar.
+        const alreadyApproved = (first.approvedBy ?? []).includes(currentUserId);
+        const isMine = first.requestedBy === currentUserId || alreadyApproved;
         const busy = busyKey === group.key;
         const isMultiDay = group.items.length > 1;
 
@@ -136,7 +141,11 @@ export default function PendingShiftRequests({
             )}
 
             {isMine ? (
-              <p className="mt-3 text-sm italic text-stone-400">Väntar på svar…</p>
+              <p className="mt-3 text-sm italic text-stone-400">
+                {alreadyApproved && first.requestedBy !== currentUserId
+                  ? "Du har godkänt — väntar på ytterligare en förälder…"
+                  : "Väntar på svar…"}
+              </p>
             ) : (
               <div className="mt-3 flex gap-2">
                 <button

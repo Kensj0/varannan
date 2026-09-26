@@ -28,6 +28,8 @@ import {
   useChildAccounts,
   useCalendarInvitesPendingApproval,
 } from "../lib/hooks/useFirestore";
+import { useMyCalendars } from "../lib/hooks/useMyCalendars";
+import { MyCalendar } from "../lib/onboardingClient";
 import {
   createEvent,
   deleteEvent,
@@ -93,6 +95,7 @@ const AccountsView = dynamic(() => import("../components/AccountsView"), { loadi
 const CycleSetupScreen = dynamic(() => import("../components/onboarding/CycleSetupScreen"), { loading });
 const AddFirstChildScreen = dynamic(() => import("../components/onboarding/AddFirstChildScreen"), { loading });
 import {
+  createFamilyTeam,
   createInvite,
   addChild,
   renameChild,
@@ -108,7 +111,6 @@ import {
   DEFAULT_HANDOFF_REMINDER_PREFS,
   parentColorHex,
   scheduleChangeModeFor,
-  calendarParentIds,
   ParentColorId,
   ScheduleChangeMode,
   CalendarRole,
@@ -189,9 +191,41 @@ export default function HomePage() {
     await updateHandoffReminderPrefs(user.uid, prefs);
   }
 
-  const teamId = userDoc?.teamId ?? null;
+  // Alla kalendrar (uid) är med på, i ALLA familjer — inklusive det egna
+  // hemmateamet med roll "parent" (se getMyCalendars). Källan till "+"-
+  // väljaren och till vilken roll man har på den kalender man tittar på.
+  const { calendars: myCalendars } = useMyCalendars(user?.uid ?? null);
+  const homeTeamId = userDoc?.teamId ?? null;
+  const homeCalendar = useMemo(
+    () => myCalendars?.find((c) => c.teamId === homeTeamId) ?? null,
+    [myCalendars, homeTeamId]
+  );
+  // Uttrycklig växling via "+"-panelen — satt direkt till HELA objektet
+  // vid klick (se handleSelectCalendar), aldrig till bara ett id: annars
+  // måste vi vänta på att getMyCalendars slår upp samma kalender igen
+  // innan namn/roll/föräldrar för en FRÄMMANDE kalender är kända.
+  const [activeCalendarOverride, setActiveCalendarOverride] = useState<MyCalendar | null>(null);
+  // Aktiv kalender: en uttrycklig växling > hemmateamet > första
+  // kalendern man är med på (en ren anhörig/utomstående utan eget team).
+  const activeCalendar: MyCalendar | null =
+    activeCalendarOverride ?? homeCalendar ?? (!homeTeamId ? myCalendars?.[0] ?? null : null);
+  // teamId faller tillbaka på hemmateamet DIREKT (utan att vänta på
+  // getMyCalendars) så länge ingen uttrycklig växling gjorts — annars
+  // skulle varje förälder (det vanliga fallet) se en extra
+  // laddningsblinkning bara för att bekräfta något vi redan vet
+  // (users.teamId säger redan att rollen där är "parent").
+  const teamId = activeCalendar?.teamId ?? (!activeCalendarOverride ? homeTeamId : null);
+  const myRole: CalendarRole = activeCalendar?.role ?? "parent";
+  const isOwnTeam = teamId !== null && teamId === homeTeamId;
 
-  const { data: team } = useTeam(teamId);
+  // EN lyssnare på hemmateamet, oavsett vilken kalender som just nu är
+  // aktiv — annars tappar Inställningar (bjud in andra föräldern,
+  // team-namn) rätt data så fort man växlar till en främmande kalender.
+  // `team` (nedan) är samma dokument när man tittar på sitt eget team,
+  // annars null (ingen läsrätt till en främmande teams/{teamId} — se
+  // firestore.rules, isTeamMember krävs).
+  const { data: homeTeam } = useTeam(homeTeamId);
+  const team = isOwnTeam ? homeTeam : null;
   const { data: children, loading: childrenLoading } = useChildren(teamId);
 
   const [selectedChildId, setSelectedChildId] = useState<string | null>(null);
@@ -222,8 +256,32 @@ export default function HomePage() {
   const listsVisited = visitedSections.has("lists");
   const infoVisited = visitedSections.has("info");
 
-  // Välj första barnet automatiskt så fort listan laddats.
-  const activeChildId = selectedChildId ?? children[0]?.id ?? null;
+  // Vilka flikar rollen på DEN AKTIVA kalendern stänger av (tabellen i
+  // docs/roller-och-medlemskap.md): viewer ser bara Schema, relative
+  // saknar Chatt och Info (barninfo/konton är bara för föräldrar).
+  // BottomNav visar dem nedtonade och gör knapptrycket till en no-op —
+  // se BottomNav.tsx.
+  const disabledSections = useMemo<Set<AppSection>>(() => {
+    if (myRole === "viewer") return new Set<AppSection>(["chat", "lists", "info"]);
+    if (myRole === "relative") return new Set<AppSection>(["chat", "info"]);
+    return new Set<AppSection>();
+  }, [myRole]);
+  // Om man bläddrar med öppen Chatt/Info och sen växlar (via "+") till en
+  // kalender där rollen inte längre får visa den fliken — hoppa tillbaka
+  // till Schema i stället för att stå kvar på en flik man inte borde se.
+  useEffect(() => {
+    if (disabledSections.has(section)) setSection("calendar");
+  }, [disabledSections, section]);
+
+  // Välj första barnet automatiskt så fort listan laddats. På en
+  // FRÄMMANDE kalender (isOwnTeam false) föredras activeCalendar.childId
+  // framför children[0]: är en anhörig med på FLERA syskon i samma
+  // familj kan de två listorna (myCalendars respektive children) komma i
+  // olika ordning, och då måste barnet matcha den kalender man faktiskt
+  // valt (aktiv roll/föräldranamn kommer från just den). På hemmateamet
+  // är beteendet oförändrat — bara children[0] avgör, som innan.
+  const activeChildId =
+    selectedChildId ?? (!isOwnTeam ? activeCalendar?.childId : null) ?? children[0]?.id ?? null;
   // Kalendern ÄR barnet: barninfo, konton, listor och chatt visar samma
   // barn som schemat. Den tidigare uppdelningen (eget val i Barninfo)
   // är borttagen — den gjorde att man kunde titta på ett barns uppgifter
@@ -245,24 +303,40 @@ export default function HomePage() {
     await updateParentColor(teamId, colorId);
   }
 
+  /**
+   * "+"-panelen listar `myCalendars` rakt av (se calendars-proppen till
+   * CalendarView nedan), så den rad man klickar på finns garanterat kvar
+   * däri — ingen väntan på ett nytt getMyCalendars-anrop krävs.
+   */
+  function handleSelectCalendar(calendar: { id: string; teamId: string }) {
+    const match =
+      myCalendars?.find((c) => c.teamId === calendar.teamId && c.childId === calendar.id) ?? null;
+    setActiveCalendarOverride(match);
+    setSelectedChildId(calendar.id);
+  }
+
   async function handleCreateCalendar(name: string) {
-    if (!teamId) return;
-    const { childId } = await addChild(teamId, name);
+    // En ren anhörig utan eget hemmateam har inget team att lägga
+    // kalendern i än — skapa ett åt hen först. Blir automatiskt hens nya
+    // hemmateam (users.teamId), med rollen "parent" där.
+    const ownTeamId = homeTeamId ?? (await createFamilyTeam("Vårt schema")).teamId;
+    const { childId } = await addChild(ownTeamId, name);
     // Hoppa direkt till den nya kalendern — annars ser det ut som att
     // ingenting hände, eftersom vyn ligger kvar på den gamla.
+    setActiveCalendarOverride(null); // hemmateamet — inte längre en uttrycklig växling
     setSelectedChildId(childId);
   }
 
   async function handleRenameCalendar(calendarId: string, name: string) {
-    if (!teamId) return;
-    await renameChild(teamId, calendarId, name);
+    if (!homeTeamId) return;
+    await renameChild(homeTeamId, calendarId, name);
   }
 
   async function handleInviteToCalendar(calendarId: string) {
-    if (!teamId) throw new Error("Inget team.");
+    if (!homeTeamId) throw new Error("Inget team.");
     // Utan role blir det förälder-flödet, som alltid ger status "sent"
     // med en kod direkt — ingen godkännande-runda.
-    const res = await createCalendarInvite(teamId, calendarId);
+    const res = await createCalendarInvite(homeTeamId, calendarId);
     if (!res.shareUrl) throw new Error("Kunde inte skapa inbjudan.");
     return { shareUrl: res.shareUrl };
   }
@@ -272,8 +346,8 @@ export default function HomePage() {
     email: string,
     role: Exclude<CalendarRole, "parent">
   ) {
-    if (!teamId) throw new Error("Inget team.");
-    const res = await createCalendarInvite(teamId, calendarId, { role, invitedEmail: email });
+    if (!homeTeamId) throw new Error("Inget team.");
+    const res = await createCalendarInvite(homeTeamId, calendarId, { role, invitedEmail: email });
     return { status: res.status };
   }
 
@@ -293,8 +367,8 @@ export default function HomePage() {
   }
 
   async function handleDeleteCalendar(calendarId: string) {
-    if (!teamId) return;
-    await deleteChild(teamId, calendarId);
+    if (!homeTeamId) return;
+    await deleteChild(homeTeamId, calendarId);
     // Vyn kan stå på den kalender som just försvann — släpp valet så att
     // fallbacken (första barnet) tar över i stället för att peka på ett
     // dokument som inte finns.
@@ -319,35 +393,86 @@ export default function HomePage() {
   }
   const activeChild = children.find((c) => c.id === activeChildId) ?? null;
 
+  // dayBalance/balanceRequests/childInfo/accounts kräver föräldraroll på
+  // KALENDERN (firestore.rules: isParentOfCalendar) — en anhörig/
+  // utomstående nekas alltid, så fråga inte alls (sparar en lyssnare som
+  // bara skulle permission-denya, och BalanceCard/Barninfo göms ändå för
+  // de rollerna nedan).
+  const isParentHere = myRole === "parent";
   const { data: cycle } = useCustodyCycle(teamId, activeChildId);
-  const { data: balance } = useDayBalance(teamId, activeChildId);
+  const { data: balance } = useDayBalance(isParentHere ? teamId : null, activeChildId);
   const { data: approvedShifts } = useApprovedShiftRequests(teamId, activeChildId);
   const { data: pendingShifts } = usePendingShiftRequests(teamId, activeChildId);
   const { data: structureRequests } = useStructureRequests(teamId, activeChildId);
-  const { data: pendingCalendarInvites } = useCalendarInvitesPendingApproval(teamId, activeChildId);
-  const { data: pendingBalanceRequests } = usePendingBalanceRequests(teamId, activeChildId);
-  const { data: events } = useEventsForMonth(teamId, monthDate);
-  const { data: allShiftRequests } = useAllShiftRequests(chatVisited ? teamId : null);
+  // teamInvites-listning kräver isTeamMember (hemmateamet), och bara en
+  // förälder kan godkänna en väntande inbjudan.
+  const { data: pendingCalendarInvites } = useCalendarInvitesPendingApproval(
+    isOwnTeam && isParentHere ? teamId : null,
+    activeChildId
+  );
+  const { data: pendingBalanceRequests } = usePendingBalanceRequests(isParentHere ? teamId : null, activeChildId);
+  // En ofiltrerad listfråga (default nedan) nekas i sin helhet av
+  // reglerna för en anhörig/utomstående på en FRÄMMANDE kalender — se
+  // useNotes/useTodos nedan för samma resonemang. events saknar en egen
+  // "strict"-flagga för month-frågan i sig, men strictChildId styr en
+  // parallell, snävare fråga som fungerar utan isTeamMember.
+  const { data: events } = useEventsForMonth(teamId, monthDate, !isOwnTeam ? activeChildId : null);
+  // Chatten kräver isTeamMember (bara hemmateamet, se firestore.rules) —
+  // fråga aldrig på en främmande kalender, oavsett besökt flik.
+  const { data: allShiftRequests } = useAllShiftRequests(isOwnTeam && chatVisited ? teamId : null);
   const { data: chatMessages } = useChatMessages(
-    chatVisited ? teamId : null,
+    isOwnTeam && chatVisited ? teamId : null,
     100,
     activeChildId,
     isFallbackCalendar
   );
-  const { data: packLists } = usePackLists(listsVisited ? teamId : null, activeChildId);
-  const { data: notes } = useNotes(listsVisited ? teamId : null, activeChildId, isFallbackCalendar);
+  // Packlistor/anteckningar/todo: parent+relative, aldrig viewer (tabellen
+  // i docs/roller-och-medlemskap.md) — en viewer som råkat besöka Listor
+  // FÖRE en kalenderväxling ska inte fortsätta fråga (och få nekat) på
+  // den nya, viewer-rollade kalendern.
+  const canSeeLists = myRole !== "viewer";
+  const { data: packLists } = usePackLists(listsVisited && canSeeLists ? teamId : null, activeChildId);
+  const { data: notes } = useNotes(
+    listsVisited && canSeeLists ? teamId : null,
+    activeChildId,
+    isFallbackCalendar,
+    !isOwnTeam
+  );
   const { data: todos } = useTodos(
-    listsVisited ? teamId : null,
+    listsVisited && canSeeLists ? teamId : null,
     false,
     activeChildId,
-    isFallbackCalendar
+    isFallbackCalendar,
+    !isOwnTeam
   );
-  const { data: childInfo } = useChildInfo(infoVisited ? teamId : null, activeInfoChildId);
-  const { data: childAccounts } = useChildAccounts(infoVisited ? teamId : null, activeInfoChildId);
+  const { data: childInfo } = useChildInfo(isParentHere ? teamId : null, activeInfoChildId);
+  const { data: childAccounts } = useChildAccounts(isParentHere ? teamId : null, activeInfoChildId);
 
-  // Förälder-metadata från teamets cachade profiler (users/{uid} är bara
-  // läsbart för ägaren själv, därför ligger namnen i team-dokumentet).
+  // Förälder-metadata. På hemmateamet från teamets cachade profiler
+  // (users/{uid} är bara läsbart för ägaren själv, därför ligger namnen
+  // i team-dokumentet). På en FRÄMMANDE kalender har vi ingen läsrätt
+  // till teams/{teamId} alls (isTeamMember krävs) — där används i
+  // stället parentNames som getMyCalendars redan levererar (Admin SDK,
+  // kringgår den spärren server-sidan), med en deterministisk
+  // platshållarfärg (samma fallback som redan används för en ej ansluten
+  // partner — bara kosmetiskt, ingen extra data behövs).
   const parents = useMemo(() => {
+    if (!isOwnTeam) {
+      const ids = activeCalendar ? Object.keys(activeCalendar.parentNames) : [];
+      const real = ids.map((id, i) => ({
+        id,
+        name: activeCalendar!.parentNames[id] ?? "Förälder",
+        color: parentColorHex(undefined, i),
+      }));
+      if (real.length < 2) {
+        real.push({
+          id: PENDING_PARTNER_ID,
+          name: "Väntar på inbjudan",
+          color: parentColorHex(undefined, real.length),
+        });
+      }
+      return real;
+    }
     const ids = team?.parentIds ?? [];
     const real = ids.map((id, i) => ({
       id,
@@ -367,7 +492,7 @@ export default function HomePage() {
       });
     }
     return real;
-  }, [team, user]);
+  }, [isOwnTeam, activeCalendar, team, user]);
 
   // Självläkning: team som anslöts innan listChildIds-buggen fixades har
   // kvar PENDING_PARTNER_ID i schemat, vilket gör att kalendern visar EN
@@ -401,7 +526,9 @@ export default function HomePage() {
   // ge dem var sin färg i Google Kalender.
   const [feedTokens, setFeedTokens] = useState<Record<string, string> | null>(null);
   useEffect(() => {
-    if (!teamId || !activeChildId || !parents[1]?.id) return;
+    // ICS-länkarna hör till kugghjulet (CalendarSettingsPanel), som bara
+    // renderas för parent (se CalendarView.tsx) — fråga aldrig annars.
+    if (!isParentHere || !teamId || !activeChildId || !parents[1]?.id) return;
     let cancelled = false;
     getCalendarFeedTokens(teamId, activeChildId)
       .then((tokens) => {
@@ -419,10 +546,10 @@ export default function HomePage() {
     return () => {
       cancelled = true;
     };
-  }, [teamId, activeChildId, parents]);
+  }, [isParentHere, teamId, activeChildId, parents]);
 
   async function handleCreateFeed() {
-    if (!teamId || !activeChildId || !parents[1]?.id) return;
+    if (!isParentHere || !teamId || !activeChildId || !parents[1]?.id) return;
     const tokens = await createCalendarFeedToken(teamId, activeChildId);
     const links: Record<string, CalendarFeedLinks> = {};
     for (const [parentId, token] of Object.entries(tokens)) {
@@ -436,7 +563,11 @@ export default function HomePage() {
     [parents]
   );
 
-  if (childrenLoading) {
+  // Väntar på getMyCalendars bara när det verkligen behövs: ingen
+  // hemmakalender alls (en ren anhörig/utomstående) — annars vet vi redan
+  // (users.teamId) att rollen på hemmateamet är "parent", och ska inte
+  // blinka till en extra laddningsskärm bara för att bekräfta det.
+  if ((myCalendars === null && !homeTeamId) || childrenLoading) {
     return <Centered>Laddar…</Centered>;
   }
 
@@ -599,7 +730,13 @@ export default function HomePage() {
   // Andra föräldern kanske inte anslutit än — schemat och kalendern
   // fungerar redan (mot platshållaren), så det blockerar inte längre.
   // En banner högst upp låter en bjuda in när man vill istället.
+  // Gäller den AKTIVA kalendern (styr "ändra grundschema"-tillgänglighet
+  // nedan) — hemmateamets egen status (Inställningar-bannern "bjud in
+  // andra föräldern") är en annan fråga, se homeHasPartner.
   const hasPartner = (team?.parentIds?.length ?? 0) >= 2;
+  // Ingen hemmakalender alls (en ren anhörig/utomstående) → ingenting att
+  // bjuda in någon till, så bannern ska aldrig visas för det kontot.
+  const homeHasPartner = !homeTeamId || (homeTeam?.parentIds?.length ?? 0) >= 2;
 
   const otherParentId = parents.find((p) => p.id !== balance?.referenceParentId)?.id ?? parents[1].id;
 
@@ -612,6 +749,13 @@ export default function HomePage() {
   // matchar de inte får klienten 400 failed-precondition.
   const counterpartId =
     parents.find((p) => p.id !== user?.uid && p.id !== PENDING_PARTNER_ID)?.id ?? otherParentId;
+
+  // Etapp 4 (docs/roller-och-medlemskap.md): en anhörigs "Ändra ansvar"
+  // kräver BÅDA föräldrarnas ja. De riktiga föräldra-id:na, oavsett vem
+  // som råkar vara inloggad — servern (approveShiftRequest) räknar ändå
+  // ut samma lista själv vid godkännande, det här är bara vad klienten
+  // stämplar som progressindikator vid skapandet.
+  const realParentIds = parents.filter((p) => p.id !== PENDING_PARTNER_ID).map((p) => p.id);
 
   // Barnväljaren visas bara när det faktiskt finns flera barn — annars
   // äter den höjd i onödan. Övriga rubriker är borttagna: månad och
@@ -783,9 +927,9 @@ export default function HomePage() {
                 onEnablePush={enablePushNotifications}
                 pushRegistered={hasPushToken}
                 pushError={pushError}
-                hasPartner={hasPartner}
-                teamName={team?.name}
-                onCreateInvite={() => createInvite(teamId!)}
+                hasPartner={homeHasPartner}
+                teamName={homeTeam?.name}
+                onCreateInvite={() => createInvite(homeTeamId!)}
                 onUpdateDisplayName={updateDisplayName}
                 onDeleteAccount={handleDeleteAccount}
                 reminderPrefs={reminderPrefs}
@@ -929,17 +1073,23 @@ export default function HomePage() {
                       // och som schema.ts dokumenterar — så lagrad data betyder
                       // samma sak för kalendern OCH för överlappskollen.
                       endAt: getNextOrdinaryHandoff(cycle, startAt),
-                      mode: scheduleChangeModeFor(team, counterpartId),
+                      mode: isParentHere ? scheduleChangeModeFor(team, counterpartId) : "request",
+                      requiredApprovers: isParentHere ? undefined : realParentIds,
                     });
                   }}
                   onProposeShiftBatch={async (changes) => {
+                    // Bulk-ändringsläget (pennan) är parent-only i
+                    // CalendarView, så requiredApprovers hör inte hemma
+                    // här i praktiken — men skickas ändå med av samma
+                    // härdningsskäl om det någonsin blir nåbart.
                     await submitShiftChangeBatch({
                       teamId: teamId!,
                       childId: activeChild.id,
                       requestedBy: user!.uid,
                       switchHour: cycle.switchHour,
                       changes,
-                      mode: scheduleChangeModeFor(team, counterpartId),
+                      mode: isParentHere ? scheduleChangeModeFor(team, counterpartId) : "request",
+                      requiredApprovers: isParentHere ? undefined : realParentIds,
                     });
                   }}
                   pushPermission={pushPermission}
@@ -986,16 +1136,20 @@ export default function HomePage() {
                         })
                       : null
                   }
-                  calendars={children.map((c) => ({
-                    id: c.id,
-                    name: c.name,
+                  calendars={(myCalendars ?? []).map((c) => ({
+                    id: c.childId,
+                    teamId: c.teamId,
+                    name: c.childName,
                     // Styr om "ta bort" betyder lämna eller radera.
-                    memberCount: calendarParentIds(c, team).filter(
-                      (id) => id !== PENDING_PARTNER_ID,
-                    ).length,
+                    // parentNames kommer från getMyCalendars (Admin SDK)
+                    // och är därför tillgängligt för VARJE rad — till
+                    // skillnad från children/team, som bara är laddade
+                    // för den AKTIVA kalenderns team.
+                    memberCount: Object.keys(c.parentNames).length,
+                    role: c.role,
                   }))}
-                  activeCalendarId={activeChild.id}
-                  onSelectCalendar={setSelectedChildId}
+                  activeCalendarId={`${teamId}:${activeChild.id}`}
+                  onSelectCalendar={handleSelectCalendar}
                   onCreateCalendar={handleCreateCalendar}
                   onRenameCalendar={handleRenameCalendar}
                   onDeleteCalendar={handleDeleteCalendar}
@@ -1003,6 +1157,7 @@ export default function HomePage() {
                   onInviteRelative={handleInviteRelative}
                   scheduleChangeMode={myScheduleChangeMode}
                   onChangeScheduleChangeMode={handleChangeScheduleChangeMode}
+                  myRole={myRole}
                 />
               </>
             )}

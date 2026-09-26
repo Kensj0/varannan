@@ -70,10 +70,15 @@ interface CalendarViewProps {
   /** Undefined när grundschemat inte går att ändra än. */
   onEditStructure?: () => void;
 
-  /** Kalenderväljaren i inställningspanelen. Ett barn = en kalender. */
-  calendars: { id: string; name: string; memberCount: number }[];
+  /**
+   * Kalenderväljaren bakom "+". Innehåller ALLA kalendrar man är med på
+   * — egna barn OCH kalendrar man är anhörig/utomstående på i andra
+   * familjer (se app/page.tsx, som bygger listan från getMyCalendars).
+   */
+  calendars: { id: string; teamId: string; name: string; memberCount: number; role: CalendarRole }[];
+  /** "teamId:childId" för den just nu aktiva kalendern. */
   activeCalendarId: string;
-  onSelectCalendar: (calendarId: string) => void;
+  onSelectCalendar: (calendar: { id: string; teamId: string }) => void;
   onCreateCalendar: (name: string) => Promise<void>;
   onRenameCalendar: (calendarId: string, name: string) => Promise<void>;
   onDeleteCalendar: (calendarId: string) => Promise<void>;
@@ -86,6 +91,15 @@ interface CalendarViewProps {
 
   scheduleChangeMode: ScheduleChangeMode;
   onChangeScheduleChangeMode: (mode: ScheduleChangeMode) => Promise<void>;
+
+  /**
+   * Rollen inloggad användare har på DEN HÄR kalendern (kan skilja sig
+   * från roll på en annan kalender man växlar till via "+" — se
+   * app/page.tsx). Ändringsläget och kugghjulet (grundschema/färg/ICS/
+   * bytestid) är bara för parent; "+"-väljaren är öppen för alla roller
+   * (docs/roller-och-medlemskap.md).
+   */
+  myRole: CalendarRole;
 }
 
 const WEEKDAY_LABELS = ["M", "T", "O", "T", "F", "L", "S"];
@@ -102,6 +116,7 @@ export default function CalendarView({
   approvedShiftRequests,
   pendingShiftRequests = [],
   events,
+  currentUserId,
   onChangeMonth,
   onCreateActivity,
   onDeleteActivity,
@@ -131,7 +146,9 @@ export default function CalendarView({
   onInviteRelative,
   scheduleChangeMode,
   onChangeScheduleChangeMode,
+  myRole,
 }: CalendarViewProps) {
+  const isParent = myRole === "parent";
   const [activeDay, setActiveDay] = useState<Date | null>(null);
   const [parentA, parentB] = parents;
   const myColorHex = parentColorHex(myColorId, 0);
@@ -246,6 +263,9 @@ export default function CalendarView({
   }
 
   function startLongPress(day: Date) {
+    // Långtryck genväg till ändringsläget — samma spärr som pennan i
+    // headern (bara parent).
+    if (!isParent) return;
     longPressFired.current = false;
     longPressTimer.current = setTimeout(() => {
       longPressFired.current = true;
@@ -266,6 +286,11 @@ export default function CalendarView({
       longPressFired.current = false;
       return;
     }
+    // Utomstående (viewer) får varken lägga in aktivitet eller ändra
+    // ansvar (tabellen i docs/roller-och-medlemskap.md) — dagen gör
+    // ingenting, samma no-op-princip som chatt/inställningar för
+    // icke-föräldrar.
+    if (myRole === "viewer") return;
     if (editMode) toggleDay(day);
     else setActiveDay(day);
   }
@@ -332,13 +357,19 @@ export default function CalendarView({
     <div className="rounded-2xl bg-white shadow-sm">
       <header className="relative flex items-center justify-between px-3 py-3">
         <button
-          onClick={() => (editMode ? exitEditMode() : setEditMode(true))}
+          onClick={() => {
+            if (!isParent) return;
+            editMode ? exitEditMode() : setEditMode(true);
+          }}
           aria-label={editMode ? "Avsluta ändringsläge" : "Ändringsläge"}
           aria-pressed={editMode}
+          aria-disabled={!isParent}
           className={`grid h-9 w-9 place-items-center rounded-full ${
-            editMode
-              ? "bg-rose-100 text-rose-600"
-              : "text-stone-400 hover:bg-stone-50 hover:text-rose-500"
+            !isParent
+              ? "text-stone-200"
+              : editMode
+                ? "bg-rose-100 text-rose-600"
+                : "text-stone-400 hover:bg-stone-50 hover:text-rose-500"
           }`}
         >
           <EditCalendarIcon />
@@ -403,15 +434,19 @@ export default function CalendarView({
 
         <button
           onClick={() => {
+            if (!isParent) return;
             setSettingsOpen((v) => !v);
             setManagerOpen(false);
           }}
           aria-label="Kalenderinställningar"
-          className="grid h-9 w-9 place-items-center rounded-full text-stone-400 hover:bg-stone-50 hover:text-rose-500"
+          aria-disabled={!isParent}
+          className={`grid h-9 w-9 place-items-center rounded-full ${
+            isParent ? "text-stone-400 hover:bg-stone-50 hover:text-rose-500" : "text-stone-200"
+          }`}
         >
           <SettingsIcon />
         </button>
-        {settingsOpen && (
+        {settingsOpen && isParent && (
           <CalendarSettingsPanel
             onClose={() => setSettingsOpen(false)}
             myColorId={myColorId}
@@ -739,6 +774,8 @@ export default function CalendarView({
           cycle={cycle}
           onClose={() => setActiveDay(null)}
           events={eventsByDay.get(dayKey(activeDay)) ?? []}
+          currentUserId={currentUserId}
+          myRole={myRole}
           onCreateActivity={(date, title, recurring) => {
             onCreateActivity(date, title, recurring);
             setActiveDay(null);

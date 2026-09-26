@@ -442,7 +442,8 @@ async function main() {
   console.log(
     "\nlistfrågor — en OFILTRERAD lista över hela kollektionen nekas för en anhörig " +
       "(useNotes/useTodos/useEventsForMonth default-läge), en where(childId==)-filtrerad " +
-      "fungerar (strict-läget de hookarna nu har för en anhörig utan eget team, se RelativeHome.tsx)"
+      "fungerar (strict-läget de hookarna nu har, används av app/page.tsx för en aktiv " +
+      "kalender man är anhörig/utomstående på)"
   );
   await check(
     "anhörig: OFILTRERAD notes-lista (hela teamet) nekas i sin helhet",

@@ -21,6 +21,8 @@ export interface EventOccurrence {
   startAt: Date;
   endAt: Date;
   childId?: string;
+  /** uid för den som skapade aktiviteten — styr en anhörigs "ta bort" (bara sina egna). */
+  createdBy: string;
   /** true om detta är ett genererat tillfälle, inte originaldatumet. */
   isRecurring: boolean;
   /**
@@ -144,6 +146,7 @@ function toOccurrence(event: EventDoc, startAt: Date, durationMs: number, isRecu
     startAt,
     endAt: new Date(startAt.getTime() + durationMs),
     childId: event.childId,
+    createdBy: event.createdBy,
     isRecurring,
     hasRecurrence: !!event.recurrence,
   };
