@@ -2,6 +2,8 @@
 
 import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { doc, getDoc } from "firebase/firestore";
+import { db } from "../../lib/firebase";
 import { useAuth } from "../../lib/auth/AuthProvider";
 import LoginForm from "../../components/auth/LoginForm";
 import { acceptInvite, acceptCalendarInvite } from "../../lib/onboardingClient";
@@ -46,17 +48,35 @@ function JoinPageInner() {
   const code = (searchParams.get("code") ?? "").toUpperCase();
 
   useEffect(() => {
-    if (loading || !user) return;
+    if (loading || !user || !code) return;
+    if (status !== "checking") return;
 
-    if (status === "checking") {
-      if (userDoc?.teamId) {
+    (async () => {
+      // "Byta familj?"-varningen är bara sann för en FÖRÄLDER-inbjudan
+      // — den enda som rör users.teamId (se acceptCalendarInvite i
+      // functions/src/index.ts). En anhörig/utomstående (role
+      // "relative"/"viewer") behåller sitt eget hem-team helt orört,
+      // så de ska aldrig se den varningen. Kikar på inbjudans roll
+      // innan vi bestämmer — misslyckas det (koden finns inte, redan
+      // använd osv) antar vi "parent" och låter accept() nedan ge det
+      // riktiga felmeddelandet.
+      let role: "parent" | "relative" | "viewer" = "parent";
+      try {
+        const snap = await getDoc(doc(db, `teamInvites/${code}`));
+        const fetchedRole = snap.data()?.role;
+        if (fetchedRole === "relative" || fetchedRole === "viewer") role = fetchedRole;
+      } catch {
+        // Ignoreras avsiktligt — se kommentaren ovan.
+      }
+
+      if (role === "parent" && userDoc?.teamId) {
         setStatus("confirm-switch");
       } else {
         void accept();
       }
-    }
+    })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loading, user, userDoc]);
+  }, [loading, user, userDoc, code]);
 
   async function accept() {
     setStatus("accepting");
@@ -66,9 +86,21 @@ function JoinPageInner() {
       // inbjudan) eller en enskild kalender. De ser likadana ut, så
       // kalendervarianten prövas först och familjeflödet tar vid om
       // koden inte var kalenderscopad.
+      //
+      // VIKTIGT: bara "not-found" betyder "det här är inte en
+      // kalenderinbjudan alls" — DÅ är det rätt att prova familje-
+      // flödet. Alla andra fel från acceptCalendarInvite (väntar på
+      // godkännande, redan använd, gått ut, fel roll) är äkta fel på
+      // en RIKTIG kalenderinbjudan och ska visas som de är. Att fånga
+      // dem tyst här dolde tidigare det riktiga felet bakom
+      // familjeflödets helt orelaterade (och missvisande) text — det
+      // var så "koden har gått ut" kunde visas trots att koden var
+      // färsk, se docs/roller-och-medlemskap.md.
       try {
         await acceptCalendarInvite(code);
-      } catch {
+      } catch (err) {
+        const errCode = (err as { code?: string })?.code;
+        if (errCode !== "functions/not-found") throw err;
         await acceptInvite(code);
       }
       await refreshUserDoc();

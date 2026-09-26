@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { CustodyCycleDoc, ShiftRequestDoc, EventDoc } from "../types/schema";
+import { CustodyCycleDoc, ShiftRequestDoc, EventDoc, CalendarRole } from "../types/schema";
 import { getScheduledParentForDate, switchInstantForDate } from "../lib/custodyCycle";
 import { expandEvents, EventOccurrence } from "../lib/recurrence";
 import { addDays } from "../lib/calendarActions";
@@ -78,6 +78,11 @@ interface CalendarViewProps {
   onRenameCalendar: (calendarId: string, name: string) => Promise<void>;
   onDeleteCalendar: (calendarId: string) => Promise<void>;
   onInviteToCalendar: (calendarId: string) => Promise<{ shareUrl: string }>;
+  onInviteRelative: (
+    calendarId: string,
+    email: string,
+    role: Exclude<CalendarRole, "parent">
+  ) => Promise<{ status: "sent" | "pending_approval" }>;
 
   scheduleChangeMode: ScheduleChangeMode;
   onChangeScheduleChangeMode: (mode: ScheduleChangeMode) => Promise<void>;
@@ -123,6 +128,7 @@ export default function CalendarView({
   onRenameCalendar,
   onDeleteCalendar,
   onInviteToCalendar,
+  onInviteRelative,
   scheduleChangeMode,
   onChangeScheduleChangeMode,
 }: CalendarViewProps) {
@@ -391,6 +397,7 @@ export default function CalendarView({
             onRenameCalendar={onRenameCalendar}
             onDeleteCalendar={onDeleteCalendar}
             onInviteToCalendar={onInviteToCalendar}
+            onInviteRelative={onInviteRelative}
           />
         )}
 

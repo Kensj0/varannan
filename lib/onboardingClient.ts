@@ -1,6 +1,6 @@
 import { httpsCallable } from "firebase/functions";
 import { functions } from "./firebase";
-import { CustodyCycleBlock } from "../types/schema";
+import { CalendarRole, CustodyCycleBlock } from "../types/schema";
 
 /**
  * team/invite/cykel går via Cloud Functions eftersom firestore.rules
@@ -98,15 +98,34 @@ export async function saveCustodyCycle(args: {
 /**
  * Bjuder in någon till EN kalender. Används när man redan har en
  * kalender och vill dela just den — t.ex. efter att den andra föräldern
- * lämnat och man vill koppla på någon ny på samma schema.
+ * lämnat och man vill koppla på någon ny på samma schema (role
+ * "parent", oförändrat — inget godkännande krävs), eller för att bjuda
+ * in en anhörig/utomstående (role "relative"/"viewer", kräver
+ * invitedEmail och kalenderns föräldrars godkännande — etapp 2, se
+ * docs/roller-och-medlemskap.md).
+ *
+ * shareUrl är null när svaret är "pending_approval" — koden mailas
+ * inte till den inbjudna förrän alla nödvändiga föräldrar godkänt.
  */
 export async function createCalendarInvite(
   teamId: string,
-  childId: string
-): Promise<{ code: string; expiresAt: string; shareUrl: string }> {
+  childId: string,
+  options?: { role?: CalendarRole; invitedEmail?: string }
+): Promise<{
+  code: string;
+  expiresAt: string;
+  shareUrl: string | null;
+  status: "sent" | "pending_approval";
+}> {
   const fn = httpsCallable(functions, "createCalendarInvite");
   const baseUrl = typeof window !== "undefined" ? window.location.origin : undefined;
-  const res = await fn({ teamId, childId, baseUrl });
+  const res = await fn({
+    teamId,
+    childId,
+    baseUrl,
+    ...(options?.role ? { role: options.role } : {}),
+    ...(options?.invitedEmail ? { invitedEmail: options.invitedEmail } : {}),
+  });
   return res.data as any;
 }
 
@@ -120,4 +139,54 @@ export async function acceptCalendarInvite(
   );
   const res = await fn({ code });
   return res.data;
+}
+
+/**
+ * En förälder på kalendern godkänner (eller nekar) en väntande
+ * anhörig/utomstående-inbjudan. Se approveCalendarInvite i
+ * functions/src/index.ts.
+ */
+export async function respondToCalendarInvite(
+  code: string,
+  decision: "approve" | "decline"
+): Promise<{ status: "pending_approval" | "sent" | "expired" }> {
+  const fn = httpsCallable<
+    { code: string; decision: "approve" | "decline" },
+    { status: "pending_approval" | "sent" | "expired" }
+  >(functions, "approveCalendarInvite");
+  const res = await fn({ code, decision });
+  return res.data;
+}
+
+export interface MyCalendar {
+  teamId: string;
+  childId: string;
+  childName: string;
+  role: CalendarRole;
+  /** uid -> visningsnamn, bara för kalenderns föräldrar. */
+  parentNames: Record<string, string>;
+}
+
+/**
+ * Vilka kalendrar är jag anhörig/utomstående (eller förälder) till, i
+ * ALLA familjer — inte bara mitt eget users/{uid}.teamId. Behövs
+ * eftersom en anhörig aldrig får det fältet satt (se
+ * acceptCalendarInvite). Se getMyCalendars i functions/src/index.ts.
+ */
+export async function getMyCalendars(): Promise<MyCalendar[]> {
+  const fn = httpsCallable<void, { calendars: MyCalendar[] }>(functions, "getMyCalendars");
+  const res = await fn();
+  return res.data.calendars;
+}
+
+/**
+ * Permanent radering av det egna kontot — se deleteMyAccount i
+ * functions/src/index.ts för exakt vad som händer (lämnar delade
+ * kalendrar, raderar egenägda, tar bort Auth-kontot sist). Servern
+ * kräver samma bekräftelsetext som dialogen redan validerat, som
+ * försvar i djupled.
+ */
+export async function deleteMyAccount(): Promise<void> {
+  const fn = httpsCallable<{ confirmation: string }, { ok: boolean }>(functions, "deleteMyAccount");
+  await fn({ confirmation: "RADERA" });
 }

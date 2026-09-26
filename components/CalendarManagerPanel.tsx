@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { CalendarRole } from "../types/schema";
 
 export interface ManagedCalendar {
   id: string;
@@ -18,6 +19,18 @@ interface CalendarManagerPanelProps {
   onRenameCalendar: (calendarId: string, name: string) => Promise<void>;
   onDeleteCalendar: (calendarId: string) => Promise<void>;
   onInviteToCalendar: (calendarId: string) => Promise<{ shareUrl: string }>;
+  /**
+   * Bjuder in en anhörig eller utomstående (etapp 2, se
+   * docs/roller-och-medlemskap.md). Till skillnad från
+   * onInviteToCalendar (som ger en kod direkt) kräver den här ofta
+   * godkännande av kalenderns andra förälder innan koden ens skapas —
+   * status i svaret säger vilket.
+   */
+  onInviteRelative: (
+    calendarId: string,
+    email: string,
+    role: Exclude<CalendarRole, "parent">
+  ) => Promise<{ status: "sent" | "pending_approval" }>;
 }
 
 /**
@@ -38,6 +51,7 @@ export default function CalendarManagerPanel({
   onRenameCalendar,
   onDeleteCalendar,
   onInviteToCalendar,
+  onInviteRelative,
 }: CalendarManagerPanelProps) {
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState("");
@@ -48,6 +62,15 @@ export default function CalendarManagerPanel({
   const [inviteUrl, setInviteUrl] = useState<{ id: string; url: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  /** Id på den rad som visar "Bjud in anhörig/utomstående"-formuläret. */
+  const [invitingRelativeId, setInvitingRelativeId] = useState<string | null>(null);
+  const [relativeEmail, setRelativeEmail] = useState("");
+  const [relativeRole, setRelativeRole] = useState<Exclude<CalendarRole, "parent">>("relative");
+  const [relativeResult, setRelativeResult] = useState<{
+    id: string;
+    status: "sent" | "pending_approval";
+  } | null>(null);
 
   const isLastCalendar = calendars.length <= 1;
 
@@ -176,6 +199,105 @@ export default function CalendarManagerPanel({
               );
             }
 
+            if (invitingRelativeId === calendar.id) {
+              return (
+                <div key={calendar.id} className="rounded-lg bg-stone-50 p-2">
+                  {relativeResult ? (
+                    <div>
+                      <p className="mb-2 text-[11px] leading-snug text-stone-600">
+                        {relativeResult.status === "sent"
+                          ? "Inbjudan skickad — koden är mailad."
+                          : "Skapad. Väntar på att den andra föräldern godkänner innan koden mailas."}
+                      </p>
+                      <button
+                        onClick={() => {
+                          setInvitingRelativeId(null);
+                          setRelativeResult(null);
+                          setRelativeEmail("");
+                        }}
+                        className="w-full rounded-lg border border-stone-200 py-1 text-xs font-semibold text-stone-600"
+                      >
+                        Stäng
+                      </button>
+                    </div>
+                  ) : (
+                    <>
+                      <input
+                        autoFocus
+                        type="email"
+                        value={relativeEmail}
+                        onChange={(e) => setRelativeEmail(e.target.value)}
+                        placeholder="mailadress"
+                        disabled={busy}
+                        className="mb-1.5 w-full rounded-lg border border-stone-200 px-2 py-1.5 text-sm disabled:opacity-50"
+                      />
+                      <div className="mb-1.5 flex gap-1 text-xs">
+                        <button
+                          type="button"
+                          onClick={() => setRelativeRole("relative")}
+                          className={`flex-1 rounded-lg border py-1 font-semibold ${
+                            relativeRole === "relative"
+                              ? "border-rose-400 bg-rose-50 text-rose-700"
+                              : "border-stone-200 text-stone-500"
+                          }`}
+                        >
+                          Anhörig
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setRelativeRole("viewer")}
+                          className={`flex-1 rounded-lg border py-1 font-semibold ${
+                            relativeRole === "viewer"
+                              ? "border-rose-400 bg-rose-50 text-rose-700"
+                              : "border-stone-200 text-stone-500"
+                          }`}
+                        >
+                          Utomstående
+                        </button>
+                      </div>
+                      <p className="mb-1.5 text-[11px] leading-snug text-stone-500">
+                        {relativeRole === "relative"
+                          ? "Ser och lägger in i schema och listor, tar bara bort sina egna aktiviteter. Ingen tillgång till chatten."
+                          : "Ser bara schema och aktiviteter — kan inte lägga in eller ändra något."}
+                      </p>
+                      <div className="flex gap-1">
+                        <button
+                          onClick={() => {
+                            setInvitingRelativeId(null);
+                            setRelativeEmail("");
+                            setError(null);
+                          }}
+                          className="flex-1 rounded-lg border border-stone-200 py-1 text-xs font-semibold text-stone-600"
+                        >
+                          Avbryt
+                        </button>
+                        <button
+                          disabled={busy}
+                          onClick={async () => {
+                            const trimmed = relativeEmail.trim();
+                            if (!trimmed) return setError("Ange en mailadress.");
+                            const ok = await run(async () => {
+                              const { status } = await onInviteRelative(
+                                calendar.id,
+                                trimmed,
+                                relativeRole
+                              );
+                              setRelativeResult({ id: calendar.id, status });
+                            }, "Kunde inte skapa inbjudan.");
+                            void ok;
+                          }}
+                          className="flex-1 rounded-lg bg-rose-500 py-1 text-xs font-semibold text-white disabled:opacity-40"
+                        >
+                          {busy ? "Skickar…" : "Bjud in"}
+                        </button>
+                      </div>
+                    </>
+                  )}
+                  {error && <p className="mt-2 text-[11px] leading-snug text-rose-600">{error}</p>}
+                </div>
+              );
+            }
+
             return (
               <div
                 key={calendar.id}
@@ -229,6 +351,20 @@ export default function CalendarManagerPanel({
                     Bjud in
                   </button>
                 )}
+
+                <button
+                  onClick={() => {
+                    setInvitingRelativeId(calendar.id);
+                    setRelativeEmail("");
+                    setRelativeRole("relative");
+                    setRelativeResult(null);
+                    setError(null);
+                  }}
+                  aria-label={`Bjud in anhörig till ${calendar.name}`}
+                  className="shrink-0 rounded px-1.5 py-1 text-xs text-stone-400 hover:text-rose-600"
+                >
+                  + Anhörig
+                </button>
 
                 <button
                   onClick={() => {

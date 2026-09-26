@@ -614,12 +614,20 @@ export interface ChatMessageDoc {
 // ---------------------------------------------------------------------------
 
 /**
- * En kalenderinbjudan. Idag (createCalendarInvite) skapas den direkt
- * med status "sent" och gäller bara en andra förälder. Etapp 2 i
- * docs/roller-och-medlemskap.md lägger till role/dubbelt godkännande:
- * en inbjudan till relative/viewer skapas som "pending_approval" och
- * blir "sent" (koden mailas) först när alla i requiredApprovers sagt
- * ja. Fälten nedan är förberedda men oanvända tills dess.
+ * En kalenderinbjudan.
+ *
+ * role == "parent" (eller fältet saknas, dagens enda flöde innan
+ * etapp 2): skapas direkt med status "sent" — ingen godkännande-
+ * runda, koden visas för den inbjudande föräldern omedelbart.
+ *
+ * role == "relative" | "viewer" (etapp 2): skapas som
+ * "pending_approval". requiredApprovers sätts till kalenderns
+ * föräldrar vid skapandet; approvedBy fylls på när de godkänner
+ * (createCalendarInvite räknar den inbjudande föräldern och alla i
+ * "notis"-läge — scheduleChangeModeFor() — som redan godkända, se
+ * functions/src/index.ts). Koden genereras och mailas till
+ * invitedEmail FÖRST när approvedBy täcker alla som faktiskt behöver
+ * klicka godkänn, och status blir då "sent".
  */
 export interface TeamInviteDoc {
   code: string;
@@ -637,6 +645,19 @@ export interface TeamInviteDoc {
   requiredApprovers?: string[];
   approvedBy?: string[];
   status?: "pending_approval" | "sent" | "used" | "expired";
+  /**
+   * Validerad origin (window.location.origin) vid skapandet, samma
+   * värde som shareUrl byggdes med då. Sparas så att
+   * approveCalendarInvite — som körs av GODKÄNNAREN, inte den
+   * inbjudande föräldern, ofta i en helt annan session — kan bygga
+   * exakt samma länk utan att lita på klientens baseUrl vid det
+   * tillfället.
+   */
+  baseUrl?: string;
+  /** Sätts om en godkännare säger nej. Inbjudan går då till "expired". */
+  declinedBy?: string;
+  respondedAt?: FirestoreTimestamp;
+  sentAt?: FirestoreTimestamp;
 }
 
 // ---------------------------------------------------------------------------

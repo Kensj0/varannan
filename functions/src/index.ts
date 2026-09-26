@@ -22,7 +22,7 @@ import * as crypto from "crypto";
 import { setGlobalOptions } from "firebase-functions/v2";
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { onDocumentWritten, onDocumentCreated } from "firebase-functions/v2/firestore";
-import { sendEmailOrThrow, GMAIL_USER, GMAIL_APP_PASSWORD } from "./email";
+import { sendEmailOrThrow, sendEmail, GMAIL_USER, GMAIL_APP_PASSWORD } from "./email";
 // OBS: `googleapis` importeras lat, inne i getCalendarClientForUser. Den
 // väger ~4 MB och drog tidigare med sig laddningstid till kallstarten för
 // VARJE funktion i filen, trots att bara exportEventToGoogleCalendar
@@ -61,6 +61,7 @@ import {
   scheduleChangeModeFor,
   calendarParentIds,
   PENDING_PARTNER_ID,
+  CalendarRole,
 } from "../../types/schema";
 import { applyApprovedShiftToBalance } from "../../lib/dayBalance";
 import {
@@ -1348,28 +1349,236 @@ async function deleteQueryInBatches(
   }
 }
 
+// ---------------------------------------------------------------------------
+// deleteMyAccount — permanent radering av det egna kontot.
+//
+// Går igenom VARJE kalender uid:t är med på (collectionGroup-fråga på
+// memberUids, samma mönster som getMyCalendars — täcker både ett eget
+// hem-team OCH kalendrar man bara är anhörig/utomstående på i andra
+// familjer):
+//   - role != "parent": tar bara bort medlemskapet på just den
+//     kalendern (members/memberUids). Rör ingenting annat — en
+//     anhörig äger inget.
+//   - role == "parent", andra föräldrar kvar: lämnar kalendern, samma
+//     mönster som deleteChild "Fall 1" — men städar ÄVEN
+//     members/memberUids, vilket deleteChild inte gör (en känd lucka
+//     där, inte värd att fixa separat eftersom den bara lämnar
+//     ofarlig död data kvar; här måste det göras rätt eftersom uid:t
+//     om en stund inte finns alls).
+//   - role == "parent", sista föräldern: raderar HELA kalendern, samma
+//     mönster som deleteChild "Fall 2".
+// Sist: plockar bort uid ur teams.parentIds/parentProfiles överallt
+// det stod som förälder, raderar users/{uid}, och raderar till sist
+// Auth-kontot. Auth-raderingen görs SIST med flit: om något innan
+// kastar är kontot ändå kvar och går att försöka radera igen, i
+// stället för att låsa ute någon med halvraderad data.
+// ---------------------------------------------------------------------------
+export const deleteMyAccount = onCall(async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) throw new HttpsError("unauthenticated", "Du måste vara inloggad.");
+
+  const { confirmation } = request.data as { confirmation?: string };
+  if (confirmation !== "RADERA") {
+    throw new HttpsError("invalid-argument", "Bekräftelsetexten stämmer inte.");
+  }
+
+  const childrenSnap = await db.collectionGroup("children").where("memberUids", "array-contains", uid).get();
+  const parentTeamIds = new Set<string>();
+
+  for (const childDoc of childrenSnap.docs) {
+    const child = childDoc.data() as any;
+    const teamId = child.teamId as string;
+    const childRef = childDoc.ref;
+    const teamRef = db.doc(`teams/${teamId}`);
+    const teamSnap = await teamRef.get();
+    const team = teamSnap.data();
+
+    const role: CalendarRole = child.members?.[uid]?.role ?? "parent";
+
+    if (role !== "parent") {
+      await childRef.update({
+        [`members.${uid}`]: admin.firestore.FieldValue.delete(),
+        memberUids: admin.firestore.FieldValue.arrayRemove(uid),
+      });
+      continue;
+    }
+
+    parentTeamIds.add(teamId);
+    const parents = calendarParentIds(child, team as any);
+    const remainingParents = parents.filter((id) => id !== uid && id !== PENDING_PARTNER_ID);
+
+    if (remainingParents.length > 0) {
+      // Lämnar — kalendern finns kvar hos den andra föräldern.
+      const cycleRef = childRef.collection("custodyCycle").doc("main");
+      const cycleSnap = await cycleRef.get();
+      const batch = db.batch();
+      batch.update(childRef, {
+        parentIds: remainingParents,
+        [`members.${uid}`]: admin.firestore.FieldValue.delete(),
+        memberUids: admin.firestore.FieldValue.arrayRemove(uid),
+      });
+      if (cycleSnap.exists) {
+        const cycle = cycleSnap.data() as CustodyCycleDoc;
+        const blocks = (cycle.blocks ?? []).map((b) =>
+          b.parentId === uid ? { ...b, parentId: PENDING_PARTNER_ID } : b,
+        );
+        batch.update(cycleRef, { blocks });
+      }
+      await batch.commit();
+
+      const tokens: Record<string, string> = team?.calendarFeedTokens ?? {};
+      const mine = Object.keys(tokens).filter((k) => k === `${childRef.id}:${uid}`);
+      if (mine.length > 0) {
+        const patch: Record<string, any> = {};
+        for (const key of mine) patch[`calendarFeedTokens.${key}`] = admin.firestore.FieldValue.delete();
+        await teamRef.update(patch);
+      }
+
+      const leaverName = team?.parentProfiles?.[uid]?.displayName ?? "Den andra föräldern";
+      const childName = child.name ?? "kalendern";
+      await sendPushToUsers(db, remainingParents, {
+        title: `${leaverName} har raderat sitt konto`,
+        body: `${childName} finns kvar hos dig. Du kan bjuda in någon ny att dela den med.`,
+      });
+    } else {
+      // Sista föräldern — radera hela kalendern.
+      for (const sub of [
+        "childInfo",
+        "accounts",
+        "custodyCycle",
+        "dayBalance",
+        "dayBalanceHistory",
+        "balanceRequests",
+      ]) {
+        await deleteQueryInBatches(childRef.collection(sub));
+      }
+      for (const col of ["shiftRequests", "packLists", "events", "notes", "todos", "chatMessages"]) {
+        await deleteQueryInBatches(db.collection(`teams/${teamId}/${col}`).where("childId", "==", childRef.id));
+      }
+      await childRef.delete();
+
+      const remainingChildren = await db.collection(`teams/${teamId}/children`).get();
+      await teamRef.update({ childIds: remainingChildren.docs.map((d) => d.id) });
+
+      const tokens: Record<string, string> = team?.calendarFeedTokens ?? {};
+      const staleKeys = Object.keys(tokens).filter((k) => k.startsWith(`${childRef.id}:`));
+      if (staleKeys.length > 0) {
+        const patch: Record<string, any> = {};
+        for (const key of staleKeys) patch[`calendarFeedTokens.${key}`] = admin.firestore.FieldValue.delete();
+        await teamRef.update(patch);
+      }
+    }
+  }
+
+  for (const teamId of parentTeamIds) {
+    await db.doc(`teams/${teamId}`).update({
+      parentIds: admin.firestore.FieldValue.arrayRemove(uid),
+      [`parentProfiles.${uid}`]: admin.firestore.FieldValue.delete(),
+    });
+  }
+
+  await db.doc(`users/${uid}`).delete();
+  await admin.auth().deleteUser(uid);
+
+  return { ok: true };
+});
+
 
 // ---------------------------------------------------------------------------
-// 1g. Inbjudan till EN kalender.
+// 1g. Inbjudan till EN kalender — förälder, anhörig eller utomstående.
 //
 //     Skiljer sig från createInvite (som bjuder in till hela familjen och
 //     bara kan användas en gång, innan team-uppsättningen är klar). Den
 //     här används när man redan har en kalender och vill dela just den —
 //     t.ex. efter att den andra föräldern lämnat och man vill koppla på
-//     någon ny på samma schema.
+//     någon ny på samma schema, eller för att bjuda in en anhörig/
+//     utomstående (etapp 2, docs/roller-och-medlemskap.md).
+//
+//     role == "parent" (eller utelämnad — det enda flödet innan etapp 2):
+//     OFÖRÄNDRAT. Kräver färre än två föräldrar på kalendern, skapar
+//     inbjudan direkt med status "sent", ingen godkännande-runda.
+//
+//     role == "relative" | "viewer": kräver godkännande av kalenderns
+//     föräldrar innan koden genereras och mailas till den inbjudna
+//     (dubbelt godkännande, se docs). Den inbjudande föräldern räknas
+//     som redan godkänd (hen skapade ju inbjudan), och en förälder som
+//     valt "notis" i stället för "godkännande" räknas också som redan
+//     godkänd — bara de som faktiskt vill godkänna innan saker händer
+//     blockerar (scheduleChangeModeFor, samma logik som schemaändringar
+//     använder).
 // ---------------------------------------------------------------------------
 
-export const createCalendarInvite = onCall(async (request) => {
+/** Svensk etikett för en roll, använd i mail/notiser. */
+function roleLabel(role: CalendarRole): string {
+  if (role === "relative") return "anhörig";
+  if (role === "viewer") return "utomstående";
+  return "förälder";
+}
+
+/**
+ * Vilka av `requiredApprovers` måste FORTFARANDE klicka godkänn?
+ * Utesluter den inbjudande föräldern (redan godkänd genom att skapa
+ * inbjudan), alla som redan finns i `approvedBy`, och alla i
+ * "notis"-läge (bara föräldrar som valt "godkännande" blockerar) —
+ * se scheduleChangeModeFor i types/schema.ts.
+ */
+function blockingApprovers(
+  requiredApprovers: string[],
+  invitedBy: string,
+  approvedBy: string[],
+  team:
+    | { scheduleChangeMode?: ScheduleChangeMode; parentProfiles?: Record<string, TeamParentProfile> }
+    | null
+    | undefined,
+): string[] {
+  return requiredApprovers.filter(
+    (id) => id !== invitedBy && !approvedBy.includes(id) && scheduleChangeModeFor(team, id) === "request",
+  );
+}
+
+/** Enkelt textmail — samma stil som handoffReminders/sendTestPush. */
+function calendarInviteEmailBody(args: {
+  inviterName: string;
+  childName: string;
+  role: CalendarRole;
+  code: string;
+  shareUrl: string;
+}): string {
+  const { inviterName, childName, role, code, shareUrl } = args;
+  return [
+    `${inviterName} har bjudit in dig som ${roleLabel(role)} till ${childName} i Varannan.`,
+    "",
+    `Inbjudningskod: ${code}`,
+    `Eller öppna länken direkt: ${shareUrl}`,
+    "",
+    "Har du inget konto i Varannan sedan innan får du skapa ett först",
+    "(det tar en minut) — därefter går du med automatiskt.",
+    "",
+    "Koden gäller i 48 timmar.",
+  ].join("\n");
+}
+
+export const createCalendarInvite = onCall(
+  { secrets: [GMAIL_USER, GMAIL_APP_PASSWORD] },
+  async (request) => {
   const uid = request.auth?.uid;
   if (!uid) throw new HttpsError("unauthenticated", "Du måste vara inloggad.");
 
-  const { teamId, childId, baseUrl } = request.data as {
+  const { teamId, childId, baseUrl, invitedEmail } = request.data as {
     teamId?: string;
     childId?: string;
     baseUrl?: string;
+    invitedEmail?: string;
   };
+  const role: CalendarRole = (request.data as { role?: CalendarRole })?.role ?? "parent";
+  if (!["parent", "relative", "viewer"].includes(role)) {
+    throw new HttpsError("invalid-argument", "Okänd roll.");
+  }
   if (!teamId || !childId) {
     throw new HttpsError("invalid-argument", "teamId och childId krävs.");
+  }
+  if (role !== "parent" && !invitedEmail?.trim()) {
+    throw new HttpsError("invalid-argument", "invitedEmail krävs för anhörig/utomstående.");
   }
 
   const [teamSnap, childSnap] = await Promise.all([
@@ -1379,14 +1588,21 @@ export const createCalendarInvite = onCall(async (request) => {
   if (!teamSnap.exists || !childSnap.exists) {
     throw new HttpsError("not-found", "Kalendern finns inte.");
   }
+  const team = teamSnap.data();
+  const child = childSnap.data();
 
-  const members = calendarParentIds(childSnap.data() as any, teamSnap.data() as any).filter(
+  // calendarParents är alltid FÖRÄLDRARNA på kalendern (aldrig
+  // anhöriga/utomstående) — samma definition som innan etapp 2. Bara
+  // en förälder får bjuda in, oavsett vilken roll den nya personen ska
+  // ha (tabellen i docs/roller-och-medlemskap.md: "Bjuda in" är nej
+  // för både relative och viewer).
+  const calendarParents = calendarParentIds(child as any, team as any).filter(
     (id) => id !== PENDING_PARTNER_ID,
   );
-  if (!members.includes(uid)) {
+  if (!calendarParents.includes(uid)) {
     throw new HttpsError("permission-denied", "Du delar inte den här kalendern.");
   }
-  if (members.length >= 2) {
+  if (role === "parent" && calendarParents.length >= 2) {
     throw new HttpsError("failed-precondition", "Kalendern delas redan av två föräldrar.");
   }
 
@@ -1401,21 +1617,70 @@ export const createCalendarInvite = onCall(async (request) => {
 
   const code = generateCalendarInviteCode();
   const expiresAt = new Date(Date.now() + 48 * 60 * 60 * 1000);
+  const shareUrl = `${safeBaseUrl.replace(/\/$/, "")}/join?code=${encodeURIComponent(code)}`;
+  const childName = child?.name ?? "kalendern";
+
+  if (role === "parent") {
+    // Oförändrat: ingen godkännande-runda för föräldraflödet.
+    await db.doc(`teamInvites/${code}`).set({
+      teamId,
+      childId,
+      code,
+      role,
+      used: false,
+      status: "sent",
+      invitedBy: uid,
+      baseUrl: safeBaseUrl,
+      expiresAt: admin.firestore.Timestamp.fromDate(expiresAt),
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    return { code, expiresAt: expiresAt.toISOString(), shareUrl, status: "sent" as const };
+  }
+
+  // relative/viewer — dubbelt godkännande.
+  const requiredApprovers = calendarParents;
+  const blocking = blockingApprovers(requiredApprovers, uid, [], team);
+  const status = blocking.length === 0 ? "sent" : "pending_approval";
+  const approvedBy = status === "sent" ? requiredApprovers : [uid];
+
   await db.doc(`teamInvites/${code}`).set({
     teamId,
     childId,
     code,
+    role,
+    invitedEmail: invitedEmail!.trim(),
     used: false,
+    status,
     invitedBy: uid,
+    baseUrl: safeBaseUrl,
+    requiredApprovers,
+    approvedBy,
     expiresAt: admin.firestore.Timestamp.fromDate(expiresAt),
     createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    ...(status === "sent" ? { sentAt: admin.firestore.FieldValue.serverTimestamp() } : {}),
   });
 
-  return {
-    code,
-    expiresAt: expiresAt.toISOString(),
-    shareUrl: `${safeBaseUrl.replace(/\/$/, "")}/join?code=${encodeURIComponent(code)}`,
-  };
+  const inviterName = team?.parentProfiles?.[uid]?.displayName ?? "En förälder";
+
+  if (status === "sent") {
+    // Ensamförälder på kalendern, eller alla andra föräldrar i
+    // notis-läge — ingen behöver klicka godkänn.
+    await sendEmail(
+      invitedEmail!.trim(),
+      "Du är inbjuden till Varannan",
+      calendarInviteEmailBody({ inviterName, childName, role, code, shareUrl }),
+    );
+    return { code, expiresAt: expiresAt.toISOString(), shareUrl, status: "sent" as const };
+  }
+
+  // Väntar på godkännande — koden mailas INTE än. Notifiera bara de som
+  // faktiskt behöver klicka godkänn.
+  await sendPushToUsers(db, blocking, {
+    title: "Väntar på ditt godkännande",
+    body: `${inviterName} vill bjuda in någon som ${roleLabel(role)} till ${childName}.`,
+  });
+
+  return { code, expiresAt: expiresAt.toISOString(), shareUrl: null, status: "pending_approval" as const };
 });
 
 /** ABCDE-FGHIJ ur ett alfabet utan tecken som lätt förväxlas (0/O, 1/I). */
@@ -1431,8 +1696,111 @@ function generateCalendarInviteCode(): string {
 }
 
 /**
- * Ansluter till en enskild kalender. Den som redan är med i teamet
- * läggs bara till på kalendern; den som är helt ny läggs till i båda.
+ * En förälder på kalendern godkänner (eller nekar) en väntande
+ * anhörig/utomstående-inbjudan. Koden finns redan (den ÄR inbjudans
+ * dokument-id) — när den sista nödvändiga godkännaren sagt ja mailas
+ * den bara till den inbjudna nu, och status blir "sent".
+ */
+export const approveCalendarInvite = onCall(
+  { secrets: [GMAIL_USER, GMAIL_APP_PASSWORD] },
+  async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) throw new HttpsError("unauthenticated", "Du måste vara inloggad.");
+
+  const { code: rawCode, decision } = request.data as { code?: string; decision?: "approve" | "decline" };
+  if (!rawCode) throw new HttpsError("invalid-argument", "code krävs.");
+  const code = rawCode.trim().toUpperCase();
+  const wantsDecline = decision === "decline";
+
+  const inviteRef = db.doc(`teamInvites/${code}`);
+  const inviteSnap = await inviteRef.get();
+  const invite = inviteSnap.data();
+  if (!inviteSnap.exists || !invite) throw new HttpsError("not-found", "Inbjudan finns inte.");
+  if (invite.status !== "pending_approval") {
+    throw new HttpsError("failed-precondition", "Inbjudan väntar inte längre på godkännande.");
+  }
+
+  const requiredApprovers: string[] = invite.requiredApprovers ?? [];
+  if (!requiredApprovers.includes(uid)) {
+    throw new HttpsError("permission-denied", "Du är inte en av kalenderns föräldrar.");
+  }
+
+  if (wantsDecline) {
+    await inviteRef.update({
+      status: "expired",
+      declinedBy: uid,
+      respondedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    await sendPushToUser(db, invite.invitedBy, {
+      title: "Inbjudan nekades",
+      body: `En förälder sa nej till inbjudan för ${invite.invitedEmail ?? "den inbjudna"}.`,
+    });
+    return { status: "expired" as const };
+  }
+
+  const approvedBy: string[] = invite.approvedBy ?? [];
+  if (approvedBy.includes(uid)) {
+    // Redan godkänt — idempotent, gör inget mer.
+    return { status: invite.status as "pending_approval" };
+  }
+
+  const teamSnap = await db.doc(`teams/${invite.teamId}`).get();
+  const team = teamSnap.data();
+  const newApprovedBy = [...approvedBy, uid];
+  const stillBlocking = blockingApprovers(requiredApprovers, invite.invitedBy, newApprovedBy, team);
+
+  if (stillBlocking.length > 0) {
+    await inviteRef.update({ approvedBy: admin.firestore.FieldValue.arrayUnion(uid) });
+    return { status: "pending_approval" as const };
+  }
+
+  // Alla klara — skicka. expiresAt sattes vid SKAPANDET av inbjudan
+  // (48h från då) — om godkännandet dröjer äter den väntetiden upp av
+  // samma fönster som den inbjudna sedan har på sig att använda koden,
+  // så koden kunde vara "utgången" innan den ens mailades. Ge den
+  // inbjudna sina fulla 48 timmar från det att koden FAKTISKT skickas.
+  const newExpiresAt = new Date(Date.now() + 48 * 60 * 60 * 1000);
+  await inviteRef.update({
+    approvedBy: admin.firestore.FieldValue.arrayUnion(uid),
+    status: "sent",
+    sentAt: admin.firestore.FieldValue.serverTimestamp(),
+    expiresAt: admin.firestore.Timestamp.fromDate(newExpiresAt),
+  });
+
+  const childSnap = await db.doc(`teams/${invite.teamId}/children/${invite.childId}`).get();
+  const childName = childSnap.data()?.name ?? "kalendern";
+  const inviterName = team?.parentProfiles?.[invite.invitedBy]?.displayName ?? "En förälder";
+  const baseUrl: string =
+    invite.baseUrl ?? (process.env.ALLOWED_APP_ORIGINS ?? "").split(",")[0] ?? "http://localhost:3000";
+  const shareUrl = `${baseUrl.replace(/\/$/, "")}/join?code=${encodeURIComponent(code)}`;
+
+  await sendEmail(
+    invite.invitedEmail,
+    "Du är inbjuden till Varannan",
+    calendarInviteEmailBody({
+      inviterName,
+      childName,
+      role: (invite.role as CalendarRole) ?? "relative",
+      code,
+      shareUrl,
+    }),
+  );
+  await sendPushToUser(db, invite.invitedBy, {
+    title: "Inbjudan skickad",
+    body: `${invite.invitedEmail} har fått sin inbjudningskod till ${childName}.`,
+  });
+
+  return { status: "sent" as const };
+});
+
+/**
+ * Ansluter till en enskild kalender. role "parent": OFÖRÄNDRAT — den
+ * som redan är med i teamet läggs bara till på kalendern, den som är
+ * helt ny läggs till i båda. role "relative"/"viewer": läggs bara till
+ * i child.members/memberUids — rör INTE parentIds, teams.parentIds
+ * eller users.teamId (deras "hemma-team" kan vara ett helt annat, se
+ * docs/roller-och-medlemskap.md "En anhörig ska kunna höra till flera
+ * kalendrar i olika familjer").
  */
 export const acceptCalendarInvite = onCall(async (request) => {
   const uid = request.auth?.uid;
@@ -1449,21 +1817,57 @@ export const acceptCalendarInvite = onCall(async (request) => {
     throw new HttpsError("not-found", "Koden gäller ingen kalender.");
   }
   if (invite.used) throw new HttpsError("failed-precondition", "Koden är redan använd.");
+  if (invite.status && invite.status !== "sent") {
+    throw new HttpsError("failed-precondition", "Koden väntar fortfarande på godkännande.");
+  }
   if ((invite.expiresAt as admin.firestore.Timestamp).toDate().getTime() < Date.now()) {
     throw new HttpsError("failed-precondition", "Koden har gått ut.");
   }
 
   const { teamId, childId } = invite as { teamId: string; childId: string };
+  const role: CalendarRole = (invite.role as CalendarRole) ?? "parent";
   const teamRef = db.doc(`teams/${teamId}`);
   const childRef = db.doc(`teams/${teamId}/children/${childId}`);
   const [teamSnap, childSnap] = await Promise.all([teamRef.get(), childRef.get()]);
   if (!teamSnap.exists || !childSnap.exists) {
     throw new HttpsError("not-found", "Kalendern finns inte längre.");
   }
+  const childData = childSnap.data() as any;
+  const childName = childData?.name ?? "kalendern";
 
-  const members = calendarParentIds(childSnap.data() as any, teamSnap.data() as any).filter(
+  const existingParents = calendarParentIds(childData, teamSnap.data() as any).filter(
     (id) => id !== PENDING_PARTNER_ID,
   );
+  const profile = profileFromAuth(request.auth!);
+
+  if (role !== "parent") {
+    // Fallback som calendarRoleFor(): saknas memberUids helt (kalendern
+    // är inte migrerad än) räknas bara föräldrarna som medlemmar.
+    const existingMemberUids: string[] = childData?.memberUids ?? existingParents;
+    if (existingMemberUids.includes(uid)) {
+      await inviteRef.update({ used: true, usedAt: admin.firestore.FieldValue.serverTimestamp() });
+      return { teamId, childId };
+    }
+
+    const now = admin.firestore.FieldValue.serverTimestamp();
+    const batch = db.batch();
+    batch.update(inviteRef, { used: true, usedAt: admin.firestore.FieldValue.serverTimestamp() });
+    batch.update(childRef, {
+      [`members.${uid}`]: { role, addedAt: now, invitedBy: invite.invitedBy },
+      memberUids: admin.firestore.FieldValue.arrayUnion(uid),
+    });
+    await batch.commit();
+
+    await sendPushToUsers(db, existingParents, {
+      title: "Någon anslöt till kalendern",
+      body: `${profile.displayName} har anslutit som ${roleLabel(role)} till ${childName}.`,
+    });
+
+    return { teamId, childId };
+  }
+
+  // role === "parent" — oförändrad logik från innan etapp 2.
+  const members = existingParents;
   if (members.includes(uid)) {
     await inviteRef.update({ used: true, usedAt: admin.firestore.FieldValue.serverTimestamp() });
     return { teamId, childId };
@@ -1472,7 +1876,6 @@ export const acceptCalendarInvite = onCall(async (request) => {
     throw new HttpsError("failed-precondition", "Kalendern delas redan av två föräldrar.");
   }
 
-  const profile = profileFromAuth(request.auth!);
   const teamParentIds: string[] = teamSnap.data()?.parentIds ?? [];
 
   const now = admin.firestore.FieldValue.serverTimestamp();
@@ -1517,10 +1920,59 @@ export const acceptCalendarInvite = onCall(async (request) => {
 
   await sendPushToUsers(db, members, {
     title: "Någon anslöt till kalendern",
-    body: `${profile.displayName} delar nu ${childSnap.data()?.name ?? "kalendern"} med dig.`,
+    body: `${profile.displayName} delar nu ${childName} med dig.`,
   });
 
   return { teamId, childId };
+});
+
+
+// ---------------------------------------------------------------------------
+// 1h. Mina kalendrar — för en anhörig/utomstående UTAN eget "hem-team".
+//
+//     acceptCalendarInvite sätter ALDRIG users/{uid}.teamId för role
+//     "relative"/"viewer" (se ovan — en anhörig kan höra till flera
+//     familjers kalendrar, inte bara en). Men resten av klienten
+//     (AuthGate, app/page.tsx) är byggd kring precis DEN enda
+//     teamId:n. Den här callablen svarar på "vilka kalendrar är jag
+//     med på?" via en collectionGroup-fråga med Admin SDK (kringgår
+//     rules ändå) — enklare och säkrare än att försöka bevisa att en
+//     motsvarande fråga direkt från klienten är säker enligt
+//     firestore.rules, och löser samtidigt att en anhörig annars inte
+//     får läsa teams/{teamId} alls (bara isTeamMember får det) genom
+//     att plocka ut och returnera bara det ofarliga (föräldrarnas
+//     namn) härifrån.
+// ---------------------------------------------------------------------------
+export const getMyCalendars = onCall(async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) throw new HttpsError("unauthenticated", "Du måste vara inloggad.");
+
+  const snap = await db.collectionGroup("children").where("memberUids", "array-contains", uid).get();
+  if (snap.empty) return { calendars: [] as never[] };
+
+  const teamIds = Array.from(new Set(snap.docs.map((d) => d.data().teamId as string)));
+  const teamSnaps = await Promise.all(teamIds.map((id) => db.doc(`teams/${id}`).get()));
+  const teamsById = new Map(teamSnaps.map((s) => [s.id, s.data()]));
+
+  const calendars = snap.docs.map((d) => {
+    const child = d.data() as any;
+    const team = teamsById.get(child.teamId);
+    const role: CalendarRole = child.members?.[uid]?.role ?? "parent";
+    const parentIds = calendarParentIds(child, team as any).filter((id) => id !== PENDING_PARTNER_ID);
+    const parentNames: Record<string, string> = {};
+    for (const pid of parentIds) {
+      parentNames[pid] = team?.parentProfiles?.[pid]?.displayName ?? "Förälder";
+    }
+    return {
+      teamId: child.teamId as string,
+      childId: d.id,
+      childName: (child.name as string) ?? "Kalender",
+      role,
+      parentNames,
+    };
+  });
+
+  return { calendars };
 });
 
 

@@ -26,6 +26,7 @@ import {
   useTodos,
   useChildInfo,
   useChildAccounts,
+  useCalendarInvitesPendingApproval,
 } from "../lib/hooks/useFirestore";
 import {
   createEvent,
@@ -71,6 +72,7 @@ import SubTabs from "../components/SubTabs";
 import BalanceCard from "../components/BalanceCard";
 import PendingShiftRequests from "../components/PendingShiftRequests";
 import PendingStructureRequests from "../components/PendingStructureRequests";
+import PendingCalendarInvites from "../components/PendingCalendarInvites";
 
 /**
  * Vyer utanför den första skärmen (kalendern) laddas i egna chunkar och
@@ -96,8 +98,10 @@ import {
   renameChild,
   deleteChild,
   createCalendarInvite,
+  respondToCalendarInvite,
   saveCustodyCycle,
   repairPendingPartner,
+  deleteMyAccount,
 } from "../lib/onboardingClient";
 import {
   PENDING_PARTNER_ID,
@@ -107,6 +111,7 @@ import {
   calendarParentIds,
   ParentColorId,
   ScheduleChangeMode,
+  CalendarRole,
 } from "../types/schema";
 import {
   buildFeedLinks,
@@ -255,7 +260,36 @@ export default function HomePage() {
 
   async function handleInviteToCalendar(calendarId: string) {
     if (!teamId) throw new Error("Inget team.");
-    return createCalendarInvite(teamId, calendarId);
+    // Utan role blir det förälder-flödet, som alltid ger status "sent"
+    // med en kod direkt — ingen godkännande-runda.
+    const res = await createCalendarInvite(teamId, calendarId);
+    if (!res.shareUrl) throw new Error("Kunde inte skapa inbjudan.");
+    return { shareUrl: res.shareUrl };
+  }
+
+  async function handleInviteRelative(
+    calendarId: string,
+    email: string,
+    role: Exclude<CalendarRole, "parent">
+  ) {
+    if (!teamId) throw new Error("Inget team.");
+    const res = await createCalendarInvite(teamId, calendarId, { role, invitedEmail: email });
+    return { status: res.status };
+  }
+
+  async function handleRespondToCalendarInvite(code: string, decision: "approve" | "decline") {
+    await respondToCalendarInvite(code, decision);
+  }
+
+  /**
+   * Servern raderar all data (eller lämnar delade kalendrar, se
+   * deleteMyAccount i functions/src/index.ts) och tar sist bort
+   * Auth-kontot. Loggar ut lokalt direkt efteråt — AuthGate visar då
+   * landningssidan, precis som för vem som helst utan session.
+   */
+  async function handleDeleteAccount() {
+    await deleteMyAccount();
+    await signOutUser();
   }
 
   async function handleDeleteCalendar(calendarId: string) {
@@ -290,6 +324,7 @@ export default function HomePage() {
   const { data: approvedShifts } = useApprovedShiftRequests(teamId, activeChildId);
   const { data: pendingShifts } = usePendingShiftRequests(teamId, activeChildId);
   const { data: structureRequests } = useStructureRequests(teamId, activeChildId);
+  const { data: pendingCalendarInvites } = useCalendarInvitesPendingApproval(teamId, activeChildId);
   const { data: pendingBalanceRequests } = usePendingBalanceRequests(teamId, activeChildId);
   const { data: events } = useEventsForMonth(teamId, monthDate);
   const { data: allShiftRequests } = useAllShiftRequests(chatVisited ? teamId : null);
@@ -752,6 +787,7 @@ export default function HomePage() {
                 teamName={team?.name}
                 onCreateInvite={() => createInvite(teamId!)}
                 onUpdateDisplayName={updateDisplayName}
+                onDeleteAccount={handleDeleteAccount}
                 reminderPrefs={reminderPrefs}
                 onUpdateReminderPrefs={handleUpdateReminderPrefs}
               />
@@ -793,6 +829,13 @@ export default function HomePage() {
                   onRespond={async (requestId, decision) => {
                     await respondToStructureRequest({ teamId: teamId!, requestId, decision });
                   }}
+                />
+
+                <PendingCalendarInvites
+                  invites={pendingCalendarInvites}
+                  currentUserId={user!.uid}
+                  childName={activeChild.name}
+                  onRespond={handleRespondToCalendarInvite}
                 />
 
                 {pendingShifts.length > 0 && (
@@ -957,6 +1000,7 @@ export default function HomePage() {
                   onRenameCalendar={handleRenameCalendar}
                   onDeleteCalendar={handleDeleteCalendar}
                   onInviteToCalendar={handleInviteToCalendar}
+                  onInviteRelative={handleInviteRelative}
                   scheduleChangeMode={myScheduleChangeMode}
                   onChangeScheduleChangeMode={handleChangeScheduleChangeMode}
                 />

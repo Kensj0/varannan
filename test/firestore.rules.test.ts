@@ -35,7 +35,18 @@ import {
   assertFails,
   RulesTestEnvironment,
 } from "@firebase/rules-unit-testing";
-import { doc, getDoc, updateDoc } from "firebase/firestore";
+import {
+  doc,
+  getDoc,
+  getDocs,
+  setDoc,
+  updateDoc,
+  deleteDoc,
+  collection,
+  query,
+  where,
+  orderBy,
+} from "firebase/firestore";
 
 const PROJECT_ID = "varannan-rules-test";
 const RULES_PATH = path.resolve(process.cwd(), "firestore.rules");
@@ -103,6 +114,132 @@ async function seed(testEnv: RulesTestEnvironment) {
       updatedAt: ts,
     });
     await db.doc(`teams/${TEAM_A}/children/${CHILD_A}/custodyCycle/main`).set({ switchHour: "12:00" });
+
+    // --- events/packLists/notes/todos/shiftRequests/scheduleStructureRequests/
+    //     chatMessages/teamInvites — etapp 2 ---
+    await db.doc(`teams/${TEAM_A}/events/eventFamilyWide`).set({
+      id: "eventFamilyWide",
+      teamId: TEAM_A,
+      title: "Familjemiddag",
+      // childId SAKNAS avsiktligt — familje-gemensam aktivitet.
+      startAt: ts,
+      endAt: ts,
+      createdBy: PARENT_1,
+      createdAt: ts,
+    });
+    await db.doc(`teams/${TEAM_A}/events/eventByParent`).set({
+      id: "eventByParent",
+      teamId: TEAM_A,
+      childId: CHILD_A,
+      title: "Tandläkare",
+      startAt: ts,
+      endAt: ts,
+      createdBy: PARENT_1,
+      createdAt: ts,
+    });
+    await db.doc(`teams/${TEAM_A}/events/eventByRelative1`).set({
+      id: "eventByRelative1",
+      teamId: TEAM_A,
+      childId: CHILD_A,
+      title: "Hos mormor",
+      startAt: ts,
+      endAt: ts,
+      createdBy: RELATIVE,
+      createdAt: ts,
+    });
+    await db.doc(`teams/${TEAM_A}/events/eventByRelative2`).set({
+      id: "eventByRelative2",
+      teamId: TEAM_A,
+      childId: CHILD_A,
+      title: "Hos mormor igen",
+      startAt: ts,
+      endAt: ts,
+      createdBy: RELATIVE,
+      createdAt: ts,
+    });
+
+    await db.doc(`teams/${TEAM_A}/packLists/packListA`).set({
+      id: "packListA",
+      teamId: TEAM_A,
+      childId: CHILD_A,
+      title: "Packlista",
+      items: [],
+    });
+
+    await db.doc(`teams/${TEAM_A}/notes/noteOnChild`).set({
+      id: "noteOnChild",
+      teamId: TEAM_A,
+      childId: CHILD_A,
+      text: "Kom ihåg solkräm",
+      createdBy: PARENT_1,
+      createdAt: ts,
+    });
+    await db.doc(`teams/${TEAM_A}/notes/noteFamilyWide`).set({
+      id: "noteFamilyWide",
+      teamId: TEAM_A,
+      // childId saknas — familje-gemensam anteckning.
+      text: "Städdag på lördag",
+      createdBy: PARENT_1,
+      createdAt: ts,
+    });
+
+    await db.doc(`teams/${TEAM_A}/todos/todoOnChild`).set({
+      id: "todoOnChild",
+      teamId: TEAM_A,
+      childId: CHILD_A,
+      text: "Boka tandläkartid",
+      done: false,
+      createdBy: PARENT_1,
+      createdAt: ts,
+    });
+
+    await db.doc(`teams/${TEAM_A}/shiftRequests/shiftA`).set({
+      id: "shiftA",
+      teamId: TEAM_A,
+      childId: CHILD_A,
+      requestedBy: PARENT_1,
+      takingOverParentId: PARENT_2,
+      startAt: ts,
+      status: "pending",
+      createdAt: ts,
+    });
+
+    await db.doc(`teams/${TEAM_A}/scheduleStructureRequests/structA`).set({
+      id: "structA",
+      teamId: TEAM_A,
+      childId: CHILD_A,
+      requestedBy: PARENT_1,
+      addressedTo: PARENT_2,
+      kind: "switchHour",
+      payload: {},
+      summary: "bytestid 08:00 → 18:00",
+      status: "pending",
+      createdAt: ts,
+    });
+
+    await db.doc(`teams/${TEAM_A}/chatMessages/chatA`).set({
+      id: "chatA",
+      teamId: TEAM_A,
+      childId: CHILD_A,
+      senderId: PARENT_1,
+      text: "Hej!",
+      createdAt: ts,
+    });
+
+    await db.doc(`teamInvites/PENDING-INVIT`).set({
+      code: "PENDING-INVIT",
+      teamId: TEAM_A,
+      childId: CHILD_A,
+      role: "relative",
+      invitedEmail: "anhorig@example.com",
+      invitedBy: PARENT_1,
+      used: false,
+      status: "pending_approval",
+      requiredApprovers: [PARENT_1, PARENT_2],
+      approvedBy: [PARENT_1],
+      expiresAt: ts,
+      createdAt: ts,
+    });
 
     // Bara PARENT_1/PARENT_2 har users.teamId == TEAM_A. Anhörigen och
     // den utomstående hör "hemma" i andra team (eller inget alls) —
@@ -218,15 +355,300 @@ async function main() {
     false
   );
 
-  console.log("\ncustodyCycle — synlig för parent och relative, inte helt obesläktad");
+  console.log("\ncustodyCycle — synlig för ALLA tre roller (\"Se schema och aktiviteter\": ja/ja/ja)");
   await check(
     "anhörig kan läsa grundschemat (för att se kalendern)",
     () => getDoc(doc(dbAs(RELATIVE), `teams/${TEAM_A}/children/${CHILD_A}/custodyCycle/main`)),
     true
   );
   await check(
+    "utomstående (viewer) kan OCKSÅ läsa grundschemat",
+    () => getDoc(doc(dbAs(VIEWER), `teams/${TEAM_A}/children/${CHILD_A}/custodyCycle/main`)),
+    true
+  );
+  await check(
     "obesläktad person kan INTE läsa grundschemat",
     () => getDoc(doc(dbAs(OUTSIDER), `teams/${TEAM_A}/children/${CHILD_A}/custodyCycle/main`)),
+    false
+  );
+
+  console.log("\nevents — familje-gemensamt (utan childId) kvar på parent-bara, kalenderscopat öppet för relative/viewer");
+  await check(
+    "anhörig kan läsa en aktivitet knuten till kalendern",
+    () => getDoc(doc(dbAs(RELATIVE), `teams/${TEAM_A}/events/eventByParent`)),
+    true
+  );
+  await check(
+    "utomstående kan läsa en aktivitet knuten till kalendern",
+    () => getDoc(doc(dbAs(VIEWER), `teams/${TEAM_A}/events/eventByParent`)),
+    true
+  );
+  await check(
+    "anhörig kan INTE läsa en familje-gemensam aktivitet (utan childId)",
+    () => getDoc(doc(dbAs(RELATIVE), `teams/${TEAM_A}/events/eventFamilyWide`)),
+    false
+  );
+  await check(
+    "obesläktad person kan INTE läsa kalenderns aktivitet",
+    () => getDoc(doc(dbAs(OUTSIDER), `teams/${TEAM_A}/events/eventByParent`)),
+    false
+  );
+  await check(
+    "anhörig kan lägga in en ny aktivitet på kalendern",
+    () =>
+      setDoc(doc(dbAs(RELATIVE), `teams/${TEAM_A}/events/eventByRelativeNew`), {
+        id: "eventByRelativeNew",
+        teamId: TEAM_A,
+        childId: CHILD_A,
+        title: "Fotbollsträning",
+        startAt: { seconds: 0, nanoseconds: 0 },
+        endAt: { seconds: 0, nanoseconds: 0 },
+        createdBy: RELATIVE,
+        createdAt: { seconds: 0, nanoseconds: 0 },
+      }),
+    true
+  );
+  await check(
+    "utomstående kan INTE lägga in en aktivitet",
+    () =>
+      setDoc(doc(dbAs(VIEWER), `teams/${TEAM_A}/events/eventByViewerNew`), {
+        id: "eventByViewerNew",
+        teamId: TEAM_A,
+        childId: CHILD_A,
+        title: "Ska inte gå igenom",
+        startAt: { seconds: 0, nanoseconds: 0 },
+        endAt: { seconds: 0, nanoseconds: 0 },
+        createdBy: VIEWER,
+        createdAt: { seconds: 0, nanoseconds: 0 },
+      }),
+    false
+  );
+  await check(
+    "anhörig kan ta bort SIN EGEN aktivitet",
+    () => deleteDoc(doc(dbAs(RELATIVE), `teams/${TEAM_A}/events/eventByRelative1`)),
+    true
+  );
+  await check(
+    "anhörig kan INTE ta bort förälderns aktivitet",
+    () => deleteDoc(doc(dbAs(RELATIVE), `teams/${TEAM_A}/events/eventByParent`)),
+    false
+  );
+  await check(
+    "förälder kan ta bort VILKEN aktivitet som helst (inklusive anhörigs)",
+    () => deleteDoc(doc(dbAs(PARENT_1), `teams/${TEAM_A}/events/eventByRelative2`)),
+    true
+  );
+
+  console.log(
+    "\nlistfrågor — en OFILTRERAD lista över hela kollektionen nekas för en anhörig " +
+      "(useNotes/useTodos/useEventsForMonth default-läge), en where(childId==)-filtrerad " +
+      "fungerar (strict-läget de hookarna nu har för en anhörig utan eget team, se RelativeHome.tsx)"
+  );
+  await check(
+    "anhörig: OFILTRERAD notes-lista (hela teamet) nekas i sin helhet",
+    () => getDocs(query(collection(dbAs(RELATIVE), `teams/${TEAM_A}/notes`), orderBy("updatedAt", "desc"))),
+    false
+  );
+  await check(
+    "anhörig: where(childId==)-filtrerad notes-lista fungerar",
+    () =>
+      getDocs(
+        query(
+          collection(dbAs(RELATIVE), `teams/${TEAM_A}/notes`),
+          where("childId", "==", CHILD_A),
+          orderBy("updatedAt", "desc")
+        )
+      ),
+    true
+  );
+  await check(
+    "anhörig: OFILTRERAD todos-lista (hela teamet) nekas i sin helhet",
+    () =>
+      getDocs(
+        query(
+          collection(dbAs(RELATIVE), `teams/${TEAM_A}/todos`),
+          where("archived", "==", false),
+          orderBy("createdAt", "desc")
+        )
+      ),
+    false
+  );
+  await check(
+    "anhörig: where(childId==)-filtrerad todos-lista fungerar",
+    () =>
+      getDocs(
+        query(
+          collection(dbAs(RELATIVE), `teams/${TEAM_A}/todos`),
+          where("childId", "==", CHILD_A),
+          where("archived", "==", false),
+          orderBy("createdAt", "desc")
+        )
+      ),
+    true
+  );
+  await check(
+    "anhörig: OFILTRERAD events-lista (hela teamet, en månad) nekas i sin helhet",
+    () =>
+      getDocs(
+        query(
+          collection(dbAs(RELATIVE), `teams/${TEAM_A}/events`),
+          where("startAt", ">=", { seconds: -1, nanoseconds: 0 }),
+          where("startAt", "<", { seconds: 1, nanoseconds: 0 }),
+          orderBy("startAt", "asc")
+        )
+      ),
+    false
+  );
+  await check(
+    "anhörig: where(childId==)-filtrerad events-lista fungerar",
+    () =>
+      getDocs(
+        query(
+          collection(dbAs(RELATIVE), `teams/${TEAM_A}/events`),
+          where("childId", "==", CHILD_A),
+          where("startAt", ">=", { seconds: -1, nanoseconds: 0 }),
+          where("startAt", "<", { seconds: 1, nanoseconds: 0 }),
+          orderBy("startAt", "asc")
+        )
+      ),
+    true
+  );
+
+  console.log("\npackLists/notes/todos — parent och relative fullt, viewer inget alls");
+  await check(
+    "anhörig kan läsa packlistan",
+    () => getDoc(doc(dbAs(RELATIVE), `teams/${TEAM_A}/packLists/packListA`)),
+    true
+  );
+  await check(
+    "utomstående kan INTE läsa packlistan",
+    () => getDoc(doc(dbAs(VIEWER), `teams/${TEAM_A}/packLists/packListA`)),
+    false
+  );
+  await check(
+    "anhörig kan skriva i packlistan",
+    () => updateDoc(doc(dbAs(RELATIVE), `teams/${TEAM_A}/packLists/packListA`), { title: "Uppdaterad packlista" }),
+    true
+  );
+  await check(
+    "anhörig kan läsa en anteckning knuten till kalendern",
+    () => getDoc(doc(dbAs(RELATIVE), `teams/${TEAM_A}/notes/noteOnChild`)),
+    true
+  );
+  await check(
+    "anhörig kan INTE läsa en familje-gemensam anteckning (utan childId)",
+    () => getDoc(doc(dbAs(RELATIVE), `teams/${TEAM_A}/notes/noteFamilyWide`)),
+    false
+  );
+  await check(
+    "utomstående kan INTE läsa en anteckning",
+    () => getDoc(doc(dbAs(VIEWER), `teams/${TEAM_A}/notes/noteOnChild`)),
+    false
+  );
+  await check(
+    "anhörig kan läsa en todo knuten till kalendern",
+    () => getDoc(doc(dbAs(RELATIVE), `teams/${TEAM_A}/todos/todoOnChild`)),
+    true
+  );
+  await check(
+    "utomstående kan INTE läsa en todo",
+    () => getDoc(doc(dbAs(VIEWER), `teams/${TEAM_A}/todos/todoOnChild`)),
+    false
+  );
+
+  console.log("\nshiftRequests — läsning för alla tre roller, skapande för parent+relative");
+  await check(
+    "anhörig kan läsa ett väntande byte",
+    () => getDoc(doc(dbAs(RELATIVE), `teams/${TEAM_A}/shiftRequests/shiftA`)),
+    true
+  );
+  await check(
+    "utomstående kan OCKSÅ läsa ett väntande byte (del av schemat)",
+    () => getDoc(doc(dbAs(VIEWER), `teams/${TEAM_A}/shiftRequests/shiftA`)),
+    true
+  );
+  await check(
+    "anhörig kan föreslå ett byte",
+    () =>
+      setDoc(doc(dbAs(RELATIVE), `teams/${TEAM_A}/shiftRequests/shiftByRelative`), {
+        id: "shiftByRelative",
+        teamId: TEAM_A,
+        childId: CHILD_A,
+        requestedBy: RELATIVE,
+        takingOverParentId: PARENT_1,
+        startAt: { seconds: 0, nanoseconds: 0 },
+        status: "pending",
+        createdAt: { seconds: 0, nanoseconds: 0 },
+      }),
+    true
+  );
+  await check(
+    "utomstående kan INTE föreslå ett byte",
+    () =>
+      setDoc(doc(dbAs(VIEWER), `teams/${TEAM_A}/shiftRequests/shiftByViewer`), {
+        id: "shiftByViewer",
+        teamId: TEAM_A,
+        childId: CHILD_A,
+        requestedBy: VIEWER,
+        takingOverParentId: PARENT_1,
+        startAt: { seconds: 0, nanoseconds: 0 },
+        status: "pending",
+        createdAt: { seconds: 0, nanoseconds: 0 },
+      }),
+    false
+  );
+
+  console.log("\nscheduleStructureRequests — läsning breddad till relative, skrivning fortsatt bara callables");
+  await check(
+    "anhörig kan läsa ett väntande schemaförslag",
+    () => getDoc(doc(dbAs(RELATIVE), `teams/${TEAM_A}/scheduleStructureRequests/structA`)),
+    true
+  );
+  await check(
+    "utomstående kan INTE läsa ett väntande schemaförslag",
+    () => getDoc(doc(dbAs(VIEWER), `teams/${TEAM_A}/scheduleStructureRequests/structA`)),
+    false
+  );
+
+  console.log("\nchatMessages — REGRESSION: fortsatt stängt för relative/viewer trots breddningen ovan");
+  await check(
+    "anhörig kan INTE läsa chatten",
+    () => getDoc(doc(dbAs(RELATIVE), `teams/${TEAM_A}/chatMessages/chatA`)),
+    false
+  );
+  await check(
+    "utomstående kan INTE läsa chatten",
+    () => getDoc(doc(dbAs(VIEWER), `teams/${TEAM_A}/chatMessages/chatA`)),
+    false
+  );
+  await check(
+    "förälder kan läsa chatten som förut",
+    () => getDoc(doc(dbAs(PARENT_1), `teams/${TEAM_A}/chatMessages/chatA`)),
+    true
+  );
+
+  console.log("\nteamInvites — get på känd kod öppet, list begränsad till kalenderns föräldrar");
+  await check(
+    "vem som helst inloggad kan slå upp en KÄND kod (join-sidan)",
+    () => getDoc(doc(dbAs(OUTSIDER), `teamInvites/PENDING-INVIT`)),
+    true
+  );
+  await check(
+    "förälder kan LISTA väntande inbjudningar för sitt eget team",
+    () =>
+      getDocs(query(collection(dbAs(PARENT_2), "teamInvites"), where("teamId", "==", TEAM_A))),
+    true
+  );
+  await check(
+    "obesläktad person kan INTE lista inbjudningar för familj A",
+    () =>
+      getDocs(query(collection(dbAs(OUTSIDER), "teamInvites"), where("teamId", "==", TEAM_A))),
+    false
+  );
+  await check(
+    "anhörig (users.teamId pekar på ETT ANNAT team) kan INTE lista familj A:s inbjudningar",
+    () =>
+      getDocs(query(collection(dbAs(RELATIVE), "teamInvites"), where("teamId", "==", TEAM_A))),
     false
   );
 
