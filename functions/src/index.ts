@@ -828,6 +828,7 @@ export const approveShiftRequest = onCall(async (request) => {
   }
 
   const teamRef = db.doc(`teams/${teamId}`);
+  const childRef = db.doc(`teams/${teamId}/children/${childId}`);
   const requestRef = db.doc(`teams/${teamId}/shiftRequests/${shiftRequestId}`);
   const cycleRef = db.doc(`teams/${teamId}/children/${childId}/custodyCycle/main`);
   const balanceRef = db.doc(`teams/${teamId}/children/${childId}/dayBalance/main`);
@@ -835,6 +836,10 @@ export const approveShiftRequest = onCall(async (request) => {
 
   let notifyRequestedBy: string | null = null;
   let responderName = "Andra föräldern";
+  // true om det här svaret inte räckte för att verkställa bytet — en
+  // anhörigs förslag (etapp 4) kräver BÅDA föräldrarnas ja, så ett enda
+  // godkännande sparar bara framsteget och väntar på nästa.
+  let stillPending = false;
 
   const preSnap = await requestRef.get();
   const preData = preSnap.data() as ShiftRequestDoc | undefined;
@@ -858,7 +863,11 @@ export const approveShiftRequest = onCall(async (request) => {
   );
 
   await db.runTransaction(async (tx) => {
-    const [teamSnap, requestSnap] = await Promise.all([tx.get(teamRef), tx.get(requestRef)]);
+    const [teamSnap, childSnap, requestSnap] = await Promise.all([
+      tx.get(teamRef),
+      tx.get(childRef),
+      tx.get(requestRef),
+    ]);
 
     if (!teamSnap.exists) throw new HttpsError("not-found", "Team saknas.");
     const parentIds: string[] = teamSnap.data()!.parentIds;
@@ -871,20 +880,32 @@ export const approveShiftRequest = onCall(async (request) => {
     if (shiftRequest.status !== "pending") {
       throw new HttpsError("failed-precondition", "Förfrågan är redan hanterad.");
     }
-    // Bara MOTPARTEN (inte den som föreslog) får godkänna/avböja.
-    if (shiftRequest.requestedBy === uid) {
+
+    // Etapp 4 (docs/roller-och-medlemskap.md): räkna ALLTID ut de riktiga
+    // godkännarna här, server-sidan — lita aldrig på ett requiredApprovers
+    // klienten skrev vid create (samma härdning som blockingApprovers
+    // redan gör för kalenderinbjudningar). En anhörigs förslag (requestedBy
+    // är inte en av kalenderns riktiga föräldrar) kräver BÅDA föräldrarnas
+    // ja; ett förälder-till-förälder-byte behåller dagens
+    // enkelgodkännande (motparten ensam).
+    const calendarParents = calendarParentIds(childSnap.data() as any, teamSnap.data() as any).filter(
+      (id) => id !== PENDING_PARTNER_ID
+    );
+    const realRequiredApprovers = calendarParents.includes(shiftRequest.requestedBy)
+      ? null
+      : calendarParents;
+
+    if (realRequiredApprovers) {
+      if (!realRequiredApprovers.includes(uid)) {
+        throw new HttpsError("permission-denied", "Du kan inte svara på den här förfrågan.");
+      }
+    } else if (shiftRequest.requestedBy === uid) {
+      // Bara MOTPARTEN (inte den som föreslog) får godkänna/avböja.
       throw new HttpsError("permission-denied", "Du kan inte godkänna din egen förfrågan.");
     }
 
     notifyRequestedBy = shiftRequest.requestedBy;
     responderName = teamSnap.data()?.parentProfiles?.[uid]?.displayName ?? responderName;
-
-    if (decision === "approved" && partialOverlap.length > 0) {
-      throw new HttpsError(
-        "failed-precondition",
-        "Perioden överlappar bara delvis en redan godkänd ändring och går inte att ersätta automatiskt. Avböj den ena först."
-      );
-    }
 
     if (decision === "declined") {
       tx.update(requestRef, {
@@ -893,6 +914,34 @@ export const approveShiftRequest = onCall(async (request) => {
         respondedAt: admin.firestore.FieldValue.serverTimestamp(),
       });
       return;
+    }
+
+    if (realRequiredApprovers) {
+      const approvedBy = Array.from(new Set([...(shiftRequest.approvedBy ?? []), uid]));
+      const stillBlocking = blockingApprovers(
+        realRequiredApprovers,
+        shiftRequest.requestedBy,
+        approvedBy,
+        teamSnap.data() as any
+      );
+      if (stillBlocking.length > 0) {
+        // Inte alla krävda föräldrar har sagt ja än — spara framsteget,
+        // men verkställ INTE (ingen ställnings-transaktion, status kvar
+        // "pending") förrän den sista har godkänt.
+        tx.update(requestRef, {
+          requiredApprovers: realRequiredApprovers,
+          approvedBy: admin.firestore.FieldValue.arrayUnion(uid),
+        });
+        stillPending = true;
+        return;
+      }
+    }
+
+    if (decision === "approved" && partialOverlap.length > 0) {
+      throw new HttpsError(
+        "failed-precondition",
+        "Perioden överlappar bara delvis en redan godkänd ändring och går inte att ersätta automatiskt. Avböj den ena först."
+      );
     }
 
     const [cycleSnap, balanceSnap] = await Promise.all([tx.get(cycleRef), tx.get(balanceRef)]);
@@ -930,6 +979,9 @@ export const approveShiftRequest = onCall(async (request) => {
       respondedBy: uid,
       respondedAt: admin.firestore.FieldValue.serverTimestamp(),
       balanceDeltaDays: deltaDays,
+      ...(realRequiredApprovers
+        ? { requiredApprovers: realRequiredApprovers, approvedBy: admin.firestore.FieldValue.arrayUnion(uid) }
+        : {}),
     });
     tx.set(balanceRef, {
       ...updatedBalance,
@@ -947,15 +999,16 @@ export const approveShiftRequest = onCall(async (request) => {
 
   if (notifyRequestedBy) {
     await sendPushToUser(db, notifyRequestedBy, {
-      title: decision === "approved" ? "Bytet godkändes" : "Bytet avböjdes",
-      body:
-        decision === "approved"
+      title: stillPending ? "Ett godkännande till krävs" : decision === "approved" ? "Bytet godkändes" : "Bytet avböjdes",
+      body: stillPending
+        ? `${responderName} godkände — väntar på ytterligare en förälder innan bytet gäller.`
+        : decision === "approved"
           ? `${responderName} godkände ändringen av schemat.`
           : `${responderName} avböjde ändringen av schemat.`,
     });
   }
 
-  return { ok: true };
+  return { ok: true, pending: stillPending };
 });
 
 // ---------------------------------------------------------------------------
@@ -982,12 +1035,16 @@ export const approveShiftRequestBatch = onCall(async (request) => {
   }
 
   const teamRef = db.doc(`teams/${teamId}`);
+  const childRef = db.doc(`teams/${teamId}/children/${childId}`);
   const cycleRef = db.doc(`teams/${teamId}/children/${childId}/custodyCycle/main`);
   const balanceRef = db.doc(`teams/${teamId}/children/${childId}/dayBalance/main`);
 
   let notifyRequestedBy: string | null = null;
   let responderName = "Andra föräldern";
   let dayCount = 0;
+  // Se approveShiftRequest — samma etapp 4-logik, bara tillämpad på hela
+  // batchen i ett svep (alla poster delar requestedBy/childId).
+  let stillPending = false;
 
   // Överlappskoll före transaktionen, av samma skäl som i
   // approveShiftRequest. Äldre godkända avvikelser som HELT täcks av en dag
@@ -1018,7 +1075,7 @@ export const approveShiftRequestBatch = onCall(async (request) => {
   const superseded = [...supersededById.values()];
 
   await db.runTransaction(async (tx) => {
-    const teamSnap = await tx.get(teamRef);
+    const [teamSnap, childSnap] = await Promise.all([tx.get(teamRef), tx.get(childRef)]);
     if (!teamSnap.exists) throw new HttpsError("not-found", "Team saknas.");
     const parentIds: string[] = teamSnap.data()!.parentIds;
     if (!parentIds.includes(uid)) {
@@ -1035,12 +1092,25 @@ export const approveShiftRequestBatch = onCall(async (request) => {
     notifyRequestedBy = requests[0]?.requestedBy ?? null;
     responderName = teamSnap.data()?.parentProfiles?.[uid]?.displayName ?? responderName;
 
+    // Etapp 4 — se approveShiftRequest för resonemanget. Hela batchen delar
+    // requestedBy/childId, så beräkningen görs en gång.
+    const calendarParents = calendarParentIds(childSnap.data() as any, teamSnap.data() as any).filter(
+      (id) => id !== PENDING_PARTNER_ID
+    );
+    const requestedBy = requests[0]?.requestedBy;
+    const realRequiredApprovers =
+      requestedBy && !calendarParents.includes(requestedBy) ? calendarParents : null;
+
     for (const req of requests) {
       if (req.status !== "pending") {
         throw new HttpsError("failed-precondition", "Förfrågan är redan hanterad.");
       }
-      // Bara MOTPARTEN (inte den som föreslog) får godkänna/avböja.
-      if (req.requestedBy === uid) {
+      if (realRequiredApprovers) {
+        if (!realRequiredApprovers.includes(uid)) {
+          throw new HttpsError("permission-denied", "Du kan inte svara på den här förfrågan.");
+        }
+      } else if (req.requestedBy === uid) {
+        // Bara MOTPARTEN (inte den som föreslog) får godkänna/avböja.
         throw new HttpsError("permission-denied", "Du kan inte godkänna din egen förfrågan.");
       }
     }
@@ -1054,6 +1124,26 @@ export const approveShiftRequestBatch = onCall(async (request) => {
         });
       }
       return;
+    }
+
+    if (realRequiredApprovers) {
+      // approvedBy delas mellan alla poster i batchen (samma requestedBy) —
+      // ta unionen av vad var och en redan har, plus mig.
+      const approvedBySoFar = new Set<string>();
+      for (const req of requests) for (const id of req.approvedBy ?? []) approvedBySoFar.add(id);
+      approvedBySoFar.add(uid);
+      const approvedBy = [...approvedBySoFar];
+      const stillBlocking = blockingApprovers(realRequiredApprovers, requestedBy!, approvedBy, teamSnap.data() as any);
+      if (stillBlocking.length > 0) {
+        for (const docSnap of batchSnap.docs) {
+          tx.update(docSnap.ref, {
+            requiredApprovers: realRequiredApprovers,
+            approvedBy: admin.firestore.FieldValue.arrayUnion(uid),
+          });
+        }
+        stillPending = true;
+        return;
+      }
     }
 
     const [cycleSnap, balanceSnap] = await Promise.all([tx.get(cycleRef), tx.get(balanceRef)]);
@@ -1085,6 +1175,9 @@ export const approveShiftRequestBatch = onCall(async (request) => {
         respondedBy: uid,
         respondedAt: admin.firestore.FieldValue.serverTimestamp(),
         balanceDeltaDays: deltaDays,
+        ...(realRequiredApprovers
+          ? { requiredApprovers: realRequiredApprovers, approvedBy: admin.firestore.FieldValue.arrayUnion(uid) }
+          : {}),
       });
       const historyRef = db.collection(`teams/${teamId}/children/${childId}/dayBalanceHistory`).doc();
       tx.set(historyRef, {
@@ -1106,15 +1199,16 @@ export const approveShiftRequestBatch = onCall(async (request) => {
   if (notifyRequestedBy) {
     const dayLabel = `${dayCount} dag${dayCount === 1 ? "" : "ar"}`;
     await sendPushToUser(db, notifyRequestedBy, {
-      title: decision === "approved" ? "Ändringen godkändes" : "Ändringen avböjdes",
-      body:
-        decision === "approved"
+      title: stillPending ? "Ett godkännande till krävs" : decision === "approved" ? "Ändringen godkändes" : "Ändringen avböjdes",
+      body: stillPending
+        ? `${responderName} godkände förslaget om ${dayLabel} — väntar på ytterligare en förälder.`
+        : decision === "approved"
           ? `${responderName} godkände förslaget om ${dayLabel}.`
           : `${responderName} avböjde förslaget om ${dayLabel}.`,
     });
   }
 
-  return { ok: true };
+  return { ok: true, pending: stillPending };
 });
 
 // ---------------------------------------------------------------------------

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { CustodyCycleDoc } from "../types/schema";
+import { CustodyCycleDoc, CalendarRole } from "../types/schema";
 import { getNextOrdinaryHandoff } from "../lib/custodyCycle";
 import { EventOccurrence } from "../lib/recurrence";
 
@@ -26,6 +26,9 @@ interface DayActionModalProps {
   onCreateActivity: (date: Date, title: string, recurring: boolean) => void;
   onDeleteActivity: (occurrence: EventOccurrence, scope: DeleteActivityScope) => void;
   onProposeShift: (date: Date, takingOverParentId: string) => void;
+  currentUserId: string;
+  /** Styr "ta bort aktivitet": parent tar bort alla, relative bara sina egna. */
+  myRole: CalendarRole;
 }
 
 type ModalStep = "choose" | "activity" | "shift";
@@ -45,6 +48,8 @@ export default function DayActionModal({
   onCreateActivity,
   onDeleteActivity,
   onProposeShift,
+  currentUserId,
+  myRole,
 }: DayActionModalProps) {
   const [step, setStep] = useState<ModalStep>("choose");
   /** Aktiviteten användaren vill ta bort — null när inget är på gång. */
@@ -71,6 +76,8 @@ export default function DayActionModal({
               <ChooseStep
                 date={date}
                 events={events}
+                currentUserId={currentUserId}
+                myRole={myRole}
                 onPickActivity={() => setStep("activity")}
                 onPickShift={() => setStep("shift")}
                 onDeleteActivity={setDeleting}
@@ -93,6 +100,7 @@ export default function DayActionModal({
                 currentParent={scheduledParent}
                 takingOverParent={otherParent}
                 cycle={cycle}
+                requiresBothParents={myRole !== "parent"}
                 onCancel={() => setStep("choose")}
                 onPropose={(d) => onProposeShift(d, otherParent.id)}
               />
@@ -111,6 +119,8 @@ export default function DayActionModal({
 function ChooseStep({
   date,
   events,
+  currentUserId,
+  myRole,
   onPickActivity,
   onPickShift,
   onDeleteActivity,
@@ -118,6 +128,8 @@ function ChooseStep({
 }: {
   date: Date;
   events: EventOccurrence[];
+  currentUserId: string;
+  myRole: CalendarRole;
   onPickActivity: () => void;
   onPickShift: () => void;
   onDeleteActivity: (occurrence: EventOccurrence) => void;
@@ -134,21 +146,29 @@ function ChooseStep({
 
       {events.length > 0 && (
         <div className="mb-3 space-y-1">
-          {events.map((ev) => (
-            <div
-              key={ev.occurrenceId}
-              className="flex items-center gap-2 rounded-lg bg-amber-100 px-3 py-2"
-            >
-              <span className="min-w-0 flex-1 truncate text-sm font-medium text-amber-900">{ev.title}</span>
-              <button
-                onClick={() => onDeleteActivity(ev)}
-                className="shrink-0 text-amber-700 hover:text-rose-600"
-                aria-label={`Ta bort ${ev.title}`}
+          {events.map((ev) => {
+            // "Ta bort aktivitet": parent tar bort alla, relative bara
+            // sina egna, viewer kan aldrig lägga in ett event över huvud
+            // taget så syns aldrig här (tabellen, docs/roller-och-medlemskap.md).
+            const canDelete = myRole === "parent" || ev.createdBy === currentUserId;
+            return (
+              <div
+                key={ev.occurrenceId}
+                className="flex items-center gap-2 rounded-lg bg-amber-100 px-3 py-2"
               >
-                ✕
-              </button>
-            </div>
-          ))}
+                <span className="min-w-0 flex-1 truncate text-sm font-medium text-amber-900">{ev.title}</span>
+                {canDelete && (
+                  <button
+                    onClick={() => onDeleteActivity(ev)}
+                    className="shrink-0 text-amber-700 hover:text-rose-600"
+                    aria-label={`Ta bort ${ev.title}`}
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
+            );
+          })}
         </div>
       )}
 
@@ -284,6 +304,7 @@ function ShiftStep({
   currentParent,
   takingOverParent,
   cycle,
+  requiresBothParents,
   onCancel,
   onPropose,
 }: {
@@ -292,6 +313,8 @@ function ShiftStep({
   currentParent: ParentMeta;
   takingOverParent: ParentMeta;
   cycle: CustodyCycleDoc;
+  /** En anhörigs förslag kräver BÅDA föräldrarnas ja, inte bara mottagarens. */
+  requiresBothParents: boolean;
   onCancel: () => void;
   onPropose: (date: Date) => void;
 }) {
@@ -314,7 +337,9 @@ function ShiftStep({
       </p>
 
       <p className="mb-5 text-xs text-stone-400">
-        Just nu enligt schemat: {currentParent.name}. Förslaget skickas till {currentParent.name} för godkännande.
+        {requiresBothParents
+          ? `Just nu enligt schemat: ${currentParent.name}. Förslaget kräver godkännande av BÅDA föräldrarna innan det gäller.`
+          : `Just nu enligt schemat: ${currentParent.name}. Förslaget skickas till ${currentParent.name} för godkännande.`}
       </p>
 
       <div className="flex gap-3">

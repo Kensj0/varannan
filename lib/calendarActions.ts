@@ -82,6 +82,7 @@ function buildShiftRequestDoc(args: {
   handoffMethod?: string;
   note?: string;
   batchId?: string;
+  requiredApprovers?: string[];
 }): ShiftRequestDoc {
   return {
     id: args.ref.id,
@@ -98,6 +99,11 @@ function buildShiftRequestDoc(args: {
     ...(args.handoffMethod ? { handoffMethod: args.handoffMethod } : {}),
     ...(args.note ? { note: args.note } : {}),
     ...(args.batchId ? { batchId: args.batchId } : {}),
+    // Satt när en anhörig föreslår (etapp 4, docs/roller-och-medlemskap.md)
+    // — bara en progressindikator för UI:t. approveShiftRequest räknar
+    // ALLTID ut den riktiga listan själv vid godkännande, oavsett vad som
+    // står här, så ett manipulerat värde kan inte kringgå dubbelgodkännandet.
+    ...(args.requiredApprovers ? { requiredApprovers: args.requiredApprovers, approvedBy: [] } : {}),
   };
 }
 
@@ -110,6 +116,7 @@ export async function proposeShiftRequest(args: {
   endAt?: Date;
   handoffMethod?: string;
   note?: string;
+  requiredApprovers?: string[];
 }): Promise<string> {
   const ref = doc(collection(db, `teams/${args.teamId}/shiftRequests`));
   const request = buildShiftRequestDoc({ ref, ...args });
@@ -120,13 +127,20 @@ export async function proposeShiftRequest(args: {
   // childId MÅSTE med: chatten är kalenderbunden sedan delningen flyttades
   // ner på barnet, så utan det hamnar varje förfrågans chattpost på den
   // FÖRSTA kalendern i stället för på rätt barn.
-  await sendChatMessage({
-    teamId: args.teamId,
-    childId: args.childId,
-    senderId: args.requestedBy,
-    text: args.note ?? "",
-    linkedShiftRequestId: ref.id,
-  });
+  //
+  // Hoppas över när en anhörig föreslår (requiredApprovers satt): chatten
+  // är bara för föräldrar (firestore.rules), och en anhörig har inte
+  // nödvändigtvis users.teamId satt till den här kalenderns team —
+  // skrivningen skulle nekas.
+  if (!args.requiredApprovers) {
+    await sendChatMessage({
+      teamId: args.teamId,
+      childId: args.childId,
+      senderId: args.requestedBy,
+      text: args.note ?? "",
+      linkedShiftRequestId: ref.id,
+    });
+  }
 
   return ref.id;
 }
@@ -216,6 +230,7 @@ export async function proposeShiftRequestBatch(args: {
   switchHour: string;
   changes: DayChange[];
   note?: string;
+  requiredApprovers?: string[];
 }): Promise<string> {
   if (args.changes.length === 0) throw new Error("Inga dagar valda.");
 
@@ -236,20 +251,24 @@ export async function proposeShiftRequestBatch(args: {
       endAt: atSwitchHour(addDays(run.end, 1), args.switchHour),
       note: args.note,
       batchId,
+      requiredApprovers: args.requiredApprovers,
     });
     return setDoc(ref, request);
   });
   await Promise.all(writes);
 
   // childId MÅSTE med, samma skäl som i proposeShiftRequest: chatten är
-  // kalenderbunden, så utan det hamnar batchens chattpost på fel barns kalender.
-  await sendChatMessage({
-    teamId: args.teamId,
-    childId: args.childId,
-    senderId: args.requestedBy,
-    text: args.note ?? `Föreslår ändring av ${sorted.length} dag${sorted.length === 1 ? "" : "ar"}.`,
-    linkedShiftRequestId: batchId,
-  });
+  // kalenderbunden, så utan det hamnar batchens chattpost på fel barns
+  // kalender. Hoppas över för en anhörigs förslag, se proposeShiftRequest.
+  if (!args.requiredApprovers) {
+    await sendChatMessage({
+      teamId: args.teamId,
+      childId: args.childId,
+      senderId: args.requestedBy,
+      text: args.note ?? `Föreslår ändring av ${sorted.length} dag${sorted.length === 1 ? "" : "ar"}.`,
+      linkedShiftRequestId: batchId,
+    });
+  }
 
   return batchId;
 }
@@ -353,8 +372,15 @@ export async function submitShiftChange(args: {
   endAt: Date;
   note?: string;
   mode: ScheduleChangeMode;
+  /**
+   * Satt när `requestedBy` är en anhörig, inte en av kalenderns riktiga
+   * föräldrar (etapp 4, docs/roller-och-medlemskap.md) — tvingar ALLTID
+   * förfrågningsvägen nedan, oavsett `mode`: en anhörig kringgår aldrig
+   * godkännande, även om mottagaren råkar ha "gäller direkt"-läge.
+   */
+  requiredApprovers?: string[];
 }): Promise<void> {
-  if (args.mode === "notify") {
+  if (!args.requiredApprovers && args.mode === "notify") {
     await applyScheduleChangeDirect({
       teamId: args.teamId,
       childId: args.childId,
@@ -385,8 +411,10 @@ export async function submitShiftChangeBatch(args: {
   changes: DayChange[];
   note?: string;
   mode: ScheduleChangeMode;
+  /** Se submitShiftChange — samma etapp 4-spärr, för ändringslägets batch. */
+  requiredApprovers?: string[];
 }): Promise<void> {
-  if (args.mode !== "notify") {
+  if (args.requiredApprovers || args.mode !== "notify") {
     await proposeShiftRequestBatch(args);
     return;
   }

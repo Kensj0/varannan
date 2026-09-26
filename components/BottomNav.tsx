@@ -19,9 +19,18 @@ const SECTIONS: { id: AppSection; label: string; icon: (active: boolean) => Reac
 export default function BottomNav({
   active,
   onChange,
+  disabled,
 }: {
   active: AppSection;
   onChange: (section: AppSection) => void;
+  /**
+   * Sektioner som är avstängda för den aktuella rollen på den aktiva
+   * kalendern (se app/page.tsx, myRole) — t.ex. Chatt för en anhörig.
+   * Renderas nedtonade och trycket gör ingenting, i stället för att
+   * dölja fliken helt: samma UI för alla roller, bara vissa knappar
+   * inaktiva (docs/roller-och-medlemskap.md).
+   */
+  disabled?: ReadonlySet<AppSection>;
 }) {
   return (
     <nav
@@ -30,17 +39,25 @@ export default function BottomNav({
     >
       {SECTIONS.map((s) => {
         const isActive = active === s.id;
+        const isDisabled = disabled?.has(s.id) ?? false;
         return (
           <button
             key={s.id}
-            onClick={() => onChange(s.id)}
+            onClick={() => {
+              if (!isDisabled) onChange(s.id);
+            }}
             aria-label={s.label}
             aria-current={isActive}
+            aria-disabled={isDisabled}
             className={`flex flex-1 flex-col items-center gap-0.5 py-2 text-[10px] font-medium transition ${
-              isActive ? "text-rose-500" : "text-stone-400"
+              isDisabled
+                ? "text-stone-200"
+                : isActive
+                  ? "text-rose-500"
+                  : "text-stone-400"
             }`}
           >
-            {s.icon(isActive)}
+            {s.icon(isActive && !isDisabled)}
             {s.label}
           </button>
         );

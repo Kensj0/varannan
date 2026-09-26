@@ -4,12 +4,18 @@ Levande dokument. Uppdateras efterhand som etapper blir klara, så att
 nästa session (eller nästa person) ser var arbetet står utan att gräva
 i commit-historiken.
 
-**Status:** Etapp 1 OCH Etapp 2 — DEPLOYADE till produktion
-(2026-09-25: regler, functions inklusive nya `approveCalendarInvite`,
-och hosting). Regeltester (47/47) körda gröna innan reglerna
-deployades. ÅTERSTÅR: Kenny testar som riktig användare (se
-checklistan i "Läge just nu" längst ner) och etapp 3–4 är inte
-påbörjade.
+**Status:** Etapp 1–4 kodade, INTE ännu deployade den här omgången (se
+"Läge just nu" längst ner för vad som är kvar). Kennys riktiga
+användartest av den minimala etapp 3 (kontot "Lova") visade att en
+separat, förenklad vy för anhöriga var fel modell — den är riven och
+ersatt av en enhetlig vy: SAMMA UI som en förälder ser i hela appen,
+bara med vissa knappar/flikar avstängda beroende på rollen på den
+AKTIVA kalendern (inte på kontot som helhet). "+"-väljaren växlar
+mellan ALLA kalendrar man är med på, oavsett familj. Etapp 4 (en
+anhörigs "Ändra ansvar" kräver BÅDA föräldrarnas godkännande) byggdes
+samtidigt, server-auktoritativt. Regeltester (53/53) gröna —
+`firestore.rules` självt rördes INTE i den här omgången (etapp 4 sitter
+helt i `functions/src/index.ts`).
 
 ---
 
@@ -129,13 +135,19 @@ varje — det kan jag inte göra åt honom.
       "Bjud in"-knapp, dialog med mail + roll. Inbjudan skapas i
       väntläge, andra föräldern notifieras (push + mail, infrastrukturen
       finns sedan `dbe342a`), koden genereras och mailas först efter ja.
-- [~] **3. Medlemskap per kalender över teamgränser** — MINIMAL VERSION
-      byggd 2026-09-25, INTE DEPLOYAD. En riktig testanvändare fastnade
-      annars i en återvändsgränd efter att ha gått med som anhörig (se
-      "Läge just nu"). Inte hela visionen — se kvarstående där.
-- [ ] **4. Anhörigs "ändra ansvar"**
-      Flera godkännare på `ShiftRequestDoc`. Avtalstexten uppdateras med
-      regeln att anhörigdagar inte påverkar ställningen.
+- [x] **3. Medlemskap per kalender över teamgränser** — RIKTIGA VERSIONEN
+      byggd. Ersätter den minimala versionen (egen `RelativeHome`-vy,
+      nu borttagen helt): "+"-väljaren i `app/page.tsx`/`CalendarView`
+      listar ALLA kalendrar (`getMyCalendars()`), egna och främmande, i
+      EN gemensam vy. Se "Läge just nu" för detaljer.
+- [x] **4. Anhörigs "ändra ansvar"** — byggd. Flera godkännare på
+      `ShiftRequestDoc`, verkställs server-auktoritativt i
+      `approveShiftRequest`/`approveShiftRequestBatch`
+      (`functions/src/index.ts`) — räknar alltid ut de riktiga
+      föräldra-id:na själva vid godkännande, litar aldrig på ett
+      klient-skrivet `requiredApprovers`. Avtalstexten
+      (`lib/agreementText.ts`) är INTE uppdaterad än med regeln att
+      anhörigdagar inte påverkar ställningen — kvarstår.
 
 ## Fallgropar
 
@@ -363,3 +375,114 @@ med eget team som ÄVEN är anhörig/utomstående (se ovan).
    - [ ] Testa "Radera konto" i inställningarna på ett TESTKONTO (inte
          ett riktigt) — bekräfta att RADERA-textrutan krävs och att
          kalendrar man delar med någon annan finns kvar hos dem efteråt.
+
+## Läge just nu (efter enhetlig-UI/etapp 4-sessionen)
+
+**Allt nedan ERSÄTTER checklistan direkt ovanför** (RelativeHome och
+"Du är också anhörig hos …"-bannern finns inte längre — se varför i
+"Status" högst upp).
+
+**`RelativeHome.tsx` raderad helt.** `AuthGate.tsx` beslutar bara
+onboarding-vs-app (inget team och inga kalendrar via `getMyCalendars`
+→ `OnboardingFlow`, annars appen). `app/page.tsx` äger nu ALL logik för
+vilken kalender som visas och vilken roll man har där:
+
+- Ny hook `lib/hooks/useMyCalendars.ts` — tunn wrapper runt
+  `getMyCalendars()`. Källan till "+"-väljaren.
+- `app/page.tsx`: `activeCalendar` = en uttrycklig växling (satt direkt
+  till HELA `MyCalendar`-objektet när man klickar en rad i
+  `CalendarManagerPanel` — ingen väntan på ett nytt uppslag) > hemmateamet
+  > första kalendern (en ren anhörig utan eget team). `teamId`/`myRole`
+  derived därifrån, med en snabbväg som ALLTID antar "parent" direkt på
+  hemmateamet utan att vänta på `getMyCalendars` — annars hade varje
+  vanlig förälder sett en extra laddningsblinkning.
+- `isOwnTeam` styr de tre läsningar som kräver `isTeamMember` (bara
+  hemmateamet): `teams/{teamId}` (`useTeam`), `chatMessages`,
+  `teamInvites`-listning. En SEPARAT `useTeam(homeTeamId)`-lyssnare
+  (alltid aktiv, oavsett vilken kalender som visas) håller
+  Inställningar (bjud in andra föräldern, team-namn) korrekt även när
+  man tittar på en främmande kalender.
+- På en främmande kalender byggs `parents` (namn + platshållarfärg) från
+  `activeCalendar.parentNames` (redan levererat av `getMyCalendars`,
+  Admin SDK) i stället för `teams/{teamId}`, som en anhörig/utomstående
+  aldrig får läsa direkt.
+- `dayBalance`/`balanceRequests`/`childInfo`/`accounts` frågas bara när
+  `myRole === "parent"`. `useNotes`/`useTodos`/`useEventsForMonth` körs i
+  `strict`-läge (redan byggt förra sessionen) när `!isOwnTeam`.
+- `CalendarView.tsx`: ny `myRole`-prop. Ändringsläge-pennan och
+  kugghjulet (`CalendarSettingsPanel`) nedtonade och en no-op för
+  icke-förälder. Dagtryck är en no-op för `viewer`. `BottomNav.tsx` fick
+  en `disabled`-prop (nedtonade, inaktiva flikar) — Chatt+Info avstängt
+  för `relative`, Chatt+Listor+Info avstängt för `viewer`.
+- `CalendarManagerPanel.tsx`: `calendars`-listan byggs nu från HELA
+  `myCalendars` (inte bara `children` i eget team) — visar alla
+  kalendrar man är med på, i alla familjer. Byt namn/Ta bort/Bjud
+  in/"+ Anhörig" visas bara på rader där man själv är `parent`.
+- `DayActionModal.tsx`: "Ta bort aktivitet" (✕) visas bara för
+  `parent`, eller för den som skapade aktiviteten själv (`relative`
+  bara sina egna). `EventOccurrence` (`lib/recurrence.ts`) fick ett
+  `createdBy`-fält för detta.
+
+**Etapp 4 — dubbelgodkännande, server-auktoritativt:**
+- `ShiftRequestDoc.requiredApprovers`/`approvedBy` (fanns redan i
+  typen) sätts av klienten (`lib/calendarActions.ts`,
+  `buildShiftRequestDoc`) när `requestedBy` är en anhörig — men det är
+  BARA en progressindikator. `approveShiftRequest`/
+  `approveShiftRequestBatch` (`functions/src/index.ts`) räknar ALLTID
+  ut de riktiga föräldra-id:na själva (`calendarParentIds` på
+  child+team, hämtat i transaktionen) och ignorerar vad klienten skrev
+  vid skapandet — en manipulerad `requiredApprovers` kan alltså inte
+  kringgå dubbelgodkännandet.
+- Ett godkännande som inte räcker (väntar på ytterligare en förälder)
+  verkställer INGET — ingen ställnings-transaktion, status kvar
+  `"pending"`, `approvedBy` fylls på. Först när alla nödvändiga
+  (samma `blockingApprovers`-mönster som kalenderinbjudningar redan
+  använder — en förälder i "notis"-läge räknas inte som nödvändig)
+  har sagt ja verkställs bytet som idag.
+  `lib/calendarActions.ts`: en anhörigs förslag tar ALLTID
+  förfrågningsvägen (aldrig `applyScheduleChangeDirect`), oavsett
+  mottagarens `scheduleChangeMode` — en anhörig kringgår aldrig
+  godkännande. Chattposten som annars läggs till vid ett förslag
+  hoppas över för en anhörigs förslag (chatten är stängd för den
+  rollen, skrivningen skulle nekas).
+- `PendingShiftRequests.tsx`/`DayActionModal.tsx`: liten textpolish som
+  visar "kräver BÅDA föräldrarnas godkännande" respektive "väntar på
+  ytterligare en förälder" när det gäller.
+
+**INTE gjort den här omgången:**
+- Avtalstexten (`lib/agreementText.ts`) nämner ännu inte uttryckligen
+  att en anhörigs dag inte påverkar ställningen (beslutet är kodifierat
+  i logiken, bara inte i den lästa texten).
+- Inga `firestore.rules`/`firestore.indexes.json`-ändringar — allt ovan
+  gick att bygga inom befintliga regler (bekräftat rad för rad mot
+  filen innan kodning).
+
+**Verifierat innan detta skrevs:** `npx tsc --noEmit` (rot),
+`cd functions && npx tsc --noEmit` samt `npm run build` (functions),
+`npm run build` (rot, Next-export, lint grönt),
+`firebase emulators:exec --only firestore "npm run test:rules"` — 53/53
+gröna (ingen regeländring gjord, så samma tester som innan).
+
+**Testa som riktig användare, i tur och ordning (ersätter checklistan
+ovanför):**
+   - [ ] Logga in som en anhörig (`relative`): SAMMA UI som en förälder,
+         Chatt-fliken och kugghjulet nedtonade och gör ingenting,
+         "Ändringsläge"-pennan nedtonad. Tryck på en dag: Aktivitet
+         fungerar, "Ändra ansvar" skapar en förfrågan.
+   - [ ] Låt EN förälder godkänna den förfrågan — bytet ska INTE gälla
+         än (fortfarande väntande, texten säger "väntar på ytterligare
+         en förälder"). Låt den ANDRA föräldern godkänna — nu ska bytet
+         verkställas och ställningen justeras.
+   - [ ] Samma konto, tryck "+": ska visa BÅDA kalendrarna (om kontot
+         också är anhörig/parent någon annanstans) i EN lista, växling
+         fungerar direkt utan laddningsblinkning.
+   - [ ] Ett konto som är `parent` i sitt eget team OCH `relative`
+         någon annanstans: växla mellan dem via "+" — full åtkomst i sitt
+         eget, begränsad i det andra, ingen separat vy längre.
+   - [ ] `viewer`-konto: Chatt/Listor/Info nedtonade, dagtryck i
+         kalendern gör ingenting.
+   - [ ] Röktesta att det vanliga förälder-till-förälder-flödet
+         (byte/godkännande, chatt, inställningar) är oförändrat.
+   - [ ] Ny anhörig utan eget team, direkt efter registrering via
+         `/join`: hamnar i SAMMA app-UI (inte en särskild vy), rätt
+         kalender vald automatiskt.
