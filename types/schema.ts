@@ -282,6 +282,15 @@ export interface ChildDoc {
       role: "parent" | "relative" | "viewer";
       addedAt: FirestoreTimestamp;
       invitedBy: string;
+      /**
+       * Bara för relative/viewer — en förälders namn cachas redan i
+       * teams/{teamId}.parentProfiles, som en anhörig/utomstående saknar
+       * (inget users.teamId). Behövs för att visa VEM som fick en
+       * godkänd "hos {namn}"-dag i kalendern (se CalendarView.tsx).
+       * Satt av acceptCalendarInvite, hålls i synk av
+       * syncDisplayNameToTeam om personen byter namn senare.
+       */
+      displayName?: string;
     }
   >;
   /**

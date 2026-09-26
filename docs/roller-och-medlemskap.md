@@ -536,15 +536,36 @@ Konsekvenser, redan hanterade:
     stället för felaktigt "Andra föräldern" när takingOverParentId inte
     är en känd förälder.
 
-**INTE gjort — medveten avgränsning, ingen riktig kalendertagg än:**
+## Kalendertagg för en anhörigs godkända dag (byggd samma dag)
+
 Kenny valde (fråga: "vad ska hända på kalendern") "aktivitetstagg
-ovanpå, dagens färg orörd" — dvs en synlig etikett typ "Hos mormor" på
-dagen. Det är INTE byggt. Det kräver att en anhörigs VISNINGSNAMN blir
-läsbart för föräldrarna (`users/{uid}` är i dag bara läsbart av
-personen själv — `child.members[uid]` cachar bara `role`/`invitedBy`,
-inget namn), vilket är ett separat, inte-trivialt jobb (antingen cacha
-namnet i `members[uid]` vid `acceptCalendarInvite`, eller en ny
-Admin-SDK-callable för uppslag). Tills dess syns en godkänd
-anhörig-dag bara som en post i historik/notiser — INGEN visuell
-markering alls på kalenderrutan. Bör byggas som egen uppföljning
-innan detta känns "klart" för Kenny.
+ovanpå, dagens färg orörd". Byggt:
+
+- **Namnproblemet löst:** `child.members[uid]` (bara relative/viewer)
+  fick ett nytt valfritt `displayName`-fält (`types/schema.ts`) — den
+  enda platsen föräldrarna redan har läsrätt till för en anhörigs namn,
+  eftersom en anhörig saknar `users.teamId` (kan inte cachas i
+  `teams/{teamId}.parentProfiles` som en förälders). Sätts av
+  `acceptCalendarInvite` vid anslutning; `syncDisplayNameToTeam`
+  (`functions/src/index.ts`, lyssnar redan på `users/{uid}`-skrivningar
+  för föräldrarnas `parentProfiles`) uppdaterar nu ÄVEN
+  `members[uid].displayName` på alla kalendrar personen är
+  relative/viewer på (collectionGroup-fråga på `memberUids`, samma
+  index som `getMyCalendars` redan använder) om hen byter namn senare.
+- `app/page.tsx`: `custodyTags` — de godkända shiftRequests där
+  `takingOverParentId` INTE är en av de två riktiga föräldrarna, mappade
+  till `{date, label}` via `activeChild.members[uid].displayName`
+  (fallback "Anhörig" om det saknas, t.ex. gamla dokument från innan
+  fältet fanns).
+- `CalendarView.tsx`: ny `custodyTags`-prop, renderas som en lila tagg
+  ("Hos {namn}") i samma rad som aktivitetstaggarna — bara på
+  STARTDAGEN (ett "Ändra ansvar"-byte är alltid exakt ett dygn, ingen
+  anledning till en halvdags-uppdelning för en ren informationstagg).
+  Målar INTE om bar-färgen — det är fortfarande filtrerat bort separat
+  (se ovan).
+
+**Kvarstår:** ett konto som redan hann bli medlem INNAN den här
+sessionen (om något sådant finns i produktion) saknar `displayName` i
+sitt `members`-dokument tills personen byter namn en gång (triggern
+körs bara på namnÄNDRING, inte retroaktivt) — visas då som "Anhörig" i
+taggen/bannern i stället för det riktiga namnet. Ofarligt, bara kosmetiskt.

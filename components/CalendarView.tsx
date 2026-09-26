@@ -44,6 +44,13 @@ interface CalendarViewProps {
    * vad det ersätter — utan att behöva öppna en separat lista.
    */
   pendingShiftRequests?: ShiftRequestDoc[];
+  /**
+   * Godkända dagar där en anhörig/utomstående SJÄLV haft ansvaret
+   * (etapp 4) — påverkar aldrig dagens bakgrundsfärg (den stannar på
+   * ordinarie schemalagd förälder), men visas som en egen tagg, likt en
+   * aktivitet. Namnet är redan uppslaget av app/page.tsx.
+   */
+  custodyTags?: { date: Date; label: string }[];
   events: EventDoc[];
   currentUserId: string;
   onChangeMonth: (date: Date) => void;
@@ -115,6 +122,7 @@ export default function CalendarView({
   parents,
   approvedShiftRequests,
   pendingShiftRequests = [],
+  custodyTags = [],
   events,
   currentUserId,
   onChangeMonth,
@@ -190,6 +198,21 @@ export default function CalendarView({
     }
     return map;
   }, [events, monthDate]);
+
+  // Taggen visas bara på STARTDAGEN (dagen man klickade på) — "Ändra
+  // ansvar" gäller alltid exakt ett dygn, så en mer exakt halvdags-
+  // uppdelning (som ansvarsstaplarna gör) är onödig komplexitet för en
+  // rent informativ etikett.
+  const custodyTagsByDay = useMemo(() => {
+    const map = new Map<string, string[]>();
+    for (const tag of custodyTags) {
+      const key = dayKey(tag.date);
+      const list = map.get(key);
+      if (list) list.push(tag.label);
+      else map.set(key, [tag.label]);
+    }
+    return map;
+  }, [custodyTags]);
 
   function parentMetaFor(parentId: string): ParentMeta {
     return parents.find((p) => p.id === parentId) ?? parents[0];
@@ -540,6 +563,7 @@ export default function CalendarView({
             isToday: isSameDay(day, today),
             inMonth: day.getMonth() === monthDate.getMonth(),
             events: eventsByDay.get(dayKey(day)) ?? [],
+            custodyLabels: custodyTagsByDay.get(dayKey(day)) ?? [],
           };
         });
 
@@ -694,14 +718,22 @@ export default function CalendarView({
               ) : null
             )}
 
-            {/* Aktiviteter */}
+            {/* Aktiviteter + anhörigs egna ansvarsdagar (etapp 4) */}
             {days.map((info, i) =>
-              info.events.length > 0 ? (
+              info.events.length > 0 || info.custodyLabels.length > 0 ? (
                 <div
                   key={`ev-${i}`}
                   className="pointer-events-none z-10 min-w-0 space-y-0.5 self-end px-0.5 pb-0.5"
                   style={{ gridColumn: dayColOffset + i, gridRow: 4 }}
                 >
+                  {info.custodyLabels.map((label, li) => (
+                    <div
+                      key={`custody-${li}`}
+                      className="truncate rounded bg-violet-200 px-1 text-[10px] font-medium leading-4 text-violet-900"
+                    >
+                      Hos {label}
+                    </div>
+                  ))}
                   {info.events.slice(0, 2).map((ev, ei) => (
                     <div
                       key={ei}
@@ -808,6 +840,8 @@ interface DayInfo {
   isToday: boolean;
   inMonth: boolean;
   events: EventOccurrence[];
+  /** "Hos {namn}" — en anhörig som själv haft ansvaret den dagen (etapp 4). */
+  custodyLabels: string[];
 }
 
 interface Bar {

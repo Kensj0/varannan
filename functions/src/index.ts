@@ -614,20 +614,42 @@ export const syncDisplayNameToTeam = onDocumentWritten(
   async (event) => {
   const after = event.data?.after?.data() as UserDoc | undefined;
   const before = event.data?.before?.data() as UserDoc | undefined;
-  if (!after?.teamId) return;
+  if (!after) return;
 
   const nameChanged = before?.displayName !== after.displayName;
   const avatarChanged = before?.avatarUrl !== after.avatarUrl;
   const teamChanged = before?.teamId !== after.teamId;
   if (!nameChanged && !avatarChanged && !teamChanged) return;
 
-  await db.doc(`teams/${after.teamId}`).update({
-    [`parentProfiles.${event.params.uid}`]: {
-      uid: event.params.uid,
-      displayName: after.displayName,
-      avatarUrl: after.avatarUrl ?? null,
-    },
-  });
+  const uid = event.params.uid;
+
+  if (after.teamId) {
+    await db.doc(`teams/${after.teamId}`).update({
+      [`parentProfiles.${uid}`]: {
+        uid,
+        displayName: after.displayName,
+        avatarUrl: after.avatarUrl ?? null,
+      },
+    });
+  }
+
+  // Anhörig/utomstående saknar users.teamId (kan höra till flera
+  // familjer), så namnet cachas i stället i child.members[uid] på
+  // varje kalender man är med på — se acceptCalendarInvite. Bara
+  // namnbyte synkas hit (ingen avatarUrl där, "hos {namn}"-taggen
+  // behöver bara texten). role "parent" hoppas över: den cachningen
+  // sker redan ovan via parentProfiles.
+  if (nameChanged) {
+    const memberChildren = await db
+      .collectionGroup("children")
+      .where("memberUids", "array-contains", uid)
+      .get();
+    await Promise.all(
+      memberChildren.docs
+        .filter((d) => (d.data().members?.[uid]?.role as CalendarRole | undefined) !== "parent" && d.data().members?.[uid])
+        .map((d) => d.ref.update({ [`members.${uid}.displayName`]: after.displayName }))
+    );
+  }
 });
 
 
@@ -1947,7 +1969,13 @@ export const acceptCalendarInvite = onCall(async (request) => {
     const batch = db.batch();
     batch.update(inviteRef, { used: true, usedAt: admin.firestore.FieldValue.serverTimestamp() });
     batch.update(childRef, {
-      [`members.${uid}`]: { role, addedAt: now, invitedBy: invite.invitedBy },
+      // displayName cachas här (till skillnad från en förälders, som
+      // bara ligger i teams/{teamId}.parentProfiles): en anhörig/
+      // utomstående saknar users.teamId, så det finns ingen annan plats
+      // föräldrarna redan har läsrätt till för att visa VEM som fick en
+      // godkänd "hos {namn}"-dag (se PendingShiftRequests/CalendarView).
+      // Hålls i synk av syncDisplayNameToTeam om namnet ändras senare.
+      [`members.${uid}`]: { role, addedAt: now, invitedBy: invite.invitedBy, displayName: profile.displayName },
       memberUids: admin.firestore.FieldValue.arrayUnion(uid),
     });
     await batch.commit();
