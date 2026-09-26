@@ -486,3 +486,65 @@ ovanför):**
    - [ ] Ny anhörig utan eget team, direkt efter registrering via
          `/join`: hamnar i SAMMA app-UI (inte en särskild vy), rätt
          kalender vald automatiskt.
+
+## Rättelser efter Kennys riktiga användartest (2026-09-26, samma dag)
+
+Tre buggar till hittades direkt när Kenny testade ovanstående skarpt.
+Alla tre är fixade och deployade (functions + hosting + firestore:rules
+i separata omgångar samma dag, se git-historiken på grenen för exakta
+commits).
+
+**1. `useChildren` listar ofiltrerat — nekas helt för en anhörig.**
+En anhörig fastnade i "lägg till barn" trots att kalendern fanns.
+`useChildren(teamId)` gör en OFILTRERAD listfråga över hela
+children-kollektionen; firestore.rules kan inte bevisa att ALLA barn i
+ett FRÄMMANDE team uppfyller `isCalendarParticipant` utan en matchande
+`where()`, så Firestore nekar hela frågan (bekräftat med två nya
+regeltester — den filtrerar INTE bort enskilda dokument, till skillnad
+från vad kommentaren i firestore.rules påstod). Ny
+`useChildrenByIds` (`where(documentId(), "in", ids)`) används i stället
+för en främmande kalender.
+
+**2. "Ändra ansvar" band sig till nästa ORDINARIE byte i cykeln**
+(`getNextOrdinaryHandoff`) i stället för alltid exakt ett dygn från den
+valda dagen. Gav en förhandsvisning som påstod att mottagaren skulle ha
+ansvaret i flera dagar när den ordinarie blocket var längre än ett
+dygn. `endAt` räknas nu alltid som bytestiden NÄSTA dag, samma mönster
+som ändringsläget redan använder.
+
+**3. Om-tolkning: en anhörigs "Ändra ansvar" innebär att ANHÖRIGEN
+SJÄLV tar dagen — inte att en av de två föräldrarna byter med
+varandra.** Ursprungsbygget (etapp 4, ovan) föreslog fel: "Livia tar
+ansvaret" när en anhörig klickade Kennys dag, som om anhörigen bad
+Livia ta över. Kenny (2026-09-26): rubriken/texten ska säga "Du tar
+över ansvaret" / "Du som anhörig har ansvaret", och
+`takingOverParentId` på `ShiftRequestDoc` sätts nu till ANHÖRIGENS EGET
+uid när `myRole !== "parent"` (inte längre `otherParent.id`).
+Konsekvenser, redan hanterade:
+  - `lib/dayBalance.ts`: `calculateShiftDeltaDays` returnerar 0 om
+    `takingOverParentId` inte matchar någon av cykelns riktiga
+    föräldra-id:n (`cycle.blocks`) — en anhörigs dag påverkar
+    fortsatt INTE ställningen, nu även när fältet pekar på en
+    tredje person i stället för "fel" förälder.
+  - `app/page.tsx`: `approvedShiftRequests`/`pendingShiftRequests` som
+    skickas till `CalendarView` (bar-färgen på dagen) filtreras till
+    bara riktiga föräldra-id:n — Kennys uttryckliga val ("dagens färg
+    orörd") betyder att en anhörigs dag INTE ska måla om
+    kalenderstapeln. `PendingShiftRequests`-bannern (godkänn/avböj)
+    använder fortfarande OFILTRERADE listan, oförändrat.
+  - `PendingShiftRequests.tsx`: visar "En anhörig tar ansvaret" i
+    stället för felaktigt "Andra föräldern" när takingOverParentId inte
+    är en känd förälder.
+
+**INTE gjort — medveten avgränsning, ingen riktig kalendertagg än:**
+Kenny valde (fråga: "vad ska hända på kalendern") "aktivitetstagg
+ovanpå, dagens färg orörd" — dvs en synlig etikett typ "Hos mormor" på
+dagen. Det är INTE byggt. Det kräver att en anhörigs VISNINGSNAMN blir
+läsbart för föräldrarna (`users/{uid}` är i dag bara läsbart av
+personen själv — `child.members[uid]` cachar bara `role`/`invitedBy`,
+inget namn), vilket är ett separat, inte-trivialt jobb (antingen cacha
+namnet i `members[uid]` vid `acceptCalendarInvite`, eller en ny
+Admin-SDK-callable för uppslag). Tills dess syns en godkänd
+anhörig-dag bara som en post i historik/notiser — INGEN visuell
+markering alls på kalenderrutan. Bör byggas som egen uppföljning
+innan detta känns "klart" för Kenny.

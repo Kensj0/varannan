@@ -1055,8 +1055,15 @@ export default function HomePage() {
                   childName={activeChild.name}
                   cycle={cycle}
                   parents={[parents[0], parents[1]]}
-                  approvedShiftRequests={approvedShifts}
-                  pendingShiftRequests={pendingShifts}
+                  // En anhörigs egen custody-dag (takingOverParentId är
+                  // hens uid, inte en av de två riktiga föräldrarna) ska
+                  // INTE måla om dagens färg i kalendern — den stannar på
+                  // ordinarie schemalagd förälder (Kenny 2026-09-26).
+                  // PendingShiftRequests-bannern nedan använder fortfarande
+                  // OFILTRERADE pendingShifts, så den fortsätter visa och
+                  // låta föräldrarna godkänna/avböja dem som vanligt.
+                  approvedShiftRequests={approvedShifts.filter((r) => realParentIds.includes(r.takingOverParentId))}
+                  pendingShiftRequests={pendingShifts.filter((r) => realParentIds.includes(r.takingOverParentId))}
                   events={events.filter((e) => !e.childId || e.childId === activeChild.id)}
                   currentUserId={user!.uid}
                   onCreateActivity={async (date, title, recurring) => {

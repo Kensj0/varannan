@@ -50,6 +50,15 @@ export function calculateShiftDeltaDays(
     throw new Error("Slutdatum måste vara efter startdatum för shiftRequest");
   }
 
+  // En anhörig kan ta en dag SJÄLV (etapp 4, docs/roller-och-medlemskap.md)
+  // — takingOverParentId pekar då på en anhörigs uid, inte en av de två
+  // riktiga föräldrarna i cykeln. Ett sådant byte ska ALDRIG påverka
+  // ställningen ("ingen förälder vann något på den") — dagen syns
+  // fortfarande som ordinarie förälders färg i kalendern, precis som
+  // innan bytet.
+  const isRealCycleParent = cycle.blocks.some((b) => b.parentId === request.takingOverParentId);
+  if (!isRealCycleParent) return 0;
+
   let deltaAwayFromReference = 0; // antal dagar som flyttas BORT FRÅN referensföräldern
   let cursor = new Date(start);
 

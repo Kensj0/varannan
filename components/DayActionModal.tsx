@@ -98,11 +98,11 @@ export default function DayActionModal({
                 date={date}
                 childName={childName}
                 currentParent={scheduledParent}
-                takingOverParent={otherParent}
+                otherParent={otherParent}
                 cycle={cycle}
                 requiresBothParents={myRole !== "parent"}
                 onCancel={() => setStep("choose")}
-                onPropose={(d) => onProposeShift(d, otherParent.id)}
+                onPropose={(d) => onProposeShift(d, myRole === "parent" ? otherParent.id : currentUserId)}
               />
             )}
           </>
@@ -302,7 +302,7 @@ function ShiftStep({
   date,
   childName,
   currentParent,
-  takingOverParent,
+  otherParent,
   cycle,
   requiresBothParents,
   onCancel,
@@ -311,9 +311,15 @@ function ShiftStep({
   date: Date;
   childName: string;
   currentParent: ParentMeta;
-  takingOverParent: ParentMeta;
+  /** Den andra föräldern — bara relevant när en förälder föreslår (se nedan). */
+  otherParent: ParentMeta;
   cycle: CustodyCycleDoc;
-  /** En anhörigs förslag kräver BÅDA föräldrarnas ja, inte bara mottagarens. */
+  /**
+   * En anhörig som föreslår tar ansvaret SJÄLV den dagen (inte en av de
+   * två föräldrarna) och kräver BÅDA föräldrarnas ja — se
+   * docs/roller-och-medlemskap.md, etapp 4. En förälder föreslår som
+   * innan att den ANDRA föräldern tar över.
+   */
   requiresBothParents: boolean;
   onCancel: () => void;
   onPropose: (date: Date) => void;
@@ -326,11 +332,14 @@ function ShiftStep({
   // räknas ut mot cykelns switchHour i stället för att lita på den.
   const startAt = atSwitchHour(date, cycle.switchHour);
   const endAt = atSwitchHour(addDays(date, 1), cycle.switchHour);
+  // En anhörig tar dagen SJÄLV — "otherParent" (den andra föräldern) är
+  // bara relevant när en förälder föreslår ett byte mellan de två.
+  const takingOverName = requiresBothParents ? "Du" : otherParent.name;
 
   return (
     <div>
       <h3 className="mb-1 text-center text-xl font-bold text-stone-800">
-        {takingOverParent.name} tar ansvaret
+        {takingOverName} tar över ansvaret
       </h3>
       <p className="mb-5 text-center text-stone-500">för {childName}</p>
 
@@ -340,8 +349,9 @@ function ShiftStep({
       </div>
 
       <p className="mb-4 text-sm italic text-stone-500">
-        {takingOverParent.name} har ansvaret till {formatTime(endAt)} den {formatDate(endAt)}, då{" "}
-        {currentParent.name} tar tillbaka det enligt schemat.
+        {requiresBothParents
+          ? `Du som anhörig har ansvaret fram tills ${formatTime(endAt)} imorgon, då ${currentParent.name} tar över.`
+          : `${takingOverName} har ansvaret till ${formatTime(endAt)} den ${formatDate(endAt)}, då ${currentParent.name} tar tillbaka det enligt schemat.`}
       </p>
 
       <p className="mb-5 text-xs text-stone-400">
