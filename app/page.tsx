@@ -791,6 +791,20 @@ export default function HomePage() {
   // stämplar som progressindikator vid skapandet.
   const realParentIds = parents.filter((p) => p.id !== PENDING_PARTNER_ID).map((p) => p.id);
 
+  // Godkända dagar där en anhörig/utomstående SJÄLV haft ansvaret —
+  // målar aldrig om dagens färg (se filtreringen på
+  // approvedShiftRequests/pendingShiftRequests nedan), men visas som en
+  // egen tagg ("Hos {namn}") i CalendarView. Namnet kommer från
+  // child.members[uid].displayName, cachat av acceptCalendarInvite
+  // eftersom en anhörig saknar users.teamId (ingen annan plats
+  // föräldrarna redan har läsrätt till).
+  const custodyTags = approvedShifts
+    .filter((r) => !realParentIds.includes(r.takingOverParentId))
+    .map((r) => ({
+      date: new Date(r.startAt.seconds * 1000),
+      label: activeChild.members?.[r.takingOverParentId]?.displayName ?? "Anhörig",
+    }));
+
   // Barnväljaren visas bara när det faktiskt finns flera barn — annars
   // äter den höjd i onödan. Övriga rubriker är borttagna: månad och
   // barnets namn står redan i kalenderns egen header.
@@ -1064,6 +1078,7 @@ export default function HomePage() {
                   // låta föräldrarna godkänna/avböja dem som vanligt.
                   approvedShiftRequests={approvedShifts.filter((r) => realParentIds.includes(r.takingOverParentId))}
                   pendingShiftRequests={pendingShifts.filter((r) => realParentIds.includes(r.takingOverParentId))}
+                  custodyTags={custodyTags}
                   events={events.filter((e) => !e.childId || e.childId === activeChild.id)}
                   currentUserId={user!.uid}
                   onCreateActivity={async (date, title, recurring) => {
