@@ -206,15 +206,17 @@ export default function HomePage() {
   // innan namn/roll/föräldrar för en FRÄMMANDE kalender är kända.
   const [activeCalendarOverride, setActiveCalendarOverride] = useState<MyCalendar | null>(null);
   // Aktiv kalender: en uttrycklig växling > hemmateamet > första
-  // kalendern man är med på (en ren anhörig/utomstående utan eget team).
+  // kalendern man är med på (en ren anhörig/utomstående utan eget team,
+  // ELLER ett konto vars users.teamId pekar på ett tomt "skal"-team utan
+  // någon egen kalender ännu — homeCalendar blir då null trots att
+  // homeTeamId är satt, och vi ska INTE fastna där). Väntar MEDVETET på
+  // myCalendars (se laddningsspärren nedan) i stället för att gissa på
+  // homeTeamId direkt — annars kan ett sånt skal-team felaktigt bli den
+  // aktiva kalendern för en anhörig som råkar ha ett, se
+  // docs/roller-och-medlemskap.md ("AuthGate-fixen").
   const activeCalendar: MyCalendar | null =
-    activeCalendarOverride ?? homeCalendar ?? (!homeTeamId ? myCalendars?.[0] ?? null : null);
-  // teamId faller tillbaka på hemmateamet DIREKT (utan att vänta på
-  // getMyCalendars) så länge ingen uttrycklig växling gjorts — annars
-  // skulle varje förälder (det vanliga fallet) se en extra
-  // laddningsblinkning bara för att bekräfta något vi redan vet
-  // (users.teamId säger redan att rollen där är "parent").
-  const teamId = activeCalendar?.teamId ?? (!activeCalendarOverride ? homeTeamId : null);
+    activeCalendarOverride ?? homeCalendar ?? myCalendars?.[0] ?? null;
+  const teamId = activeCalendar?.teamId ?? null;
   const myRole: CalendarRole = activeCalendar?.role ?? "parent";
   const isOwnTeam = teamId !== null && teamId === homeTeamId;
 
@@ -563,11 +565,15 @@ export default function HomePage() {
     [parents]
   );
 
-  // Väntar på getMyCalendars bara när det verkligen behövs: ingen
-  // hemmakalender alls (en ren anhörig/utomstående) — annars vet vi redan
-  // (users.teamId) att rollen på hemmateamet är "parent", och ska inte
-  // blinka till en extra laddningsskärm bara för att bekräfta det.
-  if ((myCalendars === null && !homeTeamId) || childrenLoading) {
+  // Väntar ALLTID in getMyCalendars innan aktiv kalender avgörs — även
+  // för ett konto med users.teamId satt. Ett tidigare försök att gissa
+  // "parent på hemmateamet" direkt (utan att vänta) för att undvika en
+  // extra laddningsblinkning visade sig fel för ett konto vars
+  // hemmateam är ett tomt skal utan egen kalender: det låste fast på
+  // det tomma teamet i stället för att falla vidare till den riktiga
+  // anhörig-kalendern (se activeCalendar ovan). Kostar en kort
+  // laddningsskärm extra för alla — värt det för att aldrig fastna.
+  if (myCalendars === null || childrenLoading) {
     return <Centered>Laddar…</Centered>;
   }
 
