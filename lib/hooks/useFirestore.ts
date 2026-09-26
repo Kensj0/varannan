@@ -27,6 +27,7 @@ import {
   TodoDoc,
   ChildInfoDoc,
   ChildAccountDoc,
+  TeamInviteDoc,
 } from "../../types/schema";
 
 /**
@@ -300,33 +301,56 @@ export function usePackLists(
 export function useNotes(
   teamId: string | null | undefined,
   childId?: string | null,
-  isFallbackCalendar = false
+  isFallbackCalendar = false,
+  /**
+   * En anhörig (relative) kan bara läsa dokument som har DENNA
+   * kalenders childId — firestore.rules kräver ett per-dokument-
+   * synligt childId för icke-föräldrar (se notes-regeln), och en
+   * ofiltrerad listfråga (default nedan, klientfiltrerad) nekas därför
+   * i sin helhet för en anhörig eftersom Firestore inte kan bevisa att
+   * ALLA dokument i kollektionen uppfyller regeln. strict:true lägger
+   * på ett riktigt where("childId","==",childId) i själva frågan i
+   * stället — det är den enda formen en anhörig får använda. Kräver
+   * ett sammansatt index (childId + updatedAt), se
+   * firestore.indexes.json.
+   */
+  strict = false
 ): ListenerState<NoteDoc[]> {
   const [state, setState] = useState<ListenerState<NoteDoc[]>>({ data: [], loading: true, error: null });
 
   useEffect(() => {
-    if (!teamId) {
+    if (!teamId || (strict && !childId)) {
       setState({ data: [], loading: false, error: null });
       return;
     }
-    const q = query(collection(db, `teams/${teamId}/notes`), orderBy("updatedAt", "desc"));
+    const q = strict
+      ? query(
+          collection(db, `teams/${teamId}/notes`),
+          where("childId", "==", childId),
+          orderBy("updatedAt", "desc")
+        )
+      : query(collection(db, `teams/${teamId}/notes`), orderBy("updatedAt", "desc"));
     const unsub = onSnapshot(
       q,
       (snap) =>
         setState({
-          // Filtreras i klienten i stället för med where(): kombinationen
-          // childId + orderBy kräver ett sammansatt index, och volymen
-          // (en familjs anteckningar) gör det inte värt besväret.
-          data: snap.docs
-            .map((d) => d.data() as NoteDoc)
-            .filter((n) => belongsToCalendar(n.childId, childId, isFallbackCalendar)),
+          // Icke-strict: filtreras i klienten i stället för med
+          // where() — kombinationen childId + orderBy kräver ett
+          // sammansatt index, och volymen (en familjs anteckningar)
+          // gör det inte värt besväret för en förälder som ändå har
+          // bred åtkomst. strict gör redan filtreringen i frågan ovan.
+          data: strict
+            ? snap.docs.map((d) => d.data() as NoteDoc)
+            : snap.docs
+                .map((d) => d.data() as NoteDoc)
+                .filter((n) => belongsToCalendar(n.childId, childId, isFallbackCalendar)),
           loading: false,
           error: null,
         }),
       (error) => setState({ data: [], loading: false, error })
     );
     return unsub;
-  }, [teamId, childId, isFallbackCalendar]);
+  }, [teamId, childId, isFallbackCalendar, strict]);
 
   return state;
 }
@@ -350,39 +374,51 @@ function belongsToCalendar(
   return isFallbackCalendar;
 }
 
-/** Todos. `archived` styr om avbockade uppgifter ligger kvar i listan. */
+/**
+ * Todos. `archived` styr om avbockade uppgifter ligger kvar i listan.
+ * `strict` — se motsvarande parameter på useNotes: obligatorisk för en
+ * anhörig, som bara får läsa den här kollektionen via en riktig
+ * where("childId","==",childId)-fråga, inte en ofiltrerad listfråga.
+ * Stödjer bara includeArchived=false i strict-läge (det enda
+ * sammansatta index som finns, se firestore.indexes.json).
+ */
 export function useTodos(
   teamId: string | null | undefined,
   includeArchived = false,
   childId?: string | null,
-  isFallbackCalendar = false
+  isFallbackCalendar = false,
+  strict = false
 ): ListenerState<TodoDoc[]> {
   const [state, setState] = useState<ListenerState<TodoDoc[]>>({ data: [], loading: true, error: null });
 
   useEffect(() => {
-    if (!teamId) {
+    if (!teamId || (strict && !childId)) {
       setState({ data: [], loading: false, error: null });
       return;
     }
     const base = collection(db, `teams/${teamId}/todos`);
-    const q = includeArchived
-      ? query(base, orderBy("createdAt", "desc"))
-      : query(base, where("archived", "==", false), orderBy("createdAt", "desc"));
+    const q = strict
+      ? query(base, where("childId", "==", childId), where("archived", "==", false), orderBy("createdAt", "desc"))
+      : includeArchived
+        ? query(base, orderBy("createdAt", "desc"))
+        : query(base, where("archived", "==", false), orderBy("createdAt", "desc"));
 
     const unsub = onSnapshot(
       q,
       (snap) =>
         setState({
-          data: snap.docs
-            .map((d) => d.data() as TodoDoc)
-            .filter((t) => belongsToCalendar(t.childId, childId, isFallbackCalendar)),
+          data: strict
+            ? snap.docs.map((d) => d.data() as TodoDoc)
+            : snap.docs
+                .map((d) => d.data() as TodoDoc)
+                .filter((t) => belongsToCalendar(t.childId, childId, isFallbackCalendar)),
           loading: false,
           error: null,
         }),
       (error) => setState({ data: [], loading: false, error })
     );
     return unsub;
-  }, [teamId, includeArchived, childId, isFallbackCalendar]);
+  }, [teamId, includeArchived, childId, isFallbackCalendar, strict]);
 
   return state;
 }
@@ -512,7 +548,18 @@ export function useChatMessages(
  */
 export function useEventsForMonth(
   teamId: string | null | undefined,
-  monthDate: Date
+  monthDate: Date,
+  /**
+   * Se motsvarande parameter på useNotes/useTodos: en anhörig får bara
+   * läsa den här kollektionen via en riktig where("childId",...)-fråga
+   * — en ofiltrerad listfråga över HELA teamets events (som denna hook
+   * annars gör, för att kunna visa familje-gemensamma aktiviteter utan
+   * childId) nekas i sin helhet, eftersom Firestore inte kan bevisa att
+   * ALLA events i kollektionen uppfyller regeln (t.ex. ett annat barns
+   * aktiviteter i samma team). Kräver childId, och två sammansatta
+   * index (se firestore.indexes.json).
+   */
+  strictChildId?: string | null
 ): ListenerState<EventDoc[]> {
   const [ranged, setRanged] = useState<ListenerState<EventDoc[]>>({ data: [], loading: true, error: null });
   const [recurring, setRecurring] = useState<ListenerState<EventDoc[]>>({ data: [], loading: true, error: null });
@@ -522,7 +569,7 @@ export function useEventsForMonth(
   const month = monthDate.getMonth();
 
   useEffect(() => {
-    if (!teamId) {
+    if (!teamId || (strictChildId !== undefined && !strictChildId)) {
       setRanged({ data: [], loading: false, error: null });
       setRecurring({ data: [], loading: false, error: null });
       return;
@@ -533,23 +580,38 @@ export function useEventsForMonth(
     const rangeStart = new Date(year, month - 1, 1);
     const rangeEnd = new Date(year, month + 2, 1);
 
-    const rangedQuery = query(
-      collection(db, `teams/${teamId}/events`),
-      where("startAt", ">=", Timestamp.fromDate(rangeStart)),
-      where("startAt", "<", Timestamp.fromDate(rangeEnd)),
-      orderBy("startAt", "asc")
-    );
+    const rangedQuery = strictChildId
+      ? query(
+          collection(db, `teams/${teamId}/events`),
+          where("childId", "==", strictChildId),
+          where("startAt", ">=", Timestamp.fromDate(rangeStart)),
+          where("startAt", "<", Timestamp.fromDate(rangeEnd)),
+          orderBy("startAt", "asc")
+        )
+      : query(
+          collection(db, `teams/${teamId}/events`),
+          where("startAt", ">=", Timestamp.fromDate(rangeStart)),
+          where("startAt", "<", Timestamp.fromDate(rangeEnd)),
+          orderBy("startAt", "asc")
+        );
     const unsubRanged = onSnapshot(
       rangedQuery,
       (snap) => setRanged({ data: snap.docs.map((d) => d.data() as EventDoc), loading: false, error: null }),
       (error) => setRanged({ data: [], loading: false, error })
     );
 
-    const recurringQuery = query(
-      collection(db, `teams/${teamId}/events`),
-      where("recurrence", "!=", null),
-      where("startAt", "<", Timestamp.fromDate(rangeEnd))
-    );
+    const recurringQuery = strictChildId
+      ? query(
+          collection(db, `teams/${teamId}/events`),
+          where("childId", "==", strictChildId),
+          where("recurrence", "!=", null),
+          where("startAt", "<", Timestamp.fromDate(rangeEnd))
+        )
+      : query(
+          collection(db, `teams/${teamId}/events`),
+          where("recurrence", "!=", null),
+          where("startAt", "<", Timestamp.fromDate(rangeEnd))
+        );
     const unsubRecurring = onSnapshot(
       recurringQuery,
       (snap) => setRecurring({ data: snap.docs.map((d) => d.data() as EventDoc), loading: false, error: null }),
@@ -560,7 +622,7 @@ export function useEventsForMonth(
       unsubRanged();
       unsubRecurring();
     };
-  }, [teamId, year, month]);
+  }, [teamId, year, month, strictChildId]);
 
   // Slå ihop och deduplicera — ett återkommande event vars startdatum
   // ligger inom intervallet fångas av båda frågorna.
@@ -607,6 +669,52 @@ export function useStructureRequests(
           data: snap.docs
             .map((d) => d.data() as ScheduleStructureRequestDoc)
             .filter((r) => r.childId === childId),
+          loading: false,
+          error: null,
+        }),
+      (error) => setState({ data: [], loading: false, error })
+    );
+    return unsub;
+  }, [teamId, childId]);
+
+  return state;
+}
+
+/**
+ * Väntande anhörig/utomstående-inbjudningar som DEN INLOGGADE föräldern
+ * behöver ta ställning till för en given kalender (etapp 2, se
+ * approveCalendarInvite i functions/src/index.ts). firestore.rules
+ * begränsar "list" på teamInvites till kalenderns egna föräldrar, så
+ * frågan filtrerar bara på teamId — filtreringen på childId och på att
+ * uid faktiskt står med i requiredApprovers sker i klienten.
+ */
+export function useCalendarInvitesPendingApproval(
+  teamId: string | null | undefined,
+  childId: string | null | undefined
+): ListenerState<TeamInviteDoc[]> {
+  const [state, setState] = useState<ListenerState<TeamInviteDoc[]>>({
+    data: [],
+    loading: true,
+    error: null,
+  });
+
+  useEffect(() => {
+    if (!teamId || !childId) {
+      setState({ data: [], loading: false, error: null });
+      return;
+    }
+    const q = query(
+      collection(db, "teamInvites"),
+      where("teamId", "==", teamId),
+      where("status", "==", "pending_approval")
+    );
+    const unsub = onSnapshot(
+      q,
+      (snap) =>
+        setState({
+          data: snap.docs
+            .map((d) => d.data() as TeamInviteDoc)
+            .filter((invite) => invite.childId === childId),
           loading: false,
           error: null,
         }),

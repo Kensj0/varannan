@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { sendTestPush } from "../lib/pushNotifications";
 import InvitePartnerBanner from "./onboarding/InvitePartnerBanner";
+import DeleteAccountDialog from "./DeleteAccountDialog";
 
 type PushPermission = "unsupported" | "default" | "granted" | "denied" | null;
 
@@ -23,6 +24,8 @@ interface SettingsViewProps {
   onCreateInvite: () => Promise<{ code: string; shareUrl: string }>;
   /** Sparar nytt visningsnamn. Utelämnas om namnbyte inte är möjligt. */
   onUpdateDisplayName?: (name: string) => Promise<void>;
+  /** Permanent kontoradering — se DeleteAccountDialog och deleteMyAccount i functions/src/index.ts. */
+  onDeleteAccount: () => Promise<void>;
 }
 
 /**
@@ -45,7 +48,9 @@ export default function SettingsView({
   teamName,
   onCreateInvite,
   onUpdateDisplayName,
+  onDeleteAccount,
 }: SettingsViewProps) {
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -304,6 +309,17 @@ export default function SettingsView({
       >
         Logga ut
       </button>
+
+      <button
+        onClick={() => setDeleteDialogOpen(true)}
+        className="w-full rounded-2xl bg-white px-4 py-3 text-left text-sm font-medium text-stone-400 shadow-sm hover:bg-stone-50 hover:text-rose-600"
+      >
+        Radera konto
+      </button>
+
+      {deleteDialogOpen && (
+        <DeleteAccountDialog onClose={() => setDeleteDialogOpen(false)} onConfirm={onDeleteAccount} />
+      )}
     </div>
   );
 }

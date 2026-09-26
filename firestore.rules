@@ -136,11 +136,13 @@ service cloud.firestore {
           allow read, write: if isParentOfCalendar(teamId, childId);
         }
         match /custodyCycle/{docId} {
-          // Grundschemat driver kalendervyn — en anhörig (relative)
-          // måste kunna läsa den för att se schemat, precis som en
-          // förälder. En viewer (utomstående) också, se tabellen i
-          // docs/roller-och-medlemskap.md.
-          allow read: if isTeamMember(teamId) || canViewCalendarContent(teamId, childId);
+          // Grundschemat driver kalendervyn — ALLA tre roller ska
+          // kunna läsa den ("Se schema och aktiviteter": ja/ja/ja i
+          // tabellen, docs/roller-och-medlemskap.md), till skillnad
+          // från canViewCalendarContent() som medvetet utesluter
+          // viewer (den styr packlistor/anteckningar/todos, där
+          // viewer INTE ska in). Använd isCalendarParticipant direkt.
+          allow read: if isTeamMember(teamId) || isCalendarParticipant(teamId, childId);
           // Cykeln påverkar Ställningen retroaktivt om den ändras —
           // låt bara Cloud Function skriva den (kräver explicit
           // "bekräfta"-flöde i UI:t som anropar en callable function).
@@ -168,21 +170,54 @@ service cloud.firestore {
         }
       }
 
+      // childId SAKNAS = familje-gemensam aktivitet (inte knuten till en
+      // enskild kalender) — kvar på isTeamMember, dvs bara föräldrar,
+      // av samma skäl som chatMessages nedan: en anhörig/utomstående är
+      // bara inbjuden till SPECIFIKA kalendrar (barn), aldrig till hela
+      // teamet. Har eventet childId gäller rollen på DEN kalendern:
+      // relative ser och lägger in, viewer bara ser, och en anhörig får
+      // bara ta bort/ändra sina EGNA (tabellen i
+      // docs/roller-och-medlemskap.md — "Ta bort aktivitet": alla/bara
+      // egna/nej).
       match /events/{eventId} {
-        allow read, write: if isTeamMember(teamId);
+        allow read: if isTeamMember(teamId)
+                    || (resource.data.get("childId", null) != null
+                        && isCalendarParticipant(teamId, resource.data.get("childId", null)));
+        allow create: if isTeamMember(teamId)
+                      || (request.resource.data.get("childId", null) != null
+                          && canEditCalendarContent(teamId, request.resource.data.get("childId", null))
+                          && request.resource.data.createdBy == request.auth.uid);
+        allow update, delete: if isTeamMember(teamId)
+                      || (resource.data.get("childId", null) != null
+                          && canEditCalendarContent(teamId, resource.data.get("childId", null))
+                          && resource.data.createdBy == request.auth.uid);
       }
 
       // Förslag på ändring av grundschema eller bytestid. Skapas och
       // besvaras bara via callables — att verkställa ett godkännande
-      // kräver samma validering som när ändringen görs direkt.
+      // kräver samma validering som när ändringen görs direkt. Bara
+      // föräldrar kan INITIERA eller BESVARA (tabellen: "Grundschema,
+      // inställningar" är nej för både relative och viewer) — det
+      // stoppas redan av write:false här och av att de callables som
+      // skapar en sådan begäran (setCustomSwitchHour m.fl.) bara
+      // accepterar uid:n i team.parentIds. Läsning breddas ändå till
+      // relative, som annars inte kan se ATT ett förslag väntar på
+      // kalendern hen delar.
       match /scheduleStructureRequests/{requestId} {
-        allow read: if isTeamMember(teamId);
+        allow read: if isTeamMember(teamId) || canViewCalendarContent(teamId, resource.data.childId);
         allow write: if false;
       }
 
       match /shiftRequests/{requestId} {
-        allow read: if isTeamMember(teamId);
-        allow create: if isTeamMember(teamId)
+        // Läsning: alla tre roller (del av "Se schema och aktiviteter").
+        allow read: if isTeamMember(teamId) || isCalendarParticipant(teamId, resource.data.childId);
+        // Skapande: parent som idag, plus relative ("Ändra ansvar": ja,
+        // men kräver BÅDA föräldrarnas godkännande — den delen av
+        // logiken hör till etapp 4, se docs/roller-och-medlemskap.md,
+        // och är INTE byggd än. Reglerna här öppnar bara för att en
+        // anhörig FÅR skapa förslaget; själva flera-godkännare-
+        // verkställandet är kvar att bygga).
+        allow create: if (isTeamMember(teamId) || canEditCalendarContent(teamId, request.resource.data.childId))
                       && request.resource.data.status == "pending"
                       && request.resource.data.requestedBy == request.auth.uid;
         // Statusändring (approved/declined) görs via callable Cloud
@@ -191,15 +226,52 @@ service cloud.firestore {
         allow update: if false;
       }
 
+      // Packlistor, anteckningar, todos: parent och relative har full
+      // åtkomst, viewer ingen alls ("ja/ja/nej" i tabellen) —
+      // canViewCalendarContent/canEditCalendarContent utesluter redan
+      // viewer (se definitionerna högst upp i filen), så samma
+      // funktion räcker för både läsning och skrivning här.
+      //
+      // NoteDoc/TodoDoc.childId är valfritt (saknas = familje-
+      // gemensam, som events ovan) — samma isTeamMember-fallback.
+      // PackListDoc.childId är alltid satt.
       match /packLists/{listId} {
-        allow read, write: if isTeamMember(teamId);
+        allow read: if isTeamMember(teamId) || canViewCalendarContent(teamId, resource.data.childId);
+        allow create: if isTeamMember(teamId)
+                      || canEditCalendarContent(teamId, request.resource.data.childId);
+        allow update, delete: if isTeamMember(teamId)
+                      || canEditCalendarContent(teamId, resource.data.childId);
       }
       match /notes/{noteId} {
-        allow read, write: if isTeamMember(teamId);
+        allow read: if isTeamMember(teamId)
+                    || (resource.data.get("childId", null) != null
+                        && canViewCalendarContent(teamId, resource.data.get("childId", null)));
+        allow create: if isTeamMember(teamId)
+                      || (request.resource.data.get("childId", null) != null
+                          && canEditCalendarContent(teamId, request.resource.data.get("childId", null)));
+        allow update, delete: if isTeamMember(teamId)
+                      || (resource.data.get("childId", null) != null
+                          && canEditCalendarContent(teamId, resource.data.get("childId", null)));
       }
       match /todos/{todoId} {
-        allow read, write: if isTeamMember(teamId);
+        allow read: if isTeamMember(teamId)
+                    || (resource.data.get("childId", null) != null
+                        && canViewCalendarContent(teamId, resource.data.get("childId", null)));
+        allow create: if isTeamMember(teamId)
+                      || (request.resource.data.get("childId", null) != null
+                          && canEditCalendarContent(teamId, request.resource.data.get("childId", null)));
+        allow update, delete: if isTeamMember(teamId)
+                      || (resource.data.get("childId", null) != null
+                          && canEditCalendarContent(teamId, resource.data.get("childId", null)));
       }
+
+      // Chatten är MEDVETET kvar på isTeamMember bara — "Chatt": ja för
+      // parent, nej för relative OCH viewer (tabellen). Det håller så
+      // länge en anhörig/utomstående ALDRIG får users.teamId satt till
+      // det här teamet (se acceptCalendarInvite i functions/src/
+      // index.ts — role "relative"/"viewer" rör bara child.members,
+      // aldrig users/{uid}.teamId). Om det någonsin ändras måste den
+      // här regeln bli explicit isParentOfCalendar-baserad i stället.
       match /chatMessages/{messageId} {
         allow read: if isTeamMember(teamId);
         allow create: if isTeamMember(teamId) && request.resource.data.senderId == request.auth.uid;
@@ -208,11 +280,21 @@ service cloud.firestore {
     }
 
     // ---------------------------------------------------------------
-    // teamInvites/{code} — korttidsgiltiga inbjudningskoder för att
-    // knyta ihop förälder 2 med teamet (se lib/onboarding.ts)
+    // teamInvites/{code} — korttidsgiltiga inbjudningskoder (förälder,
+    // se lib/onboarding.ts, eller kalender/anhörig/utomstående, se
+    // createCalendarInvite/approveCalendarInvite i functions/src/
+    // index.ts).
     // ---------------------------------------------------------------
     match /teamInvites/{code} {
-      allow read: if isSignedIn(); // måste kunna läsas för att validera koden innan man är medlem
+      // Uppslag på KÄND kod (t.ex. join-sidan) — måste funka innan man
+      // är medlem någonstans, så bara isSignedIn().
+      allow get: if isSignedIn();
+      // LISTNING (t.ex. godkännande-vyn som visar väntande
+      // anhörig-inbjudningar för en kalender) breddar annars samma
+      // "get"-regel till att kunna läsa ut ALLA invitedEmail/koder i
+      // hela appen via en öppen fråga. Begränsa till kalenderns egna
+      // föräldrar.
+      allow list: if isTeamMember(resource.data.teamId);
       allow write: if false; // skapas/konsumeras endast via Cloud Function
     }
   }
