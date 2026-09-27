@@ -374,6 +374,11 @@ export default function HomePage() {
   async function handleRenameCalendar(calendarId: string, name: string) {
     if (!homeTeamId) return;
     await renameChild(homeTeamId, calendarId, name);
+    // myCalendars ("+"-listan) hämtas bara en gång, inte i realtid — utan
+    // detta stod det gamla namnet kvar där tills sidan laddades om, trots
+    // att kalenderns egen header (som lyssnar på children/{childId}
+    // direkt) redan visade det nya.
+    refreshMyCalendars();
   }
 
   async function handleInviteToCalendar(calendarId: string) {
@@ -858,6 +863,13 @@ export default function HomePage() {
       label: activeChild.members?.[r.takingOverParentId]?.displayName ?? "Anhörig",
     }));
 
+  /** uid -> visningsnamn för anhöriga/utomstående, till PendingShiftRequests. */
+  const relativeNames: Record<string, string> = Object.fromEntries(
+    Object.entries(activeChild.members ?? {})
+      .filter(([, m]) => m.displayName)
+      .map(([uid, m]) => [uid, m.displayName!])
+  );
+
   // Barnväljaren visas bara när det faktiskt finns flera barn — annars
   // äter den höjd i onödan. Övriga rubriker är borttagna: månad och
   // barnets namn står redan i kalenderns egen header.
@@ -1091,6 +1103,7 @@ export default function HomePage() {
                       requests={pendingShifts}
                       currentUserId={user!.uid}
                       parentNames={parentNames}
+                      relativeNames={relativeNames}
                       childName={activeChild.name}
                       onRespond={async (shiftRequestId, decision) => {
                         await respondToShiftRequest({
