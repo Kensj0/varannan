@@ -67,12 +67,19 @@ export async function renameChild(
 }
 
 /**
- * Tar bort en kalender med allt som hänger på den (schema, ställning,
- * barninfo, konton, byten). Servern vägrar ta bort den sista kalendern.
+ * Lämnar en kalender (finns kvar hos övriga medlemmar), eller — om man
+ * är den sista medlemmen av VILKEN roll som helst — raderar den helt
+ * med allt som hänger på den (schema, ställning, barninfo, konton,
+ * byten). Kräver bokstavlig text "RADERA" som bekräftelse, samma
+ * mönster som deleteMyAccount.
  */
-export async function deleteChild(teamId: string, childId: string): Promise<void> {
+export async function deleteChild(
+  teamId: string,
+  childId: string,
+  confirmation: string
+): Promise<void> {
   const fn = httpsCallable(functions, "deleteChild");
-  await fn({ teamId, childId });
+  await fn({ teamId, childId, confirmation });
 }
 
 export async function saveCustodyCycle(args: {
@@ -165,6 +172,8 @@ export interface MyCalendar {
   role: CalendarRole;
   /** uid -> visningsnamn, bara för kalenderns föräldrar. */
   parentNames: Record<string, string>;
+  /** Alla medlemmar (alla roller) — styr "lämna" vs. "radera helt". */
+  memberCount: number;
 }
 
 /**

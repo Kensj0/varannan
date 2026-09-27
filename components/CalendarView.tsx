@@ -88,7 +88,8 @@ interface CalendarViewProps {
   onSelectCalendar: (calendar: { id: string; teamId: string }) => void;
   onCreateCalendar: (name: string) => Promise<void>;
   onRenameCalendar: (calendarId: string, name: string) => Promise<void>;
-  onDeleteCalendar: (calendarId: string) => Promise<void>;
+  /** confirmation måste vara den bokstavliga texten "RADERA". */
+  onDeleteCalendar: (teamId: string, calendarId: string, confirmation: string) => Promise<void>;
   onInviteToCalendar: (calendarId: string) => Promise<{ shareUrl: string }>;
   onInviteRelative: (
     calendarId: string,
