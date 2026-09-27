@@ -699,6 +699,10 @@ samt `npm run build` (functions), `npm run build` (rot, Next-export) —
 alla gröna. Ingen regeländring (allt sitter i callablen, Admin SDK
 kringgår `firestore.rules`), så inga nya regeltester.
 
+**Deploy — GJORD 2026-09-27** (`a0d57b0`, workflow-run 36312184101,
+manuell `workflow_dispatch`, `target: hosting,functions`):
+`conclusion: success` i alla steg.
+
 **Testa som riktig användare:**
    - [ ] Anhörig-konto: ✕ på en kalender där du bara är anhörig →
          skriv RADERA → försvinner ur din "+"-lista, finns kvar hos
