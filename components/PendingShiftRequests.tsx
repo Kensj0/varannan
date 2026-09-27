@@ -7,6 +7,12 @@ interface PendingShiftRequestsProps {
   requests: ShiftRequestDoc[];
   currentUserId: string;
   parentNames: Record<string, string>;
+  /**
+   * uid -> visningsnamn för anhöriga/utomstående (child.members[uid].displayName,
+   * se app/page.tsx) — saknas fältet (gammalt medlemskap från innan det
+   * fanns) visas bara "En anhörig" utan namn.
+   */
+  relativeNames: Record<string, string>;
   childName: string;
   onRespond: (shiftRequestId: string, decision: "approved" | "declined") => Promise<void>;
   onRespondBatch: (batchId: string, decision: "approved" | "declined") => Promise<void>;
@@ -31,6 +37,7 @@ export default function PendingShiftRequests({
   requests,
   currentUserId,
   parentNames,
+  relativeNames,
   childName,
   onRespond,
   onRespondBatch,
@@ -42,11 +49,15 @@ export default function PendingShiftRequests({
   /**
    * En anhörigs egen förfrågan (etapp 4) har takingOverParentId == hens
    * EGET uid, inte en av de två riktiga föräldrarna — parentNames
-   * känner bara till de två, så utan det här visades "Andra föräldern"
-   * felaktigt för den som faktiskt tar dagen (den anhörige själv).
+   * känner bara till de två, så utan relativeNames visades bara "En
+   * anhörig" utan namn (Kenny 2026-09-27: ska säga VEM).
    */
   function takingOverLabel(req: ShiftRequestDoc): string {
-    return parentNames[req.takingOverParentId] ?? (req.takingOverParentId === req.requestedBy ? "En anhörig" : "Andra föräldern");
+    const parentName = parentNames[req.takingOverParentId];
+    if (parentName) return parentName;
+    if (req.takingOverParentId !== req.requestedBy) return "Andra föräldern";
+    const relativeName = relativeNames[req.takingOverParentId];
+    return relativeName ? `En anhörig ${relativeName}` : "En anhörig";
   }
 
   const groups = useMemo(() => {
