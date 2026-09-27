@@ -569,3 +569,34 @@ sessionen (om något sådant finns i produktion) saknar `displayName` i
 sitt `members`-dokument tills personen byter namn en gång (triggern
 körs bara på namnÄNDRING, inte retroaktivt) — visas då som "Anhörig" i
 taggen/bannern i stället för det riktiga namnet. Ofarligt, bara kosmetiskt.
+
+## Buggfix: ren anhörig som skapar sin FÖRSTA egna kalender (via "+")
+
+Kenny (anhörig-kontot): "+" → "+ Ny kalender" → skrev ett namn → Spara
+→ "Kunde inte spara. Försök igen.", `addChild` 403 i nätverksloggen.
+
+Roten: `handleCreateCalendar` (app/page.tsx) skapar ett nytt team
+(`createFamilyTeam`) och barnet (`addChild`) korrekt, men satte sen
+`activeCalendarOverride` till `null` i tron att `homeTeamId`/
+`homeCalendar` skulle lösa resten. `myCalendars` (från `getMyCalendars`)
+hämtas bara EN gång, inte i realtid — den visste ingenting om den
+NYSKAPADE kalendern. Resultat: `teamId` (härlett från `activeCalendar`)
+pekade kvar på den FÖRRA aktiva kalendern (en anhörig-kalender i en
+annan familj) medan `selectedChildId` redan pekade på det NYA barnet —
+ingen matchning, `activeChild` blev `null`, `AddFirstChildScreen`
+visades i onödan, och DEN skärmens egen "Spara" skickade
+`addChild(fel-teamId, …)` — 403, eftersom man inte är förälder i den
+andra familjens team.
+
+Fix: `handleCreateCalendar` sätter nu `activeCalendarOverride` DIREKT
+till ett komplett `MyCalendar`-objekt för den nyss skapade kalendern
+(`{teamId, childId, childName, role: "parent", parentNames}`) i
+stället för att lita på en föråldrad `myCalendars`-lista, och anropar
+`refreshMyCalendars()` (ny — `useMyCalendars` exponerar nu sin
+`refresh`) i bakgrunden så "+"-listan stämmer nästa gång den öppnas.
+Påverkar bara EN ren anhörigs FÖRSTA egna kalender — en befintlig
+förälders "lägg till syskon" träffades aldrig av buggen (teamId var
+redan korrekt där, oavsett `myCalendars`-cachens ålder).
+
+Verifierat: tsc, Next-build. Ingen ny regeltest behövdes (ingen
+regeländring).
