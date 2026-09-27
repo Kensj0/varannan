@@ -196,7 +196,7 @@ export default function HomePage() {
   // Alla kalendrar (uid) är med på, i ALLA familjer — inklusive det egna
   // hemmateamet med roll "parent" (se getMyCalendars). Källan till "+"-
   // väljaren och till vilken roll man har på den kalender man tittar på.
-  const { calendars: myCalendars } = useMyCalendars(user?.uid ?? null);
+  const { calendars: myCalendars, refresh: refreshMyCalendars } = useMyCalendars(user?.uid ?? null);
   const homeTeamId = userDoc?.teamId ?? null;
   const homeCalendar = useMemo(
     () => myCalendars?.find((c) => c.teamId === homeTeamId) ?? null,
@@ -346,10 +346,27 @@ export default function HomePage() {
     // hemmateam (users.teamId), med rollen "parent" där.
     const ownTeamId = homeTeamId ?? (await createFamilyTeam("Vårt schema")).teamId;
     const { childId } = await addChild(ownTeamId, name);
-    // Hoppa direkt till den nya kalendern — annars ser det ut som att
-    // ingenting hände, eftersom vyn ligger kvar på den gamla.
-    setActiveCalendarOverride(null); // hemmateamet — inte längre en uttrycklig växling
+    // myCalendars (getMyCalendars) vet ännu inget om den HÄR nybakade
+    // kalendern — den hämtas bara en gång, inte i realtid. Att sätta
+    // activeCalendarOverride till null (lita på att homeTeamId/
+    // homeCalendar löser det) lämnade ett glapp: teamId pekade kvar på
+    // den FÖRRA aktiva kalendern (t.ex. en anhörig-kalender i en annan
+    // familj) medan selectedChildId redan pekade på det NYA barnet —
+    // activeChild hittades då aldrig, AddFirstChildScreen visades i
+    // onödan, och DEN skärmens egna "Spara" pekade i sin tur mot FEL
+    // team (permission-denied/403, eftersom man inte är förälder där).
+    // En riktig anhörig-testanvändare hittade detta. Sätt därför
+    // kalendern man just skapade DIREKT som aktiv, och uppdatera
+    // myCalendars i bakgrunden så "+"-listan stämmer nästa gång den öppnas.
+    setActiveCalendarOverride({
+      teamId: ownTeamId,
+      childId,
+      childName: name,
+      role: "parent",
+      parentNames: { [user!.uid]: user?.displayName ?? "Du" },
+    });
     setSelectedChildId(childId);
+    refreshMyCalendars();
   }
 
   async function handleRenameCalendar(calendarId: string, name: string) {
