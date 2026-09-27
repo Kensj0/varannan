@@ -60,6 +60,7 @@ import {
   ScheduleChangeMode,
   scheduleChangeModeFor,
   calendarParentIds,
+  calendarRoleFor,
   PENDING_PARTNER_ID,
   CalendarRole,
 } from "../../types/schema";
@@ -1332,32 +1333,46 @@ export const renameChild = onCall(async (request) => {
 });
 
 /**
- * Lämnar eller raderar en kalender.
+ * Lämnar eller raderar en kalender — för VILKEN roll som helst (förälder,
+ * anhörig eller utomstående). Kräver textbekräftelse "RADERA", samma
+ * mönster som deleteMyAccount, eftersom båda utfallen är permanenta.
  *
- * Kalendern ÄR barnet, och delas av de föräldrar som står i
- * child.parentIds. Därför finns två utfall:
+ * Kalendern ÄR barnet, och delas av alla i child.members (föräldrar i
+ * child.parentIds är alltid en delmängd). Därför finns två utfall:
  *
- *  - Är du INTE ensam kvar: du lämnar bara. Kalendern med allt innehåll
- *    finns kvar hos den andra föräldern, som kan bjuda in någon ny i
- *    ditt ställe. Ditt uid byts mot PENDING_PARTNER_ID i grundschemat,
+ *  - Är du INTE ensam medlem kvar (oavsett roll på de andra): du lämnar
+ *    bara. Kalendern med allt innehåll finns kvar hos de andra. Är du
+ *    förälder byts ditt uid mot PENDING_PARTNER_ID i grundschemat,
  *    precis som när man bygger ett schema innan partnern anslutit — då
  *    glider nästa person in på samma plats utan att schemat byggs om.
+ *    En anhörig/utomstående som lämnar rör varken parentIds eller
+ *    grundschemat — hen fanns aldrig där.
  *
- *  - Är du sista medlemmen: allt raderas. Firestore kaskadraderar inte,
- *    så subkollektionerna städas uttryckligen — annars blir schema,
- *    ställning, barninfo och konton kvar som föräldralösa dokument.
+ *  - Är du sista medlemmen av ALLA roller: allt raderas. Firestore
+ *    kaskadraderar inte, så subkollektionerna städas uttryckligen —
+ *    annars blir schema, ställning, barninfo och konton kvar som
+ *    föräldralösa dokument. En kalender som fortfarande har kvarvarande
+ *    anhöriga/utomstående raderas ALDRIG bara för att sista föräldern
+ *    lämnat — de behåller sin läsrätt tills de också lämnar.
  *
- * Ställningen behålls när någon lämnar (uttryckligt val): saldot är en
- * fortsättning på kalenderns historik, inte på relationen till en viss
- * person.
+ * Ställningen behålls när en förälder lämnar (uttryckligt val): saldot
+ * är en fortsättning på kalenderns historik, inte på relationen till en
+ * viss person.
  */
 export const deleteChild = onCall(async (request) => {
   const uid = request.auth?.uid;
   if (!uid) throw new HttpsError("unauthenticated", "Du måste vara inloggad.");
 
-  const { teamId, childId } = request.data as { teamId?: string; childId?: string };
+  const { teamId, childId, confirmation } = request.data as {
+    teamId?: string;
+    childId?: string;
+    confirmation?: string;
+  };
   if (!teamId || !childId) {
     throw new HttpsError("invalid-argument", "teamId och childId krävs.");
+  }
+  if (confirmation !== "RADERA") {
+    throw new HttpsError("invalid-argument", "Skriv RADERA för att bekräfta.");
   }
 
   const teamRef = db.doc(`teams/${teamId}`);
@@ -1368,54 +1383,86 @@ export const deleteChild = onCall(async (request) => {
   const childSnap = await childRef.get();
   if (!childSnap.exists) throw new HttpsError("not-found", "Kalendern finns inte.");
 
-  const members = calendarParentIds(childSnap.data() as any, teamSnap.data() as any);
-  if (!members.includes(uid)) {
+  const child = childSnap.data() as any;
+  const team = teamSnap.data() as any;
+  const role = calendarRoleFor(uid, child, team);
+  if (!role) {
     throw new HttpsError("permission-denied", "Du delar inte den här kalendern.");
   }
 
-  const remainingMembers = members.filter((id) => id !== uid && id !== PENDING_PARTNER_ID);
+  // "Medlem" = förälder, anhörig ELLER utomstående. Faller tillbaka på
+  // calendarParentIds för kalendrar från innan members/memberUids fanns
+  // (samma fallback som calendarRoleFor).
+  const allMembers: string[] = (child.memberUids ?? calendarParentIds(child, team)).filter(
+    (id: string) => id !== PENDING_PARTNER_ID
+  );
+  const remainingMembers = allMembers.filter((id) => id !== uid);
 
-  // ---- Fall 1: någon annan är kvar — lämna, radera inte. ----
+  // ---- Fall 1: någon annan medlem (vilken roll som helst) är kvar. ----
   if (remainingMembers.length > 0) {
-    const cycleRef = childRef.collection("custodyCycle").doc("main");
-    const cycleSnap = await cycleRef.get();
-
     const batch = db.batch();
-    batch.update(childRef, { parentIds: remainingMembers });
-
-    if (cycleSnap.exists) {
-      // Blocken pekar på uid:n. Byt mina mot platshållaren så att den
-      // som bjuds in härnäst ärver mina dagar i stället för att schemat
-      // pekar på någon som inte längre är med.
-      const cycle = cycleSnap.data() as CustodyCycleDoc;
-      const blocks = (cycle.blocks ?? []).map((b) =>
-        b.parentId === uid ? { ...b, parentId: PENDING_PARTNER_ID } : b,
+    const patch: Record<string, any> = {
+      [`members.${uid}`]: admin.firestore.FieldValue.delete(),
+      memberUids: admin.firestore.FieldValue.arrayRemove(uid),
+    };
+    if (role === "parent") {
+      // KÄND LUCKA: blir detta en tom lista (sista föräldern lämnade,
+      // men en anhörig/utomstående är kvar) faller calendarParentIds()
+      // tillbaka på teams.parentIds, som fortfarande visar de(n)
+      // förälder(-ar) som just lämnade — de dyker upp igen som
+      // "kalenderns föräldrar" för den kvarvarande anhörigen tills
+      // kalendern får en ny riktig förälder. Kosmetiskt (ingen krasch,
+      // ingen läckt data), inte värt komplexiteten att fixa förrän någon
+      // faktiskt hamnar där.
+      patch.parentIds = calendarParentIds(child, team).filter(
+        (id) => id !== uid && id !== PENDING_PARTNER_ID
       );
-      batch.update(cycleRef, { blocks });
+    }
+    batch.update(childRef, patch);
+
+    if (role === "parent") {
+      const cycleRef = childRef.collection("custodyCycle").doc("main");
+      const cycleSnap = await cycleRef.get();
+      if (cycleSnap.exists) {
+        // Blocken pekar på uid:n. Byt mina mot platshållaren så att den
+        // som bjuds in härnäst ärver mina dagar i stället för att schemat
+        // pekar på någon som inte längre är med.
+        const cycle = cycleSnap.data() as CustodyCycleDoc;
+        const blocks = (cycle.blocks ?? []).map((b) =>
+          b.parentId === uid ? { ...b, parentId: PENDING_PARTNER_ID } : b,
+        );
+        batch.update(cycleRef, { blocks });
+      }
     }
 
     await batch.commit();
 
-    // Prenumerationstoken som var mina blir meningslösa.
-    const tokens: Record<string, string> = teamSnap.data()?.calendarFeedTokens ?? {};
-    const mine = Object.keys(tokens).filter((k) => k === `${childId}:${uid}`);
-    if (mine.length > 0) {
-      const patch: Record<string, any> = {};
-      for (const key of mine) patch[`calendarFeedTokens.${key}`] = admin.firestore.FieldValue.delete();
-      await teamRef.update(patch);
+    if (role === "parent") {
+      // Prenumerationstoken som var mina blir meningslösa. Bara
+      // föräldrar kan ha några (createCalendarFeedToken är parent-only).
+      const tokens: Record<string, string> = team?.calendarFeedTokens ?? {};
+      const mine = Object.keys(tokens).filter((k) => k === `${childId}:${uid}`);
+      if (mine.length > 0) {
+        const patch2: Record<string, any> = {};
+        for (const key of mine) patch2[`calendarFeedTokens.${key}`] = admin.firestore.FieldValue.delete();
+        await teamRef.update(patch2);
+      }
     }
 
-    const leaverName = teamSnap.data()?.parentProfiles?.[uid]?.displayName ?? "Den andra föräldern";
-    const childName = childSnap.data()?.name ?? "kalendern";
+    const leaverName =
+      role === "parent"
+        ? team?.parentProfiles?.[uid]?.displayName ?? "Den andra föräldern"
+        : child.members?.[uid]?.displayName ?? (role === "viewer" ? "En utomstående" : "En anhörig");
+    const childName = child.name ?? "kalendern";
     await sendPushToUsers(db, remainingMembers, {
       title: `${leaverName} lämnade ${childName}`,
-      body: "Kalendern finns kvar hos dig. Du kan bjuda in någon ny att dela den med.",
+      body: "Kalendern finns kvar. Du kan bjuda in någon ny att dela den med.",
     });
 
     return { ok: true, left: true };
   }
 
-  // ---- Fall 2: sista medlemmen — radera allt. ----
+  // ---- Fall 2: sista medlemmen av ALLA roller — radera allt. ----
   for (const sub of [
     "childInfo",
     "accounts",
@@ -2085,12 +2132,19 @@ export const getMyCalendars = onCall(async (request) => {
     for (const pid of parentIds) {
       parentNames[pid] = team?.parentProfiles?.[pid]?.displayName ?? "Förälder";
     }
+    // Alla roller, inte bara föräldrar — styr om "lämna kalendern" i
+    // klienten betyder lämna (någon annan kvar) eller radera helt
+    // (sista medlemmen, se deleteChild).
+    const memberCount: number = (
+      (child.memberUids as string[] | undefined) ?? parentIds
+    ).filter((id) => id !== PENDING_PARTNER_ID).length;
     return {
       teamId: child.teamId as string,
       childId: d.id,
       childName: (child.name as string) ?? "Kalender",
       role,
       parentNames,
+      memberCount,
     };
   });
 

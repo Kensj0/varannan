@@ -71,6 +71,7 @@ import {
 } from "../lib/childInfoActions";
 import dynamic from "next/dynamic";
 import CalendarView from "../components/CalendarView";
+import { ManagedCalendar } from "../components/CalendarManagerPanel";
 import BottomNav, { AppSection } from "../components/BottomNav";
 import SubTabs from "../components/SubTabs";
 import BalanceCard from "../components/BalanceCard";
@@ -95,7 +96,7 @@ const TodoView = dynamic(() => import("../components/TodoView"), { loading });
 const ChildInfoView = dynamic(() => import("../components/ChildInfoView"), { loading });
 const AccountsView = dynamic(() => import("../components/AccountsView"), { loading });
 const CycleSetupScreen = dynamic(() => import("../components/onboarding/CycleSetupScreen"), { loading });
-const AddFirstChildScreen = dynamic(() => import("../components/onboarding/AddFirstChildScreen"), { loading });
+const EmptyCalendarState = dynamic(() => import("../components/EmptyCalendarState"), { loading });
 import {
   createFamilyTeam,
   createInvite,
@@ -364,6 +365,7 @@ export default function HomePage() {
       childName: name,
       role: "parent",
       parentNames: { [user!.uid]: user?.displayName ?? "Du" },
+      memberCount: 1,
     });
     setSelectedChildId(childId);
     refreshMyCalendars();
@@ -408,14 +410,28 @@ export default function HomePage() {
     await signOutUser();
   }
 
-  async function handleDeleteCalendar(calendarId: string) {
-    if (!homeTeamId) return;
-    await deleteChild(homeTeamId, calendarId);
+  /**
+   * calendarTeamId är kalenderns EGET team — inte nödvändigtvis
+   * homeTeamId, som en anhörig/utomstående saknar helt och en förälder
+   * bara har för sitt EGET hemmateam (se ManagedCalendar.teamId,
+   * CalendarManagerPanel). Fungerar för alla tre roller: servern
+   * (deleteChild) avgör lämna vs. radera helt utifrån VEM som är kvar,
+   * inte vilken roll den som lämnar hade.
+   */
+  async function handleDeleteCalendar(calendarTeamId: string, calendarId: string, confirmation: string) {
+    await deleteChild(calendarTeamId, calendarId, confirmation);
     // Vyn kan stå på den kalender som just försvann — släpp valet så att
-    // fallbacken (första barnet) tar över i stället för att peka på ett
-    // dokument som inte finns.
+    // fallbacken (hemmateamet/första kalendern) tar över i stället för
+    // att peka på ett dokument som inte finns.
     if (selectedChildId === calendarId) setSelectedChildId(null);
     if (selectedInfoChildId === calendarId) setSelectedInfoChildId(null);
+    if (activeCalendarOverride?.teamId === calendarTeamId && activeCalendarOverride?.childId === calendarId) {
+      setActiveCalendarOverride(null);
+    }
+    // myCalendars ("+"-listan) hämtas bara en gång, inte i realtid — utan
+    // detta skulle den borttagna kalendern hänga kvar i listan tills
+    // sidan laddas om.
+    refreshMyCalendars();
   }
 
   async function handleAddInfoChild(name: string) {
@@ -610,6 +626,19 @@ export default function HomePage() {
     [parents]
   );
 
+  /** Delad mellan CalendarView (aktiv kalender) och EmptyCalendarState (ingen alls). */
+  const calendarRows: ManagedCalendar[] = useMemo(
+    () =>
+      (myCalendars ?? []).map((c) => ({
+        id: c.childId,
+        teamId: c.teamId,
+        name: c.childName,
+        memberCount: c.memberCount,
+        role: c.role,
+      })),
+    [myCalendars]
+  );
+
   // Väntar ALLTID in getMyCalendars innan aktiv kalender avgörs — även
   // för ett konto med users.teamId satt. Ett tidigare försök att gissa
   // "parent på hemmateamet" direkt (utan att vänta) för att undvika en
@@ -622,15 +651,22 @@ export default function HomePage() {
     return <Centered>Laddar…</Centered>;
   }
 
-  // Uppsättningen kan vara ofullständig — t.ex. om någon stängde webbläsaren
-  // mitt i onboarding. Varje lucka får en skärm som går att ta sig vidare
-  // från, i stället för en återvändsgränd.
+  // Ingen aktiv kalender — antingen mitt i den allra första onboardingen
+  // (team skapat, inget barn än) eller efter att ha lämnat/raderat sin
+  // sista kalender (handleDeleteCalendar). Samma app-skal som resten av
+  // sidan i stället för en särskild onboardingskärm, se
+  // EmptyCalendarState och docs/roller-och-medlemskap.md (Kenny
+  // 2026-09-27).
   if (!activeChild) {
     return (
-      <AddFirstChildScreen
-        onAddChild={async (name, birthYear) => {
-          await addChild(teamId!, name, birthYear);
-        }}
+      <EmptyCalendarState
+        calendars={calendarRows}
+        onSelectCalendar={handleSelectCalendar}
+        onCreateCalendar={handleCreateCalendar}
+        onRenameCalendar={handleRenameCalendar}
+        onDeleteCalendar={handleDeleteCalendar}
+        onInviteToCalendar={handleInviteToCalendar}
+        onInviteRelative={handleInviteRelative}
         onSignOut={signOutUser}
       />
     );
@@ -1214,18 +1250,7 @@ export default function HomePage() {
                         })
                       : null
                   }
-                  calendars={(myCalendars ?? []).map((c) => ({
-                    id: c.childId,
-                    teamId: c.teamId,
-                    name: c.childName,
-                    // Styr om "ta bort" betyder lämna eller radera.
-                    // parentNames kommer från getMyCalendars (Admin SDK)
-                    // och är därför tillgängligt för VARJE rad — till
-                    // skillnad från children/team, som bara är laddade
-                    // för den AKTIVA kalenderns team.
-                    memberCount: Object.keys(c.parentNames).length,
-                    role: c.role,
-                  }))}
+                  calendars={calendarRows}
                   activeCalendarId={`${teamId}:${activeChild.id}`}
                   onSelectCalendar={handleSelectCalendar}
                   onCreateCalendar={handleCreateCalendar}
@@ -1244,7 +1269,7 @@ export default function HomePage() {
       </div>
 
       <div className="mx-auto w-full max-w-md shrink-0">
-        <BottomNav active={section} onChange={setSection} />
+        <BottomNav active={section} onChange={setSection} disabled={disabledSections} />
       </div>
     </div>
   );

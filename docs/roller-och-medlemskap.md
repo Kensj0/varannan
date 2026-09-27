@@ -616,3 +616,99 @@ build-steg i deploy-jobbet var grinden.
 
 **Deploy — GJORD 2026-09-27** (`d766a35`, workflow-run 93, manuell
 `workflow_dispatch`): bygg + deploy, `conclusion: success` i alla steg.
+
+## Anhörig/utomstående kunde inte lämna en kalender
+
+Kenny (riktig användartest, samma dag): ✕ i "+"-panelen syntes knappt
+(för svag kontrast), och en anhörig-rad ("Lova", roll Anhörig) hade
+INGA knappar alls — `canManage` (bara `role === "parent"`) gate:ade
+hela knapprad-diven, ✕ inkluderad. En anhörig/utomstående kunde alltså
+aldrig lämna en kalender de inte längre ville ha kvar.
+
+Kennys spec: tryck ✕ → skriv "RADERA" för att bekräfta (samma mönster
+som `DeleteAccountDialog`). Lämnar tar ALDRIG bort kalendern för andra
+— den raderas helt bara när ALLA medlemmar (föräldrar OCH
+anhöriga/utomstående) har lämnat. Ett konto utan någon kalender kvar
+ska se appens vanliga skal (flikrad, "+"), bara tomt/avstängt — inte
+kastas tillbaka till en särskild onboardingskärm.
+
+Byggt:
+
+- **`functions/src/index.ts` `deleteChild`**: kräver nu `confirmation:
+  "RADERA"`. Permission-kollen bytt från `calendarParentIds(...).includes(uid)`
+  (bara föräldrar) till `calendarRoleFor(uid, child, team)` (alla tre
+  roller). "Sista medlemmen"-gränsen räknas nu på ALLA i
+  `child.memberUids` (fallback `calendarParentIds` för kalendrar från
+  innan fältet fanns), inte bara kvarvarande föräldrar — en kalender med
+  en förälder och två anhöriga raderas INTE när föräldern lämnar, bara
+  när alla tre har gjort det. En anhörig/utomstående som lämnar rör
+  varken `parentIds`, grundschemat eller prenumerationstoken (fanns
+  aldrig där); en förälder som lämnar städar nu ÄVEN
+  `members`/`memberUids` (en lucka `deleteChild` hade sedan tidigare —
+  bara `deleteMyAccount` gjorde det rätt, se kommentaren i koden om
+  varför).
+  KÄND KVARSTÅENDE LUCKA: lämnar BÅDA en kalenders riktiga föräldrar
+  (var för sig) medan en anhörig är kvar, faller `calendarParentIds()`
+  tillbaka på `teams.parentIds` för en tom `child.parentIds` — de
+  avgångna dyker upp igen som "kalenderns föräldrar" för den
+  kvarvarande anhörigen. Kosmetiskt, ingen krasch, inte fixat (se
+  kommentaren i `deleteChild`).
+- **`getMyCalendars`**: `MyCalendar` fick `memberCount` (alla roller,
+  inte bara `Object.keys(parentNames).length` som klienten räknade
+  förut) — annars visade "Lämna"/"Ta bort"-texten fel för en kalender
+  med både föräldrar och anhöriga.
+- **`CalendarManagerPanel.tsx`**: ✕ flyttad UT ur `canManage`-blocket —
+  Byt namn/Bjud in/+ Anhörig är fortsatt bara för förälder-rader, ✕
+  gäller alla. Kontrasten höjd (`text-stone-300` → `text-stone-400`,
+  samma som övriga knappar). Bekräftelsen är nu ett textfält ("Skriv
+  RADERA"), knappen inaktiv tills det matchar exakt — samma mönster som
+  `DeleteAccountDialog`. Den gamla `isLastCalendar`-spärren (kunde inte
+  ta bort sin sista egna kalender) är borttagen: att hamna helt utan
+  kalender är nu ett avsett, hanterat sluttillstånd (se nedan).
+- **Ny `components/EmptyCalendarState.tsx`**, ersätter
+  `AddFirstChildScreen` (borttagen helt) i `app/page.tsx`s
+  `!activeChild`-gren. Samma app-skal som resten av appen: header med
+  fungerande "+" (öppnar `CalendarManagerPanel`, kan skapa ELLER gå med
+  i en kalender), `BottomNav` med ALLA flikar avstängda
+  (`disabled`-propet), en central "Ingen kalender än"-text, "Logga ut".
+  Täcker både äkta mellanlandning (team skapat, inget barn än — gamla
+  `AddFirstChildScreen`s scenario) och det NYA fallet (lämnat/raderat
+  sin sista kalender) — går inte att skilja dem åt (`myCalendars.length
+  === 0` i båda), och samma skärm är rätt för båda.
+  **Sidoeffekt, upptäckt under bygget:** `AddFirstChildScreen`s
+  `onAddChild` anropade `addChild(teamId!, ...)` med ett
+  icke-null-assert `teamId` — skulle ha kraschat (skickat `undefined`)
+  för en RENDÖD anhörig utan eget hemteam som når noll kalendrar, ett
+  läge som inte gick att nå innan den här sessionen. Fixat på köpet:
+  `EmptyCalendarState` går via `handleCreateCalendar`, som redan
+  hanterar "skapa eget team om det saknas" korrekt.
+- **`BottomNav`s `disabled`-prop var aldrig kopplad** — `disabledSections`
+  (viewer/relative) räknades ut i `app/page.tsx` men skickades bara till
+  en `useEffect` som bytte tillbaka till Schema EFTER ett render (en
+  synlig studs, inte en nedtonad/inaktiv flik som dokumentationen redan
+  påstod). Kopplad nu: `<BottomNav ... disabled={disabledSections} />`.
+- `handleDeleteCalendar` (app/page.tsx) tar nu emot kalenderns EGNA
+  `teamId` (från `ManagedCalendar`, inte `homeTeamId` som bara finns
+  för det egna hemmateamet) — annars omöjligt att lämna en FRÄMMANDE
+  kalender. Nollställer `activeCalendarOverride` om den pekade på den
+  borttagna kalendern, och anropar `refreshMyCalendars()` — annars låg
+  den kvar i "+"-listan tills sidan laddades om.
+
+Verifierat: `npx tsc --noEmit` (rot), `cd functions && npx tsc --noEmit`
+samt `npm run build` (functions), `npm run build` (rot, Next-export) —
+alla gröna. Ingen regeländring (allt sitter i callablen, Admin SDK
+kringgår `firestore.rules`), så inga nya regeltester.
+
+**Testa som riktig användare:**
+   - [ ] Anhörig-konto: ✕ på en kalender där du bara är anhörig →
+         skriv RADERA → försvinner ur din "+"-lista, finns kvar hos
+         föräldrarna.
+   - [ ] Ta bort ALLA dina kalendrar (anhörig utan eget team): hamnar i
+         det tomma app-skalet, inte en gammal-stil onboardingskärm.
+         "+" fungerar därifrån för att skapa en ny.
+   - [ ] Förälder: lämna en kalender med en anhörig kvar på — kalendern
+         ska INTE raderas, ska finnas kvar för den anhörige.
+   - [ ] Sista medlemmen av alla roller lämnar → kalendern raderas helt
+         (som innan).
+   - [ ] Viewer/relative: kolla att avstängda flikar nu ser nedtonade ut
+         direkt (inte en studs tillbaka till Schema).
