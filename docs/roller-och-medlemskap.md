@@ -703,6 +703,35 @@ kringgår `firestore.rules`), så inga nya regeltester.
 manuell `workflow_dispatch`, `target: hosting,functions`):
 `conclusion: success` i alla steg.
 
+## Två småbuggar till, samma dags användartest
+
+Kenny: "En anhörig tar ansvaret för Lova" sa inte VEM. Och ett
+namnbyte på en kalender syntes inte i "+"-panelen förrän sidan
+laddades om.
+
+- **`PendingShiftRequests.tsx`**: `takingOverLabel` kände bara till
+  `parentNames` (de två riktiga föräldrarna) — en anhörigs egen
+  förfrågan (`takingOverParentId === requestedBy`, ingen av de två)
+  föll tillbaka på det namnlösa "En anhörig". Ny `relativeNames`-prop
+  (uid -> `child.members[uid].displayName`, samma fält CalendarView
+  redan använder för kalendertaggen "Hos {namn}", byggd i
+  `app/page.tsx`) gör texten "En anhörig {namn} tar ansvaret för
+  {kalender}". Saknas `displayName` (gammalt medlemskap från innan
+  fältet fanns) blir det fortsatt bara "En anhörig", som innan.
+- **`handleRenameCalendar`** (app/page.tsx) anropade aldrig
+  `refreshMyCalendars()` efter ett lyckat namnbyte. Kalenderns egen
+  header uppdaterades direkt (lyssnar på `children/{childId}` i
+  realtid), men "+"-panelens lista bygger på `myCalendars`
+  (`getMyCalendars`), en engångshämtning — samma mönster som redan
+  fanns för skapa/ta bort-kalender, bara aldrig kopplat på rename.
+
+Verifierat: `npx tsc --noEmit` (rot), `npm run build` (rot) gröna.
+Inga functions-ändringar, ingen regeländring.
+
+**Deploy — GJORD 2026-09-27** (`5f006ca`, workflow-run 36332437393,
+manuell `workflow_dispatch`, `target: hosting,functions`):
+`conclusion: success` i alla steg.
+
 **Testa som riktig användare:**
    - [ ] Anhörig-konto: ✕ på en kalender där du bara är anhörig →
          skriv RADERA → försvinner ur din "+"-lista, finns kvar hos
