@@ -600,3 +600,19 @@ redan korrekt där, oavsett `myCalendars`-cachens ålder).
 
 Verifierat: tsc, Next-build. Ingen ny regeltest behövdes (ingen
 regeländring).
+
+## UI-fix: kalendernamnet klämdes ihop i "+"-panelen
+
+Kenny (riktig användartest, direkt efter att ha lagt till en ny
+kalender): namnet och hanteringsknapparna (Byt namn/Bjud in/
++ Anhörig/✕) låg i samma flex-rad i `CalendarManagerPanel.tsx`, vilket
+klämde långa kalendernamn ner till bara ett par tecken ("te…"). Namnet
+ligger nu på egen rad med full bredd, knapparna på en rad under
+(radbryter vid behov). Rent CSS/layout, ingen logikändring.
+
+Verifierat: tsc grönt. Lokal `npm run build` OOM:ade (node, oberoende
+av ändringen — samma maskin som byggt grönt tidigare), så CI:s
+build-steg i deploy-jobbet var grinden.
+
+**Deploy — GJORD 2026-09-27** (`d766a35`, workflow-run 93, manuell
+`workflow_dispatch`): bygg + deploy, `conclusion: success` i alla steg.
