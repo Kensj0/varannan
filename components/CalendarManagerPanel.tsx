@@ -316,16 +316,18 @@ export default function CalendarManagerPanel({
             return (
               <div
                 key={`${calendar.teamId}:${calendar.id}`}
-                className={`flex items-center gap-1 rounded-lg px-2 py-1.5 ${
-                  isActive ? "bg-rose-50" : "hover:bg-stone-50"
-                }`}
+                className={`rounded-lg px-2 py-1.5 ${isActive ? "bg-rose-50" : "hover:bg-stone-50"}`}
               >
+                {/* Namnet på egen rad, full bredd — låg tidigare i samma
+                    rad som hanteringsknapparna (Byt namn/Bjud in/
+                    + Anhörig/✕), vilket klämde långa namn ner till bara
+                    ett par tecken. */}
                 <button
                   onClick={() => {
                     onSelectCalendar(calendar);
                     onClose();
                   }}
-                  className="min-w-0 flex-1 text-left"
+                  className="block w-full text-left"
                 >
                   <span
                     className={`block truncate text-sm ${
@@ -345,7 +347,7 @@ export default function CalendarManagerPanel({
                 </button>
 
                 {canManage && (
-                  <>
+                  <div className="mt-1 flex flex-wrap items-center gap-1">
                     <button
                       onClick={() => {
                         setRenamingId(calendar.id);
@@ -403,11 +405,11 @@ export default function CalendarManagerPanel({
                           : `Ta bort ${calendar.name}`
                       }
                       aria-label={`Ta bort ${calendar.name}`}
-                      className="shrink-0 rounded px-1.5 py-1 text-xs text-stone-300 hover:text-rose-600 disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:text-stone-300"
+                      className="ml-auto shrink-0 rounded px-1.5 py-1 text-xs text-stone-300 hover:text-rose-600 disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:text-stone-300"
                     >
                       ✕
                     </button>
-                  </>
+                  </div>
                 )}
               </div>
             );
