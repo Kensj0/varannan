@@ -21,9 +21,12 @@
  *     lösenordet: myaccount.google.com/apppasswords.
  *
  * Föräldern som TAR ÖVER får "Du tar över ansvaret", föräldern som
- * LÄMNAR ÖVER får "Du lämnar över ansvaret" — båda med antal opackade
- * saker i packlistorna, som i originalappens notis
- * ("Byte kl 12:00 idag (2 saker kvar att packa)").
+ * LÄMNAR ÖVER får "Du lämnar över ansvaret".
+ *
+ * Finns saker i barnets packlistor skickas DÄRUTÖVER en EGEN
+ * "Packlista"-notis (samma mottagare, samma tidpunkt, samma
+ * sameDay/dayBefore/email-inställningar ovan — men en separat push, inte
+ * ihopslagen med överlämnings-texten), som listar sakernas namn.
  */
 
 import * as admin from "firebase-admin";
@@ -52,6 +55,13 @@ function timeStringInTimeZone(instant: Date, timeZone: string): string {
   return new Intl.DateTimeFormat("sv-SE", { timeZone, hour: "2-digit", minute: "2-digit", hour12: false }).format(
     instant
   );
+}
+
+/** "Regnjacka, Gosedjur, Tandborste +2 till" — håller notisen läsbar även med långa packlistor. */
+function formatPackItemList(items: string[]): string {
+  const MAX = 6;
+  if (items.length <= MAX) return items.join(", ");
+  return `${items.slice(0, MAX).join(", ")} +${items.length - MAX} till`;
 }
 
 export const sendHandoffReminders = onSchedule(
@@ -109,15 +119,18 @@ async function remindForChild(
   const dayBeforeHandoff = findHandoffOnDate(cycle, approvedShifts, switchInstantForDate(cycle, tomorrowStr));
   if (!sameDayHandoff && !dayBeforeHandoff) return;
 
-  // Antal opackade saker totalt i barnets packlistor — samma siffra som
-  // originalappens notis visar.
+  // Saker i barnets packlistor — punktlistor, inga bockade/opackade
+  // tillstånd (se types/schema.ts PackListItemDoc) — namnen listas i en
+  // EGEN packlista-notis (se notera nedan), separat från
+  // överlämnings-notisen.
   const packListsSnap = await db.collection(`teams/${teamId}/packLists`).where("childId", "==", childId).get();
-  let unpackedCount = 0;
+  const packItems: string[] = [];
   for (const doc of packListsSnap.docs) {
     const list = doc.data() as PackListDoc;
-    unpackedCount += list.items.filter((item) => !item.checked).length;
+    for (const item of list.items) {
+      packItems.push(item.name);
+    }
   }
-  const packNote = unpackedCount > 0 ? ` (${unpackedCount} sak${unpackedCount === 1 ? "" : "er"} kvar att packa)` : "";
 
   let childName = "";
   if (includeChildName) {
@@ -136,7 +149,7 @@ async function remindForChild(
       if (!prefs[prefKey]) continue;
 
       const title = uid === handoff.toParentId ? "Du tar över ansvaret" : "Du lämnar över ansvaret";
-      const body = `Byte kl ${time} ${whenLabel}${packNote}${childName}`;
+      const body = `Byte kl ${time} ${whenLabel}${childName}`;
 
       await sendPushToUser(db, uid, { title, body });
 
@@ -146,6 +159,19 @@ async function remindForChild(
       // push-anropet ovan lyckades eller inte (vi kan inte veta det).
       if (prefs.email && user?.email) {
         await sendEmail(user.email, title, body);
+      }
+
+      // Packlista-påminnelsen är en EGEN notis, separat från
+      // överlämnings-notisen ovan (inte ihopslagen i samma text) — men
+      // styrs av SAMMA inställning ("påminnelse om överlämning": prefs för
+      // samma dag/dagen innan/mail), inte en egen toggle.
+      if (packItems.length > 0) {
+        const packTitle = "Packlista";
+        const packBody = `Byte kl ${time} ${whenLabel} — glöm inte: ${formatPackItemList(packItems)}${childName}`;
+        await sendPushToUser(db, uid, { title: packTitle, body: packBody });
+        if (prefs.email && user?.email) {
+          await sendEmail(user.email, packTitle, packBody);
+        }
       }
     }
   }

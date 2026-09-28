@@ -551,11 +551,14 @@ export interface EventDoc {
 // PACK LISTS
 // ---------------------------------------------------------------------------
 
+/**
+ * Packlistan är en punktlista, inte en checklista — sakerna finns kvar
+ * tills man tar bort dem (och dyker upp i påminnelse-pushen, se
+ * functions/src/handoffReminders.ts), inget "packat"-tillstånd att bocka av.
+ */
 export interface PackListItemDoc {
   id: string;
   name: string;
-  checked: boolean;
-  checkedBy?: string;
 }
 
 export interface PackListDoc {

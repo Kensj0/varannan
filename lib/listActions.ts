@@ -38,7 +38,6 @@ export async function createPackList(args: {
     items: (args.items ?? []).map((name, i) => ({
       id: `${Date.now()}-${i}`,
       name,
-      checked: false,
     })),
     seenBy: [args.createdBy],
     createdAt: Timestamp.now() as any,
@@ -52,31 +51,9 @@ export async function createPackList(args: {
 }
 
 export async function addPackListItem(teamId: string, list: PackListDoc, name: string): Promise<void> {
-  const item: PackListItemDoc = { id: `${Date.now()}`, name, checked: false };
+  const item: PackListItemDoc = { id: `${Date.now()}`, name };
   await updateDoc(doc(db, `teams/${teamId}/packLists/${list.id}`), {
     items: [...list.items, item],
-    updatedAt: Timestamp.now(),
-  });
-}
-
-/**
- * Bockar av/på en post. Hela items-arrayen skrivs om eftersom Firestore
- * inte kan uppdatera ett enskilt element i en array — det är en medveten
- * avvägning: listorna är korta (packlistor, inte inventarier).
- */
-export async function togglePackListItem(
-  teamId: string,
-  list: PackListDoc,
-  itemId: string,
-  userId: string
-): Promise<void> {
-  const items = list.items.map((item) =>
-    item.id === itemId
-      ? { ...item, checked: !item.checked, checkedBy: !item.checked ? userId : undefined }
-      : item
-  );
-  await updateDoc(doc(db, `teams/${teamId}/packLists/${list.id}`), {
-    items,
     updatedAt: Timestamp.now(),
   });
 }
