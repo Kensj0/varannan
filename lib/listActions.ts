@@ -65,6 +65,13 @@ export async function removePackListItem(teamId: string, list: PackListDoc, item
   });
 }
 
+export async function renamePackList(teamId: string, listId: string, title: string): Promise<void> {
+  await updateDoc(doc(db, `teams/${teamId}/packLists/${listId}`), {
+    title,
+    updatedAt: Timestamp.now(),
+  });
+}
+
 /** Motsvarar "Sedd av:"-raden i originalappen. */
 export async function markPackListSeen(teamId: string, listId: string, userId: string): Promise<void> {
   await updateDoc(doc(db, `teams/${teamId}/packLists/${listId}`), {
