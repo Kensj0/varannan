@@ -13,6 +13,7 @@ interface PackListViewProps {
   onCreateList: (title: string) => Promise<void>;
   onAddItem: (list: PackListDoc, name: string) => Promise<void>;
   onRemoveItem: (list: PackListDoc, itemId: string) => Promise<void>;
+  onRenameList: (listId: string, title: string) => Promise<void>;
   onMarkSeen: (listId: string) => Promise<void>;
   onDeleteList: (listId: string) => Promise<void>;
 }
@@ -26,6 +27,7 @@ export default function PackListView({
   onCreateList,
   onAddItem,
   onRemoveItem,
+  onRenameList,
   onMarkSeen,
   onDeleteList,
 }: PackListViewProps) {
@@ -65,6 +67,7 @@ export default function PackListView({
             parentNames={parentNames}
             onAddItem={onAddItem}
             onRemoveItem={onRemoveItem}
+            onRenameList={onRenameList}
             onDeleteList={onDeleteList}
           />
         ))}
@@ -108,6 +111,7 @@ function PackListCard({
   parentNames,
   onAddItem,
   onRemoveItem,
+  onRenameList,
   onDeleteList,
 }: {
   list: PackListDoc;
@@ -115,12 +119,17 @@ function PackListCard({
   parentNames: Record<string, string>;
   onAddItem: (list: PackListDoc, name: string) => Promise<void>;
   onRemoveItem: (list: PackListDoc, itemId: string) => Promise<void>;
+  onRenameList: (listId: string, title: string) => Promise<void>;
   onDeleteList: (listId: string) => Promise<void>;
 }) {
   const [newItem, setNewItem] = useState("");
   const [addingItem, setAddingItem] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [renaming, setRenaming] = useState(false);
+  const [renameDraft, setRenameDraft] = useState(list.title);
+  const [renamingBusy, setRenamingBusy] = useState(false);
+  const [renameError, setRenameError] = useState<string | null>(null);
 
   async function handleAddItem() {
     if (!newItem.trim()) return;
@@ -147,26 +156,88 @@ function PackListCard({
     }
   }
 
+  async function handleRename() {
+    const trimmed = renameDraft.trim();
+    if (!trimmed) return setRenameError("Namnet kan inte vara tomt.");
+    setRenamingBusy(true);
+    setRenameError(null);
+    try {
+      await onRenameList(list.id, trimmed);
+      setRenaming(false);
+    } catch (err) {
+      setRenameError(err instanceof Error ? err.message : "Kunde inte byta namn");
+    } finally {
+      setRenamingBusy(false);
+    }
+  }
+
   const seenByOthers = list.seenBy.filter((uid) => uid !== currentUserId);
 
   return (
     <div className="rounded-2xl bg-white p-4 shadow-sm">
-      <div className="mb-2 flex items-baseline justify-between">
-        <h3 className="font-bold text-stone-800">{list.title}</h3>
-        <div className="flex items-center gap-2">
-          <span className="text-xs text-stone-400">
-            {list.items.length} sak{list.items.length === 1 ? "" : "er"}
-          </span>
-          <button
-            onClick={handleDelete}
-            disabled={deleting}
-            className="text-xs text-stone-300 hover:text-rose-500 disabled:opacity-50"
-            title="Radera lista"
-          >
-            ✕
-          </button>
+      {renaming ? (
+        <div className="mb-2">
+          <input
+            autoFocus
+            value={renameDraft}
+            onChange={(e) => setRenameDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") {
+                setRenaming(false);
+                setRenameError(null);
+              }
+              if (e.key === "Enter") void handleRename();
+            }}
+            disabled={renamingBusy}
+            className="mb-1.5 w-full rounded-lg border border-stone-200 px-2 py-1.5 text-sm font-bold disabled:opacity-50"
+          />
+          {renameError && <p className="mb-1.5 text-[11px] text-rose-600">{renameError}</p>}
+          <div className="flex gap-1">
+            <button
+              onClick={() => {
+                setRenaming(false);
+                setRenameError(null);
+              }}
+              className="flex-1 rounded-lg border border-stone-200 py-1 text-xs font-semibold text-stone-600"
+            >
+              Avbryt
+            </button>
+            <button
+              disabled={renamingBusy}
+              onClick={handleRename}
+              className="flex-1 rounded-lg bg-rose-500 py-1 text-xs font-semibold text-white disabled:opacity-40"
+            >
+              {renamingBusy ? "Sparar…" : "Spara"}
+            </button>
+          </div>
         </div>
-      </div>
+      ) : (
+        <div className="mb-2 flex items-baseline justify-between">
+          <button
+            onClick={() => {
+              setRenameDraft(list.title);
+              setRenaming(true);
+            }}
+            className="text-left font-bold text-stone-800 hover:text-rose-600"
+            title="Byt namn på listan"
+          >
+            {list.title}
+          </button>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-stone-400">
+              {list.items.length} sak{list.items.length === 1 ? "" : "er"}
+            </span>
+            <button
+              onClick={handleDelete}
+              disabled={deleting}
+              className="text-xs text-stone-300 hover:text-rose-500 disabled:opacity-50"
+              title="Radera lista"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+      )}
 
       <ul className="space-y-1">
         {list.items.map((item) => (

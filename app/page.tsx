@@ -53,6 +53,7 @@ import {
   deletePackList,
   addPackListItem,
   removePackListItem,
+  renamePackList,
   markPackListSeen,
   createNote,
   updateNote,
@@ -945,6 +946,7 @@ export default function HomePage() {
                     }}
                     onAddItem={(list, name) => addPackListItem(teamId!, list, name)}
                     onRemoveItem={(list, itemId) => removePackListItem(teamId!, list, itemId)}
+                    onRenameList={(listId, title) => renamePackList(teamId!, listId, title)}
                     onMarkSeen={(listId) => markPackListSeen(teamId!, listId, user!.uid)}
                     onDeleteList={(listId) => deletePackList(teamId!, listId)}
                   />
