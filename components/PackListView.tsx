@@ -12,7 +12,6 @@ interface PackListViewProps {
   nextOrdinaryHandoff?: Date;
   onCreateList: (title: string) => Promise<void>;
   onAddItem: (list: PackListDoc, name: string) => Promise<void>;
-  onToggleItem: (list: PackListDoc, itemId: string) => Promise<void>;
   onRemoveItem: (list: PackListDoc, itemId: string) => Promise<void>;
   onMarkSeen: (listId: string) => Promise<void>;
   onDeleteList: (listId: string) => Promise<void>;
@@ -26,7 +25,6 @@ export default function PackListView({
   nextOrdinaryHandoff,
   onCreateList,
   onAddItem,
-  onToggleItem,
   onRemoveItem,
   onMarkSeen,
   onDeleteList,
@@ -66,7 +64,6 @@ export default function PackListView({
             currentUserId={currentUserId}
             parentNames={parentNames}
             onAddItem={onAddItem}
-            onToggleItem={onToggleItem}
             onRemoveItem={onRemoveItem}
             onDeleteList={onDeleteList}
           />
@@ -110,7 +107,6 @@ function PackListCard({
   currentUserId,
   parentNames,
   onAddItem,
-  onToggleItem,
   onRemoveItem,
   onDeleteList,
 }: {
@@ -118,7 +114,6 @@ function PackListCard({
   currentUserId: string;
   parentNames: Record<string, string>;
   onAddItem: (list: PackListDoc, name: string) => Promise<void>;
-  onToggleItem: (list: PackListDoc, itemId: string) => Promise<void>;
   onRemoveItem: (list: PackListDoc, itemId: string) => Promise<void>;
   onDeleteList: (listId: string) => Promise<void>;
 }) {
@@ -152,7 +147,6 @@ function PackListCard({
     }
   }
 
-  const packed = list.items.filter((i) => i.checked).length;
   const seenByOthers = list.seenBy.filter((uid) => uid !== currentUserId);
 
   return (
@@ -161,7 +155,7 @@ function PackListCard({
         <h3 className="font-bold text-stone-800">{list.title}</h3>
         <div className="flex items-center gap-2">
           <span className="text-xs text-stone-400">
-            {packed}/{list.items.length} packat
+            {list.items.length} sak{list.items.length === 1 ? "" : "er"}
           </span>
           <button
             onClick={handleDelete}
@@ -176,22 +170,12 @@ function PackListCard({
 
       <ul className="space-y-1">
         {list.items.map((item) => (
-          <li key={item.id} className="group flex items-center gap-2">
-            <button
-              onClick={() => onToggleItem(list, item.id)}
-              className={`grid h-5 w-5 shrink-0 place-items-center rounded-full border text-[11px] ${
-                item.checked ? "border-emerald-500 bg-emerald-500 text-white" : "border-stone-300"
-              }`}
-              aria-label={item.checked ? "Ta bort bock" : "Bocka av"}
-            >
-              {item.checked ? "✓" : ""}
-            </button>
-            <span className={`flex-1 text-sm ${item.checked ? "text-stone-400 line-through" : "text-stone-700"}`}>
-              {item.name}
-            </span>
+          <li key={item.id} className="flex items-center gap-2">
+            <span className="shrink-0 text-stone-300">•</span>
+            <span className="flex-1 text-sm text-stone-700">{item.name}</span>
             <button
               onClick={() => onRemoveItem(list, item.id)}
-              className="text-stone-300 opacity-0 transition group-hover:opacity-100 hover:text-rose-500"
+              className="text-stone-300 transition hover:text-rose-500"
               aria-label="Ta bort"
             >
               ✕

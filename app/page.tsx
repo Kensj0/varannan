@@ -52,7 +52,6 @@ import {
   createPackList,
   deletePackList,
   addPackListItem,
-  togglePackListItem,
   removePackListItem,
   markPackListSeen,
   createNote,
@@ -945,7 +944,6 @@ export default function HomePage() {
                       });
                     }}
                     onAddItem={(list, name) => addPackListItem(teamId!, list, name)}
-                    onToggleItem={(list, itemId) => togglePackListItem(teamId!, list, itemId, user!.uid)}
                     onRemoveItem={(list, itemId) => removePackListItem(teamId!, list, itemId)}
                     onMarkSeen={(listId) => markPackListSeen(teamId!, listId, user!.uid)}
                     onDeleteList={(listId) => deletePackList(teamId!, listId)}
