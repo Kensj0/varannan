@@ -71,13 +71,25 @@ import { expandEvents } from "../../lib/recurrence";
 
 export const GOOGLE_OAUTH_CLIENT_ID = defineSecret("GOOGLE_OAUTH_CLIENT_ID");
 export const GOOGLE_OAUTH_CLIENT_SECRET = defineSecret("GOOGLE_OAUTH_CLIENT_SECRET");
-const OAUTH_SECRETS = [GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET];
+export const OAUTH_SECRETS = [GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET];
 
 /** Webbplatsen användaren kommer från och skickas tillbaka till. */
 const APP_ORIGIN = "https://varannan.se";
 /** Måste stå EXAKT så under "Authorized redirect URIs" på OAuth-klienten. */
 const REDIRECT_URI = `${APP_ORIGIN}/oauth/google/callback`;
-const CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar";
+/**
+ * Smalast möjliga scope för det appen faktiskt gör: skapar sekundära
+ * kalendrar och hanterar (listar/skapar/ändrar/raderar) händelser i DEM —
+ * aldrig användarens primärkalender, övriga kalendrar eller kalenderlistan
+ * (ingen kod i den här filen rör "primary", calendarList, ACL eller
+ * settings). Verifierat metod för metod mot Googles API-referens att
+ * calendar.app.created täcker allt vi gör: calendars.insert/get/patch/
+ * delete och events.list/insert/update/delete tar alla emot det scopet.
+ * MÅSTE matcha exakt det scope som är registrerat i Google Cloud Console
+ * OCH det integritetspolicyn (app/integritetspolicy/page.tsx) beskriver —
+ * ändras det ena, ändra alla tre.
+ */
+const CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar.app.created";
 const CAL_API = "https://www.googleapis.com/calendar/v3";
 
 /**
@@ -458,7 +470,14 @@ export const disconnectGoogleCalendarForChild = onCall({ secrets: OAUTH_SECRETS 
   return { ok: true, accountDisconnected: false };
 });
 
-async function disconnectUser(uid: string, opts: { removeCalendars: boolean }) {
+/**
+ * Kopplar helt bort Google för en användare: raderar Varannan-kalendrarna
+ * i Google (om removeCalendars), återkallar och raderar token. Exporterad
+ * så deleteMyAccount (index.ts) kan göra samma sak när KONTOT raderas —
+ * annars blir token kvar för evigt, föräldralös, trots att integritets-
+ * policyn lovar att den raderas och återkallas vid radering.
+ */
+export async function disconnectUser(uid: string, opts: { removeCalendars: boolean }) {
   const db = admin.firestore();
   const tokenRef = db.doc(`googleCalendarTokens/${uid}`);
   const token = (await tokenRef.get()).data() as TokenDoc | undefined;
