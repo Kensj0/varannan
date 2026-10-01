@@ -4,6 +4,8 @@ import { useState } from "react";
 import { sendTestPush } from "../lib/pushNotifications";
 import InvitePartnerBanner from "./onboarding/InvitePartnerBanner";
 import DeleteAccountDialog from "./DeleteAccountDialog";
+import GoogleCalendarCard from "./GoogleCalendarCard";
+import type { UserDoc } from "../types/schema";
 
 type PushPermission = "unsupported" | "default" | "granted" | "denied" | null;
 
@@ -26,6 +28,10 @@ interface SettingsViewProps {
   onUpdateDisplayName?: (name: string) => Promise<void>;
   /** Permanent kontoradering — se DeleteAccountDialog och deleteMyAccount i functions/src/index.ts. */
   onDeleteAccount: () => Promise<void>;
+  /** Status för Google Kalender-kopplingen (users/{uid}.googleCalendar). */
+  googleCalendar?: UserDoc["googleCalendar"];
+  /** Besked efter att Google skickat tillbaka användaren (?google=…). */
+  googleResultMessage?: { ok: boolean; text: string } | null;
 }
 
 /**
@@ -49,6 +55,8 @@ export default function SettingsView({
   onCreateInvite,
   onUpdateDisplayName,
   onDeleteAccount,
+  googleCalendar,
+  googleResultMessage,
 }: SettingsViewProps) {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [sending, setSending] = useState(false);
@@ -287,6 +295,8 @@ export default function SettingsView({
           </p>
         </div>
       </div>
+
+      <GoogleCalendarCard status={googleCalendar} resultMessage={googleResultMessage} />
 
       <div className="rounded-2xl bg-white p-4 shadow-sm">
         <p className="text-xs font-semibold uppercase tracking-wide text-stone-400">Lösenord</p>

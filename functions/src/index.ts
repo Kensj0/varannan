@@ -7,14 +7,8 @@
  *     ../../lib/shiftRequests.ts) i EN Firestore-transaction, så att
  *     shiftRequest.status och dayBalance ALDRIG kan hamna i otakt.
  *
- *  2. exportEventToGoogleCalendar — triggas när ett EventDoc skapas/
- *     uppdateras, och skriver en kopia till respektive förälders EGEN
- *     Google-kalender (envägs export, read-only kopia hos användaren,
- *     enligt beslutet i konversationen).
- *
- * OBS: Detta är ett fungerande skelett för en mockup. Innan produktion:
- * lägg till idempotens-skydd (kolla t.ex. redan satt googleEventIds
- * innan ny insert) och felhantering/retry vid Google API-fel.
+ *  2. Google Kalender-synken (frivillig OAuth-koppling) ligger i
+ *     googleCalendarSync.ts och re-exporteras härifrån.
  */
 
 import * as admin from "firebase-admin";
@@ -23,10 +17,6 @@ import { setGlobalOptions } from "firebase-functions/v2";
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { onDocumentWritten, onDocumentCreated } from "firebase-functions/v2/firestore";
 import { sendEmailOrThrow, sendEmail, GMAIL_USER, GMAIL_APP_PASSWORD } from "./email";
-// OBS: `googleapis` importeras lat, inne i getCalendarClientForUser. Den
-// väger ~4 MB och drog tidigare med sig laddningstid till kallstarten för
-// VARJE funktion i filen, trots att bara exportEventToGoogleCalendar
-// använder den.
 
 // Default-region: europe-north1 (Hamina). Firestore ligger i
 // europe-north2 (Stockholm), som INTE stödjer Cloud Functions v2 —
@@ -76,6 +66,16 @@ import { sendPushToUser, sendPushToUsers } from "./notifications";
 
 export { sendHandoffReminders } from "./handoffReminders";
 export { calendarFeed, createCalendarFeedToken, setParentColor } from "./calendarFeed";
+export {
+  startGoogleCalendarConnect,
+  googleCalendarOAuthCallback,
+  disconnectGoogleCalendar,
+  syncGoogleCalendarNow,
+  gcalSyncOnEvent,
+  gcalSyncOnShift,
+  gcalSyncOnCycle,
+  gcalNightlySync,
+} from "./googleCalendarSync";
 
 // setCustomSwitchHour — uppdatera bytestiden för ett barn
 export const setCustomSwitchHour = onCall(async (request) => {
@@ -2544,78 +2544,3 @@ export const notifyOnShiftRequestCreated = onDocumentCreated(
     });
   }
 );
-
-// ---------------------------------------------------------------------------
-// 2. exportEventToGoogleCalendar — envägs export till varje förälders
-//    egen Google-kalender när ett EventDoc skapas eller ändras.
-// ---------------------------------------------------------------------------
-
-export const exportEventToGoogleCalendar = onDocumentWritten(
-  { document: "teams/{teamId}/events/{eventId}", region: LEGACY_REGION },
-  async (event) => {
-    const after = event.data?.after?.data() as EventDoc | undefined;
-    if (!after) return; // borttaget event — hantera ev. borttag av Google-eventet separat
-
-    const teamSnap = await db.doc(`teams/${event.params.teamId}`).get();
-    const parentIds: string[] = teamSnap.data()?.parentIds ?? [];
-
-    const googleEventIds: Record<string, string> = { ...(after.googleEventIds ?? {}) };
-
-    for (const parentUid of parentIds) {
-      const userSnap = await db.doc(`users/${parentUid}`).get();
-      const user = userSnap.data() as UserDoc | undefined;
-      if (!user?.googleCalendar?.connected || !user.googleCalendar.refreshTokenRef) continue;
-
-      const calendar = await getCalendarClientForUser(user.googleCalendar.refreshTokenRef);
-      const calendarId = user.googleCalendar.calendarId ?? "primary";
-
-      const requestBody = {
-        summary: after.title,
-        start: { dateTime: tsToIso(after.startAt) },
-        end: { dateTime: tsToIso(after.endAt) },
-        // Envägs — märk tydligt så användaren förstår att redigering
-        // ska göras i Varannan, inte i Google Calendar.
-        description: "Synkad från Varannan (envägs export — redigera i appen).",
-      };
-
-      const existingId = googleEventIds[parentUid];
-      if (existingId) {
-        await calendar.events.update({ calendarId, eventId: existingId, requestBody });
-      } else {
-        const inserted = await calendar.events.insert({ calendarId, requestBody });
-        if (inserted.data.id) googleEventIds[parentUid] = inserted.data.id;
-      }
-    }
-
-    await event.data!.after!.ref.set({ googleEventIds }, { merge: true });
-  }
-);
-
-// ---------------------------------------------------------------------------
-// Hjälpfunktioner
-// ---------------------------------------------------------------------------
-
-async function getCalendarClientForUser(refreshTokenRef: string) {
-  const { google } = await import("googleapis");
-
-  // I produktion: hämta den faktiska refresh-token från Secret Manager
-  // via refreshTokenRef (ALDRIG lagra token direkt i Firestore).
-  const refreshToken = await resolveSecret(refreshTokenRef);
-
-  const oauth2Client = new google.auth.OAuth2(
-    process.env.GOOGLE_OAUTH_CLIENT_ID,
-    process.env.GOOGLE_OAUTH_CLIENT_SECRET
-  );
-  oauth2Client.setCredentials({ refresh_token: refreshToken });
-
-  return google.calendar({ version: "v3", auth: oauth2Client });
-}
-
-async function resolveSecret(secretRef: string): Promise<string> {
-  // Platshållare — koppla mot @google-cloud/secret-manager i produktion.
-  throw new Error(`resolveSecret ej implementerad ännu för ref: ${secretRef}`);
-}
-
-function tsToIso(ts: { seconds: number; nanoseconds: number }): string {
-  return new Date(ts.seconds * 1000 + ts.nanoseconds / 1e6).toISOString();
-}

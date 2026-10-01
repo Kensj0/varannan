@@ -31,12 +31,18 @@ export interface UserDoc {
   avatarUrl?: string;
   /** Föräldern hör till exakt ett team i mockupen — null tills onboarding är klar. */
   teamId: string | null;
-  /** Google OAuth-token (server-side, via Cloud Functions) för kalendersync. */
+  /**
+   * Status för Google Kalender-kopplingen — BARA status, för att visa i
+   * UI:t. Själva token ligger i googleCalendarTokens/{uid}, som klienten
+   * aldrig kan läsa (se functions/src/googleCalendarSync.ts). Lägg
+   * aldrig token här: users/{uid} är läsbart för klienten.
+   */
   googleCalendar?: {
     connected: boolean;
-    calendarId?: string; // vilken av användarens kalendrar vi skriver till
-    refreshTokenRef?: string; // referens till hemlighet i Secret Manager, ALDRIG rå token i Firestore
+    connectedAt?: FirestoreTimestamp;
     lastSyncedAt?: FirestoreTimestamp;
+    /** Senaste felet att visa användaren, rensas vid lyckad synk. */
+    lastError?: string;
   };
   /** Web push-tokens (en per enhet/webbläsare som aktiverat notiser). */
   fcmTokens?: string[];

@@ -78,6 +78,7 @@ import BalanceCard from "../components/BalanceCard";
 import PendingShiftRequests from "../components/PendingShiftRequests";
 import PendingStructureRequests from "../components/PendingStructureRequests";
 import PendingCalendarInvites from "../components/PendingCalendarInvites";
+import { googleConnectResultMessage } from "../lib/googleCalendarClient";
 
 /**
  * Vyer utanför den första skärmen (kalendern) laddas i egna chunkar och
@@ -263,6 +264,24 @@ export default function HomePage() {
   const [selectedInfoChildId, setSelectedInfoChildId] = useState<string | null>(null);
   const [monthDate, setMonthDate] = useState(() => new Date());
   const [section, setSection] = useState<AppSection>("calendar");
+
+  // Google skickar tillbaka till /?google=connected|denied|scope|error
+  // efter samtyckesfönstret (functions/src/googleCalendarSync.ts). Visa
+  // beskedet i Inställningar och städa bort parametern ur adressen.
+  const [googleResult, setGoogleResult] = useState<{ ok: boolean; text: string } | null>(null);
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const result = params.get("google");
+    if (!result) return;
+    const message = googleConnectResultMessage(result);
+    if (message) {
+      setGoogleResult(message);
+      setSection("settings");
+    }
+    params.delete("google");
+    const qs = params.toString();
+    window.history.replaceState(null, "", window.location.pathname + (qs ? `?${qs}` : ""));
+  }, []);
   const [listSubTab, setListSubTab] = useState<ListSubTab>("packlist");
   const [infoSubTab, setInfoSubTab] = useState<InfoSubTab>("childinfo");
 
@@ -1047,6 +1066,8 @@ export default function HomePage() {
                 onCreateInvite={() => createInvite(homeTeamId!)}
                 onUpdateDisplayName={updateDisplayName}
                 onDeleteAccount={handleDeleteAccount}
+                googleCalendar={userDoc?.googleCalendar}
+                googleResultMessage={googleResult}
                 reminderPrefs={reminderPrefs}
                 onUpdateReminderPrefs={handleUpdateReminderPrefs}
               />

@@ -693,6 +693,32 @@ async function main() {
     false
   );
 
+  console.log("\ngoogleCalendarTokens / oauthStates — aldrig läsbara från klienten");
+  await testEnv.withSecurityRulesDisabled(async (context) => {
+    await context.firestore().doc(`googleCalendarTokens/${PARENT_1}`).set({ refreshToken: "hemlig" });
+    await context.firestore().doc(`oauthStates/abc`).set({ uid: PARENT_1 });
+  });
+  await check(
+    "KRITISKT: ägaren själv kan INTE läsa sin Google-token",
+    () => getDoc(doc(dbAs(PARENT_1), `googleCalendarTokens/${PARENT_1}`)),
+    false
+  );
+  await check(
+    "ägaren kan INTE skriva sin Google-token",
+    () => setDoc(doc(dbAs(PARENT_1), `googleCalendarTokens/${PARENT_1}`), { refreshToken: "x" }),
+    false
+  );
+  await check(
+    "annan användare kan INTE läsa någons Google-token",
+    () => getDoc(doc(dbAs(OUTSIDER), `googleCalendarTokens/${PARENT_1}`)),
+    false
+  );
+  await check(
+    "oauthStates går INTE att läsa",
+    () => getDoc(doc(dbAs(PARENT_1), `oauthStates/abc`)),
+    false
+  );
+
   await testEnv.cleanup();
 
   console.log(`\n${passed} godkända, ${failed} misslyckade.`);
