@@ -462,7 +462,7 @@ async function computeDesiredEntries(
   const eventsSnap = await db.collection(`teams/${teamId}/events`).get();
   const events = eventsSnap.docs
     .map((d) => ({ ...(d.data() as EventDoc), id: d.id }))
-    .filter((e) => !e.childId || e.childId === childId);
+    .filter((e) => (!e.childId || e.childId === childId) && e.startAt && e.endAt);
   for (const occ of expandEvents(events, rangeStart, rangeEnd)) {
     out.push({
       key: `event-${occ.eventId}-${occ.startAt.getTime()}`,
