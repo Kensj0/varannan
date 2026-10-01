@@ -1,13 +1,24 @@
 # Google Kalender-synk
 
-Frivillig koppling: användaren kopplar sitt Google-konto i Inställningar,
-och Varannan skriver ansvarsblock och aktiviteter till en egen kalender
-per Varannan-kalender ("Lova – Varannan") i användarens Google-konto.
-ICS-prenumerationen finns kvar som alternativ utan Google-konto.
+Frivillig koppling: användaren kopplar sitt Google-konto från kugghjulet
+i en kalenders inställningspanel (under "Exportera kalender"), och
+Varannan skriver ansvarsblock och aktiviteter till en egen kalender per
+barn ("<barn> – Varannan") i användarens Google-konto. Kontot i sig
+kopplas första gången via valfritt barns panel (full OAuth); varje
+ytterligare barn läggs sedan till separat, utan ny OAuth-runda. ICS-
+prenumerationen finns kvar som alternativ utan Google-konto.
 
 Kod: `functions/src/googleCalendarSync.ts` (server), `lib/googleCalendarClient.ts`
-och `components/GoogleCalendarCard.tsx` (klient). Token ligger i
+och `components/CalendarSettingsPanel.tsx` (klient — GoogleCalendarCard.tsx
+fanns tidigare på profilnivå, borttaget). Token ligger i
 `googleCalendarTokens/{uid}`, som `firestore.rules` stänger helt för klienten.
+
+**Scope:** `https://www.googleapis.com/auth/calendar.app.created` (se
+CALENDAR_SCOPE i googleCalendarSync.ts) — appen skapar bara egna, sekundära
+kalendrar och hanterar händelser i DEM, aldrig användarens primärkalender
+eller kalenderlista. Måste stå registrerat EXAKT så under OAuth-
+samtyckesskärmens "Scopes" i Cloud Console — annars nekar Google
+request:en redan innan samtyckesfönstret visas.
 
 ## Engångsinställning (innan första deploy)
 
@@ -56,22 +67,25 @@ tiden. Ca 2–3 minuter, engelska textrutor eller berättarröst hjälper.
 
 1. Öppna `https://varannan.se`, visa startsidan och länken till integritetspolicyn.
 2. Logga in med Google (visar inloggningens samtyckesfönster).
-3. Gå till Inställningar → Google Kalender → "Koppla Google Kalender".
+3. Öppna kugghjulet i kalenderns inställningspanel → "Koppla Google
+   Kalender" → visa varningsdialogen om Googles samtyckesfönster → Fortsätt.
 4. **Googles samtyckesfönster:** varningen "Google hasn't verified this
    app" ska synas — klicka "Advanced" → "Go to varannan.se". Visa
    tydligt att appen ber om Google Kalender och att rutan är ikryssad.
    Klicka "Continue".
-5. Tillbaka i Varannan: "Google Kalender är kopplad".
+5. Tillbaka i Varannan, samma kugghjul: "Kopplad ✓".
 6. Öppna Google Kalender i en ny flik: visa kalendern "<barn> – Varannan"
    med ansvarsblocken i föräldrarnas färger och aktiviteterna. Visa att
    dina andra kalendrar är orörda.
-7. I Varannan: lägg till en aktivitet → tryck "Synka nu" (eller vänta
-   några sekunder) → visa den i Google Kalender.
+7. I Varannan: lägg till en aktivitet → tryck "Synka nu" i samma panel
+   (eller vänta några sekunder) → visa den i Google Kalender.
 8. Ändra aktivitetens namn i Varannan → visa ändringen i Google.
 9. Ta bort aktiviteten i Varannan → visa att den försvann i Google.
-10. Inställningar → "Koppla bort Google Kalender" → bekräfta → visa att
-    Varannan-kalendern försvann ur Google, och (valfritt) att Varannan
-    inte längre finns under myaccount.google.com → Security → Third-party apps.
+10. Samma kugghjul → "Koppla bort <barn> från Google Kalender" → bekräfta
+    → visa att Varannan-kalendern försvann ur Google. Har barnet varit
+    det enda kopplat till kontot återkallas hela kopplingen automatiskt
+    — visa (valfritt) att Varannan inte längre finns under
+    myaccount.google.com → Security → Third-party apps.
 
 Ladda upp som **Unlisted** på YouTube, klistra in länken i
 OAuth-granskningen och svara på mailtråden med Trust & Safety att

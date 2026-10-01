@@ -12,15 +12,21 @@ export const metadata: Metadata = {
  * att publicera OAuth-appen i Google Cloud Console.
  *
  * Håll innehållet i synk med vad appen FAKTISKT gör. Varje påstående
- * under "Hur vi skyddar din information" måste vara sant:
+ * under "Hur vi skyddar din information" och "Google-inloggning och
+ * Google Kalender" måste vara sant:
  *  - Barninfo/konton skyddas av firestore.rules: läsning för
  *    parent+relative (canViewCalendarContent), skrivning bara parent
  *    (isParentOfCalendar). Ändras det — ändra texten nedan också.
  *  - Google-token för kalendersynk får ALDRIG gå att läsa från
  *    klienten — lagra den där regler säger `allow read, write: if false`
  *    (eller i Secret Manager) och läs den bara i Cloud Functions.
- *  - Kopplar användaren bort Google ska token raderas och token
- *    återkallas hos Google.
+ *  - Google-scopet (CALENDAR_SCOPE i googleCalendarSync.ts) ska matcha
+ *    exakt det som nämns här (calendar.app.created) OCH det som är
+ *    registrerat i Google Cloud Console. Byts scopet — ändra båda.
+ *  - Kopplar användaren bort Google (ett barn, eller hela kontot) ska
+ *    token raderas och återkallas hos Google. Raderas KONTOT (deleteMyAccount,
+ *    functions/src/index.ts) ska samma sak hända automatiskt — se
+ *    disconnectUser-anropet där.
  * Ändras något av detta måste texten ändras samtidigt.
  *
  * Engelska versionen finns för Googles granskare (Trust & Safety).
@@ -29,7 +35,7 @@ export default function PrivacyPolicyPage() {
   return (
     <main className="mx-auto min-h-screen max-w-2xl px-6 py-12 text-stone-700">
       <h1 className="mb-2 text-2xl font-bold text-stone-900">Integritetspolicy</h1>
-      <p className="mb-2 text-sm text-stone-400">Senast uppdaterad: 1 oktober 2026</p>
+      <p className="mb-2 text-sm text-stone-400">Senast uppdaterad: 2 oktober 2026</p>
       <p className="mb-8 text-sm">
         <a className="underline" href="#english">English version below</a>
       </p>
@@ -123,18 +129,55 @@ export default function PrivacyPolicyPage() {
           sätt som vid vilken Google-inloggning som helst.
         </p>
         <p>
-          Väljer du att koppla ditt Google-konto för kalendersynk ber vi dessutom om åtkomst
-          till Google Kalender. Den åtkomsten används enbart för att skapa, uppdatera och ta
-          bort händelser i egna, separata kalendrar som Varannan skapar i ditt Google-konto
-          — en per barn — med dina ansvarsblock och aktiviteter från Varannan. Vi läser inte,
-          ändrar inte och tar inte bort dina övriga kalendrar eller händelser.
+          Väljer du att koppla ditt Google-konto för kalendersynk ber vi om åtkomst till
+          Google Kalender via scopet <em>calendar.app.created</em> ("Skapa kalendrar som
+          appen själv skapat, samt se, skapa, ändra och radera händelser i dem"). Det scopet
+          ger oss BARA åtkomst till egna, separata kalendrar som Varannan själv skapar i ditt
+          Google-konto — en per barn — med dina ansvarsblock och aktiviteter från Varannan.
+          Det ger oss ingen åtkomst alls till din befintliga primärkalender, dina övriga
+          kalendrar, eller ens listan över vilka kalendrar du har.
         </p>
+        <p>
+          <strong>Så skyddas åtkomsttoken till Google:</strong>
+        </p>
+        <ul className="list-disc space-y-1 pl-5">
+          <li>
+            <strong>Lagring:</strong> token lagras i Firestore, i en egen samling
+            (googleCalendarTokens) med ett dokument per användare.
+          </li>
+          <li>
+            <strong>Ingen klientåtkomst:</strong> säkerhetsreglerna nekar ALL läsning och
+            skrivning av den samlingen från appen i webbläsaren — inte ens du själv, inloggad
+            i din egen Varannan, kan läsa din egen token. Bara vår serverkod (Cloud
+            Functions, med administratörsbehörighet) läser och skriver den.
+          </li>
+          <li>
+            <strong>Kryptering:</strong> krypterad i vila (Googles standardkryptering för all
+            Firestore-data) och under överföring (HTTPS/TLS) — samma skydd som resten av
+            datan, se "Hur vi skyddar din information" ovan.
+          </li>
+          <li>
+            <strong>Begränsad åtkomst:</strong> bara utvecklaren av Varannan har
+            administrativ åtkomst till det Google Cloud-projekt där token lagras — samma
+            begränsning som för resten av systemet.
+          </li>
+          <li>
+            <strong>Loggas aldrig:</strong> varken token eller dess innehåll skrivs någonsin
+            till loggar, vare sig vid fel eller annars.
+          </li>
+        </ul>
         <p>
           Du kan koppla bort ett enskilt barns kalender för sig, eller hela Google-kopplingen
           på en gång — kopplar du bort det sista barnet räknas det som att hela kopplingen tas
           bort. Oavsett vilket raderar vi din åtkomsttoken för det som kopplas bort och drar
-          tillbaka åtkomsten hos Google. Du kan också dra tillbaka åtkomsten när som helst
-          under ditt Google-konto.
+          tillbaka åtkomsten hos Google. Detsamma sker automatiskt om du raderar ditt
+          Varannan-konto: din Google-token raderas och återkallas hos Google som en del av
+          kontoraderingen. Du kan också dra tillbaka åtkomsten när som helst direkt under
+          ditt eget Google-konto.
+        </p>
+        <p>
+          Vi säljer aldrig Google-data, delar den aldrig med tredje part, använder den aldrig
+          för reklam och använder den aldrig för att träna AI-modeller.
         </p>
         <p>
           Varannans användning och överföring av information som tas emot från Googles API:er
@@ -145,9 +188,7 @@ export default function PrivacyPolicyPage() {
           >
             Google API Services User Data Policy
           </a>
-          , inklusive kraven på begränsad användning (Limited Use). Data från Google används
-          inte för reklam, säljs inte, används inte för att träna AI-modeller och läses inte
-          av människor.
+          , inklusive kraven på begränsad användning (Limited Use).
         </p>
       </Section>
 
@@ -181,7 +222,7 @@ export default function PrivacyPolicyPage() {
 
       <div id="english">
         <h1 className="mb-2 text-2xl font-bold text-stone-900">Privacy Policy</h1>
-        <p className="mb-8 text-sm text-stone-400">Last updated: October 1, 2026</p>
+        <p className="mb-8 text-sm text-stone-400">Last updated: October 2, 2026</p>
 
         <Section title="What Varannan is">
           <p>
@@ -261,18 +302,55 @@ export default function PrivacyPolicyPage() {
             If you sign in with Google, we receive your name and email address from Google.
           </p>
           <p>
-            If you choose to connect your Google account for calendar sync, we also request
-            access to Google Calendar. This access is used only to create, update and delete
-            events in separate, dedicated calendars that Varannan creates in your Google
-            account — one per child — containing your custody blocks and activities from
-            Varannan. We do not read, modify or delete any of your other calendars or events.
+            If you choose to connect your Google account for calendar sync, we request access
+            to Google Calendar through the <em>calendar.app.created</em> scope ("Make
+            secondary Google calendars, and see, create, change, and delete events on them").
+            That scope gives us access ONLY to separate, dedicated calendars that Varannan
+            itself creates in your Google account — one per child — containing your custody
+            blocks and activities from Varannan. It gives us no access at all to your existing
+            primary calendar, your other calendars, or even the list of calendars you have.
           </p>
+          <p>
+            <strong>How the Google access token is protected:</strong>
+          </p>
+          <ul className="list-disc space-y-1 pl-5">
+            <li>
+              <strong>Storage:</strong> the token is stored in Firestore, in its own
+              collection (googleCalendarTokens) with one document per user.
+            </li>
+            <li>
+              <strong>No client access:</strong> security rules deny ALL reads and writes to
+              that collection from the app running in the browser — not even you, signed into
+              your own Varannan account, can read your own token. Only our server code (Cloud
+              Functions, with administrative privileges) reads and writes it.
+            </li>
+            <li>
+              <strong>Encryption:</strong> encrypted at rest (Google&apos;s default encryption
+              for all Firestore data) and in transit (HTTPS/TLS) — the same protection as the
+              rest of your data, see &quot;How we protect your data&quot; above.
+            </li>
+            <li>
+              <strong>Restricted access:</strong> only the developer of Varannan has
+              administrative access to the Google Cloud project where the token is stored —
+              the same restriction as for the rest of the system.
+            </li>
+            <li>
+              <strong>Never logged:</strong> neither the token nor its contents are ever
+              written to logs, whether on error or otherwise.
+            </li>
+          </ul>
           <p>
             You can disconnect a single child&apos;s calendar on its own, or the entire Google
             connection at once — disconnecting the last remaining child is treated as
             disconnecting the whole connection. Either way, we delete the access token for
-            whatever is disconnected and revoke the access with Google. You can also revoke
-            access at any time from your Google Account.
+            whatever is disconnected and revoke the access with Google. The same happens
+            automatically if you delete your Varannan account: your Google token is deleted
+            and revoked with Google as part of the account deletion. You can also revoke
+            access at any time directly from your own Google Account.
+          </p>
+          <p>
+            We never sell Google data, never share it with third parties, never use it for
+            advertising, and never use it to train AI models.
           </p>
           <p>
             Varannan&apos;s use and transfer to any other app of information received from
@@ -283,9 +361,7 @@ export default function PrivacyPolicyPage() {
             >
               Google API Services User Data Policy
             </a>
-            , including the Limited Use requirements. Google user data is not used for
-            advertising, is not sold, is not used to train AI models, and is not read by
-            humans.
+            , including the Limited Use requirements.
           </p>
         </Section>
 

@@ -63,6 +63,7 @@ import {
 } from "../../lib/onboarding";
 import { createOnboardingAdapter } from "./onboardingAdapter";
 import { sendPushToUser, sendPushToUsers } from "./notifications";
+import { disconnectUser as disconnectGoogleForUser, OAUTH_SECRETS } from "./googleCalendarSync";
 
 export { sendHandoffReminders } from "./handoffReminders";
 export { calendarFeed, createCalendarFeedToken, setParentColor } from "./calendarFeed";
@@ -1540,7 +1541,7 @@ async function deleteQueryInBatches(
 // kastar är kontot ändå kvar och går att försöka radera igen, i
 // stället för att låsa ute någon med halvraderad data.
 // ---------------------------------------------------------------------------
-export const deleteMyAccount = onCall(async (request) => {
+export const deleteMyAccount = onCall({ secrets: OAUTH_SECRETS }, async (request) => {
   const uid = request.auth?.uid;
   if (!uid) throw new HttpsError("unauthenticated", "Du måste vara inloggad.");
 
@@ -1548,6 +1549,17 @@ export const deleteMyAccount = onCall(async (request) => {
   if (confirmation !== "RADERA") {
     throw new HttpsError("invalid-argument", "Bekräftelsetexten stämmer inte.");
   }
+
+  // Integritetspolicyn lovar att Google-token raderas och återkallas när
+  // kontot raderas — utan den här raden blev googleCalendarTokens/{uid}
+  // kvar för evigt, föräldralös (users/{uid} raderas några rader ner).
+  // Görs tidigt och kraschar aldrig hela raderingen: en användare som
+  // aldrig kopplat Google har förstås ingen token (no-op), och ett fel
+  // mot Google (redan ogiltig token m.m.) ska inte blockera att kontot
+  // i övrigt faktiskt raderas.
+  await disconnectGoogleForUser(uid, { removeCalendars: true }).catch((err) =>
+    console.error("Kunde inte koppla bort Google vid kontoradering", uid, err),
+  );
 
   const childrenSnap = await db.collectionGroup("children").where("memberUids", "array-contains", uid).get();
   const parentTeamIds = new Set<string>();
