@@ -2612,3 +2612,58 @@ export const notifyOnShiftRequestCreated = onDocumentCreated(
     });
   }
 );
+
+// ---------------------------------------------------------------------------
+// notifyOnEventCreated — push + mejl (samma e-postinställning som
+// överlämningspåminnelser: users/{uid}.handoffReminderPrefs.email, se
+// handoffReminders.ts) till alla ANDRA på kalendern när någon lägger till
+// en aktivitet. En barnscopad aktivitet (childId satt) går till kalenderns
+// föräldrar OCH anhöriga/utomstående (child.memberUids) — en
+// familje-gemensam aktivitet (childId saknas) går bara till teamets
+// föräldrar, samma avgränsning firestore.rules redan gör för events utan
+// childId (bara isTeamMember, dvs bara föräldrar).
+// ---------------------------------------------------------------------------
+export const notifyOnEventCreated = onDocumentCreated(
+  { document: "teams/{teamId}/events/{eventId}", region: LEGACY_REGION, secrets: [GMAIL_USER, GMAIL_APP_PASSWORD] },
+  async (event) => {
+    const ev = event.data?.data() as EventDoc | undefined;
+    if (!ev) return;
+
+    const teamSnap = await db.doc(`teams/${event.params.teamId}`).get();
+    if (!teamSnap.exists) return;
+    const team = teamSnap.data()!;
+
+    let recipientIds: string[];
+    let creatorName: string = team.parentProfiles?.[ev.createdBy]?.displayName ?? "Någon";
+
+    if (ev.childId) {
+      const childSnap = await db.doc(`teams/${event.params.teamId}/children/${ev.childId}`).get();
+      const child = childSnap.data() as any;
+      recipientIds = Array.from(
+        new Set([...calendarParentIds(child, team as any), ...((child?.memberUids as string[]) ?? [])])
+      );
+      creatorName = child?.members?.[ev.createdBy]?.displayName ?? creatorName;
+    } else {
+      recipientIds = team.parentIds ?? [];
+    }
+
+    const others = recipientIds.filter((id) => id !== ev.createdBy);
+    if (others.length === 0) return;
+
+    const title = "Ny aktivitet";
+    const body = `${creatorName} lade till "${ev.title}" i kalendern.`;
+
+    await sendPushToUsers(db, others, { title, body });
+
+    await Promise.all(
+      others.map(async (uid) => {
+        const userSnap = await db.doc(`users/${uid}`).get();
+        const user = userSnap.data() as UserDoc | undefined;
+        const prefs = user?.handoffReminderPrefs ?? DEFAULT_HANDOFF_REMINDER_PREFS;
+        if (prefs.email && user?.email) {
+          await sendEmail(user.email, title, body);
+        }
+      })
+    );
+  }
+);
