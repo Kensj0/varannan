@@ -107,6 +107,13 @@ interface TokenDoc {
   connectedAt: admin.firestore.Timestamp;
   /** childPath ("teamId/childId") → Google-kalenderns id + namnet den skapades med. */
   calendars?: Record<string, { googleCalendarId: string; name: string }>;
+  /**
+   * childPath:ar användaren uttryckligen kopplat bort via
+   * disconnectGoogleCalendarForChild, trots att kontot i övrigt är
+   * kopplat. Utan den här listan skulle nästa synk (natt eller en
+   * ändring på barnet) bara skapa tillbaka kalendern — se syncUser().
+   */
+  excludedChildPaths?: string[];
 }
 
 interface DesiredEntry {
@@ -261,6 +268,100 @@ export const syncGoogleCalendarNow = onCall({ secrets: OAUTH_SECRETS, timeoutSec
   return { ok: true };
 });
 
+// ---------------------------------------------------------------------------
+// 3b. Per-barn-status (kalenderns inställningspanel, CalendarSettingsPanel.tsx)
+//
+// Token och kalender-id:n ligger i googleCalendarTokens/{uid}, som
+// firestore.rules nekar all klientläsning av — se SÄKERHET i filhuvudet.
+// Klienten får därför bara EXAKT det den behöver (två booleaner) via en
+// callable, aldrig själva dokumentet.
+// ---------------------------------------------------------------------------
+
+async function assertChildMember(teamId: string, childId: string, uid: string): Promise<void> {
+  const child = (await admin.firestore().doc(`teams/${teamId}/children/${childId}`).get()).data() as
+    | ChildDoc
+    | undefined;
+  const memberUids = child?.memberUids ?? child?.parentIds ?? [];
+  if (!memberUids.includes(uid)) throw new HttpsError("permission-denied", "Du är inte med på den här kalendern.");
+}
+
+export const getGoogleCalendarStatus = onCall({ secrets: OAUTH_SECRETS }, async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) throw new HttpsError("unauthenticated", "Du måste vara inloggad.");
+  const { teamId, childId } = request.data as { teamId?: string; childId?: string };
+  if (!teamId || !childId) throw new HttpsError("invalid-argument", "teamId och childId krävs.");
+  await assertChildMember(teamId, childId, uid);
+
+  const token = (await admin.firestore().doc(`googleCalendarTokens/${uid}`).get()).data() as TokenDoc | undefined;
+  return {
+    /** Är Google-kontot kopplat alls (styr om "Fortsätt" ska gå via OAuth eller inte). */
+    accountConnected: !!token?.refreshToken,
+    /** Har just DET HÄR barnet en egen kalender just nu. */
+    connected: !!token?.calendars?.[`${teamId}/${childId}`],
+  };
+});
+
+/**
+ * Lägger till (eller lägger tillbaka efter en tidigare frånkoppling) det
+ * här barnets kalender. Kräver att kontot redan är kopplat — annars är
+ * det startGoogleCalendarConnect (full OAuth) som gäller, inte den här.
+ */
+export const connectGoogleCalendarForChild = onCall(
+  { secrets: OAUTH_SECRETS, timeoutSeconds: 120 },
+  async (request) => {
+    const uid = request.auth?.uid;
+    if (!uid) throw new HttpsError("unauthenticated", "Du måste vara inloggad.");
+    const { teamId, childId } = request.data as { teamId?: string; childId?: string };
+    if (!teamId || !childId) throw new HttpsError("invalid-argument", "teamId och childId krävs.");
+    await assertChildMember(teamId, childId, uid);
+
+    const tokenRef = admin.firestore().doc(`googleCalendarTokens/${uid}`);
+    const token = (await tokenRef.get()).data() as TokenDoc | undefined;
+    if (!token?.refreshToken) {
+      throw new HttpsError("failed-precondition", "Koppla ditt Google-konto i Inställningar först.");
+    }
+    const childPath = `${teamId}/${childId}`;
+    if (token.excludedChildPaths?.includes(childPath)) {
+      await tokenRef.update({
+        excludedChildPaths: token.excludedChildPaths.filter((p) => p !== childPath),
+      });
+    }
+    await syncUser(uid, childPath);
+    return { ok: true };
+  },
+);
+
+/** Tar bort DET HÄR barnets kalender ur Google — rör varken kontot eller andra barns kalendrar. */
+export const disconnectGoogleCalendarForChild = onCall({ secrets: OAUTH_SECRETS }, async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) throw new HttpsError("unauthenticated", "Du måste vara inloggad.");
+  const { teamId, childId } = request.data as { teamId?: string; childId?: string };
+  if (!teamId || !childId) throw new HttpsError("invalid-argument", "teamId och childId krävs.");
+  await assertChildMember(teamId, childId, uid);
+
+  const tokenRef = admin.firestore().doc(`googleCalendarTokens/${uid}`);
+  const token = (await tokenRef.get()).data() as TokenDoc | undefined;
+  if (!token?.refreshToken) return { ok: true }; // inget konto kopplat — inget att göra
+
+  const childPath = `${teamId}/${childId}`;
+  const entry = token.calendars?.[childPath];
+  if (entry) {
+    try {
+      const accessToken = await getAccessToken(token.refreshToken);
+      await gfetch(accessToken, "DELETE", `/calendars/${encodeURIComponent(entry.googleCalendarId)}`).catch(
+        () => undefined,
+      );
+    } catch {
+      // Token ogiltig — inget att ta bort hos Google, städa bort lokalt ändå.
+    }
+  }
+  const calendars = { ...token.calendars };
+  delete calendars[childPath];
+  const excludedChildPaths = Array.from(new Set([...(token.excludedChildPaths ?? []), childPath]));
+  await tokenRef.update({ calendars, excludedChildPaths });
+  return { ok: true };
+});
+
 async function disconnectUser(uid: string, opts: { removeCalendars: boolean }) {
   const db = admin.firestore();
   const tokenRef = db.doc(`googleCalendarTokens/${uid}`);
@@ -328,6 +429,10 @@ async function syncUser(uid: string, onlyChildPath?: string): Promise<void> {
     if (!teamId) continue;
     const childPath = `${teamId}/${childSnap.id}`;
     if (onlyChildPath && childPath !== onlyChildPath) continue;
+    // Uttryckligen bortkopplad via disconnectGoogleCalendarForChild — annars
+    // skulle den här synken bara skapa tillbaka kalendern (konto fortfarande
+    // kopplat, barnet fortfarande medlem).
+    if (token.excludedChildPaths?.includes(childPath)) continue;
 
     const child = childSnap.data() as ChildDoc;
     const childName = child.name || "Barnet";

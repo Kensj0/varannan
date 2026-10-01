@@ -33,6 +33,7 @@ interface ReminderPrefs {
 
 interface CalendarViewProps {
   monthDate: Date;
+  teamId: string;
   childId: string;
   childName: string;
   cycle: CustodyCycleDoc;
@@ -118,6 +119,8 @@ const BAR_GAP_PX = 6;
 
 export default function CalendarView({
   monthDate,
+  teamId,
+  childId,
   childName,
   cycle,
   parents,
@@ -473,6 +476,8 @@ export default function CalendarView({
         {settingsOpen && isParent && (
           <CalendarSettingsPanel
             onClose={() => setSettingsOpen(false)}
+            teamId={teamId}
+            childId={childId}
             myColorId={myColorId}
             onSelectColor={onSelectColor}
             otherParentColorHex={otherParentColorHex}

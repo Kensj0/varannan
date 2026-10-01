@@ -1152,6 +1152,7 @@ export default function HomePage() {
                 <CalendarView
                   monthDate={monthDate}
                   onChangeMonth={setMonthDate}
+                  teamId={teamId!}
                   childId={activeChild.id}
                   childName={activeChild.name}
                   cycle={cycle}
