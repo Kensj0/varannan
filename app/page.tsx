@@ -266,8 +266,12 @@ export default function HomePage() {
   const [section, setSection] = useState<AppSection>("calendar");
 
   // Google skickar tillbaka till /?google=connected|denied|scope|error
-  // efter samtyckesfönstret (functions/src/googleCalendarSync.ts). Visa
-  // beskedet i Inställningar och städa bort parametern ur adressen.
+  // efter samtyckesfönstret (functions/src/googleCalendarSync.ts). Visas
+  // som en toast (som pushToast nedan) i stället för i Inställningar —
+  // Google-hanteringen flyttade dit till kugghjulet per barn
+  // (CalendarSettingsPanel), och OAuth-flödet är kontoövergripande och
+  // vet inte vilket barns panel som startade det. Städar bort parametern
+  // ur adressen oavsett.
   const [googleResult, setGoogleResult] = useState<{ ok: boolean; text: string } | null>(null);
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -276,7 +280,7 @@ export default function HomePage() {
     const message = googleConnectResultMessage(result);
     if (message) {
       setGoogleResult(message);
-      setSection("settings");
+      setTimeout(() => setGoogleResult(null), 6000);
     }
     params.delete("google");
     const qs = params.toString();
@@ -907,6 +911,16 @@ export default function HomePage() {
         </div>
       )}
 
+      {googleResult && (
+        <div
+          className={`fixed left-1/2 top-3 z-50 w-[calc(100%-2rem)] max-w-sm -translate-x-1/2 rounded-xl px-4 py-3 text-[13px] leading-snug shadow-lg ${
+            googleResult.ok ? "bg-emerald-50 text-emerald-800" : "bg-rose-50 text-rose-700"
+          }`}
+        >
+          {googleResult.text}
+        </div>
+      )}
+
       <div className="mx-auto flex w-full max-w-md flex-1 flex-col overflow-hidden">
         {showChildChips && (
           <div className="flex shrink-0 gap-2 overflow-x-auto px-4 pt-3">
@@ -1066,8 +1080,6 @@ export default function HomePage() {
                 onCreateInvite={() => createInvite(homeTeamId!)}
                 onUpdateDisplayName={updateDisplayName}
                 onDeleteAccount={handleDeleteAccount}
-                googleCalendar={userDoc?.googleCalendar}
-                googleResultMessage={googleResult}
                 reminderPrefs={reminderPrefs}
                 onUpdateReminderPrefs={handleUpdateReminderPrefs}
               />

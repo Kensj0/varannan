@@ -49,10 +49,22 @@ export async function connectGoogleCalendarForChild(teamId: string, childId: str
   await fn({ teamId, childId });
 }
 
-/** Tar bort DET HÄR barnets kalender ur Google. Rör varken kontot eller andra barns kalendrar. */
-export async function disconnectGoogleCalendarForChild(teamId: string, childId: string): Promise<void> {
-  const fn = httpsCallable(functions, "disconnectGoogleCalendarForChild");
-  await fn({ teamId, childId });
+/**
+ * Tar bort DET HÄR barnets kalender ur Google. Var det barnets kalender
+ * den SISTA som fanns på kontot återkallas hela Google-kopplingen —
+ * `accountDisconnected` talar om vilket som hände, så UI:t kan visa rätt
+ * besked (bara den här kalendern borta, eller hela kontot).
+ */
+export async function disconnectGoogleCalendarForChild(
+  teamId: string,
+  childId: string,
+): Promise<{ accountDisconnected: boolean }> {
+  const fn = httpsCallable<{ teamId: string; childId: string }, { ok: boolean; accountDisconnected: boolean }>(
+    functions,
+    "disconnectGoogleCalendarForChild",
+  );
+  const { data } = await fn({ teamId, childId });
+  return { accountDisconnected: data.accountDisconnected };
 }
 
 /** Text för resultatet i ?google=… efter att Google skickat tillbaka användaren. */

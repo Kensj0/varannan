@@ -14,6 +14,7 @@ import {
   getGoogleCalendarStatus,
   connectGoogleCalendarForChild,
   disconnectGoogleCalendarForChild,
+  syncGoogleCalendarNow,
 } from "../lib/googleCalendarClient";
 
 interface CalendarSettingsPanelProps {
@@ -83,6 +84,9 @@ export default function CalendarSettingsPanel({
   const [disconnectingGoogle, setDisconnectingGoogle] = useState(false);
   const [confirmGoogleDisconnect, setConfirmGoogleDisconnect] = useState(false);
   const [googleConnectError, setGoogleConnectError] = useState<string | null>(null);
+  const [syncingGoogle, setSyncingGoogle] = useState(false);
+  const [googleSynced, setGoogleSynced] = useState(false);
+  const [googleAccountDisconnectedMsg, setGoogleAccountDisconnectedMsg] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -128,13 +132,31 @@ export default function CalendarSettingsPanel({
     setDisconnectingGoogle(true);
     setGoogleConnectError(null);
     try {
-      await disconnectGoogleCalendarForChild(teamId, childId);
-      setGoogleStatus({ accountConnected: true, connected: false });
+      const { accountDisconnected } = await disconnectGoogleCalendarForChild(teamId, childId);
+      // Sista barnets kalender bort → hela kontot återkallades på köpet
+      // (se disconnectGoogleCalendarForChild) — visa det tydligt, annars
+      // ser det ut som att bara den här kalendern försvann.
+      setGoogleStatus({ accountConnected: !accountDisconnected, connected: false });
+      setGoogleAccountDisconnectedMsg(accountDisconnected);
       setConfirmGoogleDisconnect(false);
     } catch {
       setGoogleConnectError("Kunde inte koppla bort kalendern. Försök igen.");
     } finally {
       setDisconnectingGoogle(false);
+    }
+  }
+
+  async function handleSyncNow() {
+    setSyncingGoogle(true);
+    setGoogleConnectError(null);
+    setGoogleSynced(false);
+    try {
+      await syncGoogleCalendarNow();
+      setGoogleSynced(true);
+    } catch {
+      setGoogleConnectError("Kunde inte synka. Försök igen.");
+    } finally {
+      setSyncingGoogle(false);
     }
   }
 
@@ -336,6 +358,13 @@ export default function CalendarSettingsPanel({
         {googleStatus?.connected && (
           <>
             <p className="mt-2 text-[13px] leading-snug text-stone-500">Google Kalender: kopplad ✓</p>
+            <button
+              onClick={handleSyncNow}
+              disabled={syncingGoogle}
+              className="mt-1 w-full rounded-lg bg-stone-50 px-3 py-2 text-sm font-medium text-stone-700 hover:bg-stone-100 disabled:opacity-50"
+            >
+              {syncingGoogle ? "Synkar…" : googleSynced ? "Synkad ✓" : "Synka nu"}
+            </button>
             {!confirmGoogleDisconnect ? (
               <button
                 onClick={() => setConfirmGoogleDisconnect(true)}
@@ -369,6 +398,12 @@ export default function CalendarSettingsPanel({
               </div>
             )}
           </>
+        )}
+        {googleAccountDisconnectedMsg && !googleStatus?.connected && (
+          <p className="mt-2 text-[11px] leading-snug text-stone-500">
+            {childName} var det sista barnet kopplat till ditt Google-konto, så hela kopplingen
+            återkallades hos Google.
+          </p>
         )}
         {googleConnectError && <p className="mt-2 text-[11px] text-rose-600">{googleConnectError}</p>}
       </div>
