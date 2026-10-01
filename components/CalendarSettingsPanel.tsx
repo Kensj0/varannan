@@ -9,6 +9,7 @@ import {
 } from "../types/schema";
 import { CalendarFeedLinks } from "../lib/calendarExport";
 import { CustodyCycleDoc } from "../types/schema";
+import { startGoogleCalendarConnect } from "../lib/googleCalendarClient";
 
 interface CalendarSettingsPanelProps {
   onClose: () => void;
@@ -63,6 +64,23 @@ export default function CalendarSettingsPanel({
   const [pendingHh, setPendingHh] = useState(hh ?? "08");
   const [changingTime, setChangingTime] = useState(false);
   const [timeError, setTimeError] = useState<string | null>(null);
+
+  const [showOAuthWarning, setShowOAuthWarning] = useState(false);
+  const [connectingGoogle, setConnectingGoogle] = useState(false);
+  const [googleConnectError, setGoogleConnectError] = useState<string | null>(null);
+
+  async function handleStartGoogleConnect() {
+    setConnectingGoogle(true);
+    setGoogleConnectError(null);
+    try {
+      // Navigerar bort till Google vid lyckat anrop — koden nedanför körs
+      // bara om anropet i sig (inte hela OAuth-flödet) misslyckas.
+      await startGoogleCalendarConnect();
+    } catch {
+      setGoogleConnectError("Kunde inte starta kopplingen. Försök igen.");
+      setConnectingGoogle(false);
+    }
+  }
 
   async function handleCreateFeed() {
     setCreatingFeed(true);
@@ -244,7 +262,50 @@ export default function CalendarSettingsPanel({
         )}
 
         {feedError && <p className="mt-2 text-[11px] text-rose-600">{feedError}</p>}
+
+        <button
+          onClick={() => setShowOAuthWarning(true)}
+          disabled={connectingGoogle}
+          className="mt-2 w-full rounded-lg bg-stone-50 px-3 py-2 text-sm font-medium text-stone-700 hover:bg-stone-100 disabled:opacity-50"
+        >
+          {connectingGoogle ? "Öppnar Google…" : "Koppla Google Kalender"}
+        </button>
+        {googleConnectError && <p className="mt-2 text-[11px] text-rose-600">{googleConnectError}</p>}
       </div>
+
+      {showOAuthWarning && (
+        <>
+          <div className="fixed inset-0 z-[60] bg-black/30" onClick={() => setShowOAuthWarning(false)} />
+          <div className="fixed inset-0 z-[70] flex items-center justify-center p-4">
+            <div className="w-full max-w-sm rounded-2xl bg-white p-4 text-left shadow-xl ring-1 ring-stone-100">
+              <p className="text-sm font-semibold text-stone-800">⏱️ Observera</p>
+              <p className="mt-2 text-[13px] leading-snug text-stone-500">
+                Googles anslutningsdialogruta kan ta upp till 1–2 minuter. Det är helt normalt —
+                vänta inte på att dialogen stängs. Vi hanterar resten automatiskt i bakgrunden.
+              </p>
+              <div className="mt-3 flex gap-2">
+                <button
+                  onClick={() => setShowOAuthWarning(false)}
+                  disabled={connectingGoogle}
+                  className="flex-1 rounded-lg bg-stone-50 px-3 py-2 text-sm font-medium text-stone-700 hover:bg-stone-100 disabled:opacity-50"
+                >
+                  Avbryt
+                </button>
+                <button
+                  onClick={async () => {
+                    await handleStartGoogleConnect();
+                    setShowOAuthWarning(false);
+                  }}
+                  disabled={connectingGoogle}
+                  className="flex-1 rounded-lg bg-sky-50 px-3 py-2 text-sm font-medium text-sky-700 hover:bg-sky-100 disabled:opacity-50"
+                >
+                  {connectingGoogle ? "Öppnar…" : "Fortsätt"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </>
+      )}
     </>
   );
 }
