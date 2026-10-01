@@ -74,6 +74,7 @@ export {
   gcalSyncOnEvent,
   gcalSyncOnShift,
   gcalSyncOnCycle,
+  gcalSyncOnConnect,
   gcalNightlySync,
 } from "./googleCalendarSync";
 

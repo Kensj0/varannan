@@ -17,11 +17,22 @@
  *      (kopplar svaret till rätt uid, skyddar mot CSRF, giltig 10 min).
  *   2. Google skickar tillbaka till https://varannan.se/oauth/google/callback
  *      (Hosting-rewrite → googleCalendarOAuthCallback). Funktionen byter
- *      koden mot en refresh-token, sparar den i googleCalendarTokens/{uid},
- *      kör en första synk och skickar användaren tillbaka till appen.
- *   3. Synk körs sedan vid ändringar (triggers längst ner) och varje natt.
+ *      koden mot en refresh-token, sparar den i googleCalendarTokens/{uid}
+ *      och skickar DIREKT användaren tillbaka till appen — se varning nedan.
+ *   3. Skrivningen till googleCalendarTokens/{uid} triggar gcalSyncOnConnect
+ *      (längst ner), som gör den första synken. Samma synk körs sedan vid
+ *      ändringar (övriga triggers) och varje natt.
  *   4. disconnectGoogleCalendar tar bort Varannan-kalendrarna i Google,
  *      återkallar token hos Google och raderar den hos oss.
+ *
+ * VARNING — kör ALDRIG syncUser() inline i googleCalendarOAuthCallback:
+ *   Firebase Hostings rewrite till Cloud Functions har en HÅRD 60s-gräns,
+ *   oavsett funktionens egna timeoutSeconds. syncUser loopar sekventiella
+ *   Google Calendar-anrop per barn/kalender och kan lätt ta längre tid än
+ *   så för en användare med flera barn eller lång historik. Körs den
+ *   inline hinner Hosting kapa anslutningen innan redirecten skickas —
+ *   webbläsaren visar ett timeout-fel i stället för /?google=connected,
+ *   trots att token redan sparats. Därför triggas synken separat (se 3).
  *
  * SÄKERHET — integritetspolicyn (app/integritetspolicy/page.tsx) lovar
  * följande, håll det sant:
@@ -219,9 +230,9 @@ export const googleCalendarOAuthCallback = onRequest(
         { merge: true },
       );
 
-      // Första synken direkt, så kalendern finns när användaren tittar.
-      // Misslyckas den är kopplingen ändå gjord — natt-synken tar igen det.
-      await syncUser(uid).catch((err) => console.error("Första synken misslyckades", uid, err));
+      // Redirecta DIREKT — se VARNING i filhuvudet för varför synken inte
+      // körs här. gcalSyncOnConnect (längst ner) triggas av skrivningen
+      // till tokenRef ovan och gör den första synken i en egen invocation.
       return back("connected");
     } catch (err) {
       console.error("OAuth-callback misslyckades", err);
@@ -624,6 +635,29 @@ export const gcalSyncOnCycle = onDocumentWritten(
   { ...TRIGGER_OPTS, document: "teams/{teamId}/children/{childId}/custodyCycle/{docId}" },
   async (event) => {
     await syncChildForConnected(event.params.teamId, event.params.childId);
+  },
+);
+
+/**
+ * Gör den första synken när en användare kopplar (eller kopplar om) sitt
+ * Google-konto. Triggas av skrivningen till googleCalendarTokens/{uid} i
+ * googleCalendarOAuthCallback — INTE inline där, se VARNING i filhuvudet.
+ *
+ * Jämför refreshToken före/efter i stället för att bara kolla att
+ * dokumentet skrevs: syncUser() skriver själv tillbaka till samma
+ * dokument (tokenRef.update({ calendars })) när kalendrar skapas, vilket
+ * annars skulle trigga ett varv till av sig själv för varje connect.
+ */
+export const gcalSyncOnConnect = onDocumentWritten(
+  { ...TRIGGER_OPTS, document: "googleCalendarTokens/{uid}" },
+  async (event) => {
+    const before = event.data?.before?.data() as TokenDoc | undefined;
+    const after = event.data?.after?.data() as TokenDoc | undefined;
+    if (!after?.refreshToken) return; // frånkoppling — inget att synka
+    if (before?.refreshToken === after.refreshToken) return; // bara calendars-fältet ändrades
+    await syncUser(event.params.uid).catch((err) =>
+      console.error("Första synken misslyckades", event.params.uid, err),
+    );
   },
 );
 
