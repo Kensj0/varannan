@@ -1,0 +1,361 @@
+===============================================================================
+VARANNAN — HANDOFF: PRESTANDAOPTIMERING + REGIONVÄXLING AV CLOUD FUNCTIONS
+Datum: 2026-09-03
+Repo: github.com/Kensj0/varannan   Firebase-projekt: varannan-familj
+Branch: main   HEAD: 88eb51f   Arbetsträd: rent, allt pushat
+===============================================================================
+
+Detta dokument är en överlämning till nästa AI/utvecklare. Det beskriver vad
+som gjorts denna session, vad som är kvar, öppna beslut, och exakta fil- och
+radreferenser. Läs hela innan du agerar.
+
+
+-------------------------------------------------------------------------------
+0. KONTEXT OM APPEN (kort — läs README.md för hela bilden)
+-------------------------------------------------------------------------------
+- Next.js STATISK EXPORT (output: "export") -> Firebase Hosting. Ingen SSR.
+- Firestore med realtidslyssnare (onSnapshot).
+- Cloud Functions v2 (gen2, nodejs20): callables för allt som måste valideras
+  eller ske atomiskt; ofarliga skrivningar (aktiviteter, chatt, NYA
+  bytesförslag) går direkt från klienten enligt firestore.rules.
+- Firestore-databasen ligger i **europe-north2 (Stockholm)**. Bekräftat med
+  `firebase firestore:databases:get "(default)"`. europe-north2 STÖDJER INTE
+  Cloud Functions. Närmaste CF-region är europe-north1 (Hamina, Finland),
+  ~10-15 ms från Stockholm mot ~110 ms till us-central1 (Iowa).
+- ~99 % av användarna är i Sverige. Ingen publik registrering än; appen är i
+  daglig användning av ett fåtal familjer.
+- Deploy sker normalt via GitHub Actions (.github/workflows/deploy.yml,
+  "Run workflow"). Denna session deployade LOKALT från maskinen.
+
+
+-------------------------------------------------------------------------------
+1. VAD SOM GJORDES — 6 PRESTANDAÄNDRINGAR (commit ca82caf + följdcommits)
+-------------------------------------------------------------------------------
+
+#1 REGIONFLYTT AV USER-VÄNDA CALLABLES  (us-central1 -> europe-north1)
+   - functions/src/index.ts:46  setGlobalOptions({ region: "europe-north1" })
+   - functions/src/index.ts:49  const LEGACY_REGION = "us-central1"
+   - 4 funktioner PINNADE kvar i us-central1 med motivering i koden:
+       * calendarFeed        (functions/src/calendarFeed.ts:95  region:"us-central1")
+         -> dess URL ligger redan i användarnas kalenderprenumerationer
+            (lib/calendarExport.ts:34 FEED_REGION). Anropas server-till-server
+            av Google/Apple/Outlook, ingen användare väntar. Att byta region
+            skulle tyst bryta alla befintliga ICS-prenumerationer.
+       * syncDisplayNameToTeam        (index.ts:542  region: LEGACY_REGION)
+       * notifyOnShiftRequestCreated  (index.ts:1694 region: LEGACY_REGION)
+       * exportEventToGoogleCalendar  (index.ts:1753 region: LEGACY_REGION)
+         -> Firestore-triggers. Eventarc stödde inte europe-north* när de
+            sattes upp. Bakgrundsjobb, ingen väntar.
+   - Klienten matchar: lib/firebase.ts:52  getFunctions(app, "europe-north1")
+
+#2 LAT IMPORT AV googleapis
+   - functions/src/index.ts: `import { google }` borttagen från toppnivå.
+     Nu `const { google } = await import("googleapis")` inne i
+     getCalendarClientForUser (enda stället paketet används). ~4 MB låg
+     tidigare på kallstarten för VARJE funktion i filen.
+
+#3 FIRESTORE DISK-CACHE
+   - lib/firebase.ts: getFirestore(app) -> initializeFirestore(app, {
+       localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() })
+     }), med try/catch-fallback till getFirestore och `typeof window`-guard
+     (IndexedDB saknas under bygget / vid HMR). Rad 36-52.
+   - EFFEKT: +~78 KB okomprimerat på en delad JS-chunk (persistens-lagret).
+     Motiverat av att samma familj öppnar appen dagligen -> cache-träff nästan
+     alltid. LÄTT ATT REVERTA om det bedöms fel: byt tillbaka till
+     getFirestore(app).
+   - RISK som visade sig OGRUNDAD i felsökningen nedan: misstänktes först för
+     400-buggen, men den var orelaterad (se avsnitt 4).
+
+#4 SENARELAGDA LYSSNARE
+   - app/page.tsx: nytt state `visitedSections` (~rad 203). Hooksen för
+     chatt/listor/barninfo prenumererar först när fliken besökts:
+       useAllShiftRequests, useChatMessages           -> chatVisited
+       usePackLists, useNotes, useTodos               -> listsVisited
+       useChildInfo, useChildAccounts                 -> infoVisited
+     (skickar null som teamId tills dess; hooksen bailar på null).
+   - useAllShiftRequests läste HELA shiftRequests-kollektionen utan limit vid
+     varje inloggning; används bara av chatten.
+
+#5 KODSPLITTRING
+   - app/page.tsx:81+ : next/dynamic på SettingsView, ChatView, PackListView,
+     NotesView, TodoView, ChildInfoView, AccountsView, CustodyCycleBuilder,
+     CycleSetupScreen, AddFirstChildScreen. `loading`-komponent = <Centered>.
+   - Kvar statiska: CalendarView, BottomNav, SubTabs, BalanceCard,
+     PendingShiftRequests, PendingStructureRequests (default-vyn).
+
+#6 PRECONNECT
+   - app/layout.tsx: <head> med rel="preconnect" till
+     firestore.googleapis.com, identitytoolkit.googleapis.com,
+     securetoken.googleapis.com, och
+     https://europe-north1-<PROJECT_ID>.cloudfunctions.net
+   - AVSIKTLIGT EJ GJORT: stale-while-revalidate på HTML. Firebase Hosting
+     raderar filer som inte finns i senaste deployen, så en cachad gammal
+     index.html kan referera en borttagen chunk-hash -> vit skärm.
+
+
+-------------------------------------------------------------------------------
+2. REGIONVÄXLINGEN — UTFÖRD OCH LIVE
+-------------------------------------------------------------------------------
+
+VERIFIERING FÖRST (utan prod-påverkan):
+  - Deployade en släng-funktion `regionCheck` (onRequest) till europe-north1.
+    Svarade HTTP 200 {"ok":true,"region":"europe-north1",...}. Raderades sen.
+    -> Bekräftat att Cloud Functions v2 funkar i europe-north1 för projektet.
+
+VÄXLINGEN (3 steg, alla körda):
+  STEG 1: firebase functions:delete <23 callables> --region us-central1 --force
+          -> exit 0, alla 23 borta.
+  STEG 2: firebase deploy --only functions --force
+          -> 22 callables SKAPADE i europe-north1.
+          -> 4 pinnade funktioner UPPDATERADE i us-central1.
+          -> sendHandoffReminders FÖLL:
+             "Cloud Scheduler: Location 'europe-north1' is not a valid location"
+             Cloud Scheduler finns INTE i europe-north1.
+          -> FIX: pinnade sendHandoffReminders till us-central1
+             (functions/src/handoffReminders.ts:54  region: "us-central1"),
+             deployade separat -> fungerar.
+  STEG 3: npm run build && firebase deploy --only hosting
+          -> Live. Bundeln innehåller "europe-north1" (getFunctions) och
+             "us-central1" (FEED_REGION för calendarFeed) — båda avsiktliga.
+
+BONUS: ssrvarannanfamilj (gammal SSR-funktion i codebase
+       firebase-frameworks-varannan-familj, rest från när appen kortvarigt
+       kördes som SSR) RADERAD. Verifierat först att firebase.json /
+       .firebaserc / spårade filer inte refererar den (inga rewrites, ingen
+       frameworksBackend).
+
+NUVARANDE FUNKTIONSINVENTERING (firebase functions:list):
+  europe-north1 (23):
+    - 22 fungerande callables (det klienten anropar; svarar 401 utan token)
+    - 1 SKRÄP: sendHandoffReminders(europe-north1) — tomt skal utan
+      schemajobb, FYRAR ALDRIG. Se avsnitt 3.
+  us-central1 (5):
+    - calendarFeed, exportEventToGoogleCalendar, notifyOnShiftRequestCreated,
+      syncDisplayNameToTeam  (avsiktligt pinnade)
+    - sendHandoffReminders  (ny, us-central1, med schemajobb — fungerar)
+
+De 23 callables som flyttades (om du behöver listan igen):
+  acceptCalendarInvite, acceptInvite, addChild, applyScheduleChangeDirect,
+  approveShiftRequest, approveShiftRequestBatch, clearApprovedShiftsFrom,
+  createCalendarFeedToken, createCalendarInvite, createFamilyTeam,
+  createInvite, deleteChild, proposeBalanceAdjustment, renameChild,
+  repairPendingPartner, respondToBalanceAdjustment, respondToStructureRequest,
+  saveCustodyCycle, sendHandoffReminders(*flyttades tillbaka), sendTestPush,
+  setCustomSwitchHour, setParentColor, setScheduleChangeMode
+
+
+-------------------------------------------------------------------------------
+3. BUGG SOM HITTADES VID SLUTTEST — FIXAD (commit 88eb51f)
+-------------------------------------------------------------------------------
+
+SYMPTOM: Användaren (icke-referensförälder) gjorde en "förfrågan om
+datumändring" i live-appen. Fick "Kunde inte skicka förslaget. Försök igen."
+Browser-konsol: POST .../applyScheduleChangeDirect 400 (Bad Request).
+
+DETTA ÄR EN PRE-EXISTERANDE KLIENTBUGG. Inte orsakad av regionväxlingen eller
+disk-cachen — regionväxlingen fick bara användaren att testa notis-flödet
+(som icke-referensförälder) för första gången, vilket avslöjade den.
+
+ROT: app/page.tsx:567
+  const otherParentId = parents.find((p) => p.id !== balance?.referenceParentId)?.id ?? parents[1].id;
+
+`otherParentId` = "föräldern som inte är ställningens referensförälder" — en
+FAST person, oberoende av vem som är inloggad. referenceParentId = den som
+satte upp boendecykeln.
+
+Flöde före fix (page.tsx onProposeShift / onProposeShiftBatch):
+  mode: scheduleChangeModeFor(team, otherParentId)
+  - Om inloggad user ÄR referensföräldern: otherParentId = den andre. OK.
+  - Om inloggad user INTE är referensföräldern: otherParentId = HEN SJÄLV.
+    -> klienten läser sitt EGET läge ("notis") -> anropar
+       applyScheduleChangeDirect.
+    -> servern (functions/src/index.ts applyScheduleChangeDirect) kollar
+       KORREKT motpartens läge via parentIds.find(id => id !== uid) =
+       default "request" -> throw HttpsError("failed-precondition", ...) -> 400.
+
+Klient och server var oense om VEM motparten är.
+
+FIX (page.tsx:576):
+  const counterpartId =
+    parents.find((p) => p.id !== user?.uid && p.id !== PENDING_PARTNER_ID)?.id ?? otherParentId;
+  -> används på page.tsx:864 och :874 istället för otherParentId.
+  -> otherParentId LÄMNAT ORÖRT för BalanceCard (page.tsx:755), som verkligen
+     vill ha icke-referensföräldern (ställningen är signerad mot
+     referensföräldern).
+
+Deployad live (hosting, HEAD 88eb51f).
+
+
+-------------------------------------------------------------------------------
+4. ÖPPNA FRÅGOR TILL ANVÄNDAREN (behöver beslut)
+-------------------------------------------------------------------------------
+
+FRÅGA 1 — Städa hela otherParentId-semantiken?
+  Samma rot som buggen ovan finns kvar på fler ställen (INGEN krasch, men fel
+  VISAD person för icke-referensföräldern):
+    - app/page.tsx ~780 och ~898:
+        otherParentName={parentNames[otherParentId] ?? "Andra föräldern"}
+      -> visar icke-referensföräldern SITT EGET namn som "andra föräldern" i
+         PendingStructureRequests och CalendarView-etiketter.
+    - app/page.tsx ~889-891:
+        otherFeedLinks byggd med { onlyParentId: otherParentId }
+      -> för icke-referensföräldern innehåller "andra förälderns ICS-flöde"
+         hens egna dagar.
+  ALTERNATIV:
+    a) Svep om alla otherParentId-användningar: `counterpartId` ("inte jag")
+       överallt utom BalanceCard, som får ett eget `nonReferenceParentId`.
+    b) Lämna som är (bara kraschfixen).
+  Rekommendation: (a) — det är samma logiska fel och påverkar två familjer
+  olika beroende på vem som satte upp cykeln. Men det rör kärn-identitets-
+  logik, så användaren bör godkänna omfånget.
+
+FRÅGA 2 — Node 20 runtime-bump nu eller senare?
+  Node 20 deprecerad 2026-04-30, AVVECKLAS 2026-10-30 (efter det går det inte
+  att deploya utan bump). Ändra "runtime": "nodejs20" -> "nodejs22" i
+  firebase.json OCH "engines": { "node": "20" } -> "22" i
+  functions/package.json + functions/.nvmrc om sådan finns. Testa lokalt att
+  functions bygger och att npm-deps är node22-kompatibla.
+
+FRÅGA 3 — Flytta de 3 Firestore-triggarna till europe-north1?
+  De kör i us-central1 men deras Eventarc-trigger ligger i europe-north2
+  (databasen). firebase-tools varnar för korsregion-hoppet. De är
+  bakgrundsjobb (ingen väntar), så låg prioritet. Eventarc kan ha fått
+  europe-north*-stöd sedan de sattes upp — testa vid nästa functions-deploy,
+  eller lämna. Om det INTE går: pinna dem uttryckligen och sätt
+  FIREBASE_SUPPRESS_REGION_WARNING=true för att tysta varningen.
+
+
+-------------------------------------------------------------------------------
+5. NÄSTA STEG / TODO
+-------------------------------------------------------------------------------
+
+MÅSTE GÖRAS (städning efter växlingen):
+  [ ] Radera skräpfunktionen sendHandoffReminders(europe-north1).
+      `firebase functions:delete` KLARAR INTE detta — den kvävs på det
+      obefintliga Cloud Scheduler-jobbet i europe-north1. gcloud är trasigt
+      på maskinen ("Python was not found" — bara Windows Store-alias-stubbar).
+      GÖR ANTINGEN:
+        - Firebase Console -> Functions -> ta bort sendHandoffReminders i
+          region europe-north1, ELLER
+        - Installera riktig Python (eller sätt CLOUDSDK_PYTHON mot en), sen:
+          gcloud functions delete sendHandoffReminders --region=europe-north1 --gen2
+  [ ] Verifiera att sendHandoffReminders(us-central1) har ett aktivt
+      schemajobb: Console -> Cloud Scheduler, jobb
+      "firebase-schedule-sendHandoffReminders-us-central1", nästa körning satt.
+
+VERIFIERA I APPEN (kräver inloggad webbläsare — bara användaren kan):
+  [ ] Ladda om https://varannan-familj.web.app hårt (Ctrl+Shift+R). Gör om
+      dagändringen som icke-referensförälder -> ska nu ta FÖRFRÅGNINGSVÄGEN
+      (proposeShiftRequest, direkt Firestore-skrivning) och skapa en väntande
+      förfrågan, INTE ge 400.
+  [ ] Låt den ANDRA föräldern sätta sitt läge till "gäller direkt med notis",
+      testa sen notis-vägen (applyScheduleChangeDirect i europe-north1) hela
+      vägen.
+  [ ] Röktesta fler callables från appen: godkänn ett byte, spara boendecykel,
+      skapa inbjudan, skicka testnotis, byt schemafärg.
+  [ ] Bekräfta att ICS-flödet fungerar (calendarFeed kvar i us-central1,
+      oförändrad URL): öppna en befintlig prenumerationslänk, se att den
+      returnerar kalenderdata.
+
+UPPFÖLJNING / TEKNISK SKULD:
+  [ ] Node 20 -> 22 (se Fråga 2). Deadline 2026-10-30.
+  [ ] Beslut om otherParentId-städning (se Fråga 1).
+  [ ] Ev. flytta 3 Firestore-triggarna till europe-north1 (se Fråga 3).
+  [ ] `firebase functions:log` kraschar på denna Windows-maskin
+      (libuv-assertion, src\win\async.c rad 94) — oanvändbart för felsökning.
+      Använd Firebase Console -> Functions -> Loggar, eller laga lokala
+      node/firebase-tools-installationen.
+  [ ] gcloud trasigt på maskinen (ingen riktig Python). Installera Python
+      eller sätt CLOUDSDK_PYTHON om gcloud behövs.
+
+
+-------------------------------------------------------------------------------
+6. VIKTIGA FIL-/RADREFERENSER (per HEAD 88eb51f)
+-------------------------------------------------------------------------------
+functions/src/index.ts
+  :46   setGlobalOptions({ region: "europe-north1" })
+  :49   const LEGACY_REGION = "us-central1"
+  :542  syncDisplayNameToTeam        { document: "users/{uid}", region: LEGACY_REGION }
+  :1694 notifyOnShiftRequestCreated  { document: "...shiftRequests/{requestId}", region: LEGACY_REGION }
+  :1753 exportEventToGoogleCalendar  { document: "...events/{eventId}", region: LEGACY_REGION }
+  (getCalendarClientForUser: `const { google } = await import("googleapis")`)
+  applyScheduleChangeDirect: serverns motpartskoll = parentIds.find(id => id !== uid),
+    kräver mode === "notify" annars HttpsError("failed-precondition") -> HTTP 400
+
+functions/src/calendarFeed.ts
+  :95   region: "us-central1"  (calendarFeed onRequest, pinnad)
+
+functions/src/handoffReminders.ts
+  :45-55  onSchedule({ schedule:"every day 08:00", timeZone:"Europe/Stockholm",
+           region:"us-central1" })
+
+lib/firebase.ts
+  :36-50  initDb(): initializeFirestore + persistentLocalCache +
+          persistentMultipleTabManager, try/catch -> getFirestore, window-guard
+  :52     getFunctions(app, "europe-north1")
+
+lib/calendarExport.ts
+  :34     const FEED_REGION = "us-central1"   (MÅSTE matcha calendarFeeds region)
+  :42     `https://${FEED_REGION}-${projectId}.cloudfunctions.net/calendarFeed`
+
+app/page.tsx
+  :67+    next/dynamic-importerna
+  :~203   visitedSections-state + useEffect
+  :567    const otherParentId = ... (p.id !== balance?.referenceParentId)  <- KVAR-BUGG-KÄLLA
+  :576    const counterpartId = ... (p.id !== user?.uid && !== PENDING_PARTNER_ID)  <- FIX
+  :864,:874  mode: scheduleChangeModeFor(team, counterpartId)
+  :755    <BalanceCard otherParentId={otherParentId} ...>  (avsiktligt otherParentId)
+  :~780,~898  otherParentName={parentNames[otherParentId]}  <- fel person för icke-ref-förälder
+  :~889-891   otherFeedLinks { onlyParentId: otherParentId }  <- fel dagar för icke-ref-förälder
+
+app/layout.tsx
+  <head> med preconnect-länkar
+
+types/schema.ts
+  :175  DEFAULT_SCHEDULE_CHANGE_MODE = "request"
+  :182  scheduleChangeModeFor(team, parentId): parentProfiles[parentId].scheduleChangeMode
+        ?? team.scheduleChangeMode ?? DEFAULT_SCHEDULE_CHANGE_MODE
+  :330  PENDING_PARTNER_ID = "__pending_partner__"
+
+.env.local.example / ev. .env.local
+  NEXT_PUBLIC_CALENDAR_FEED_URL — om satt, pekar (korrekt) på us-central1.
+  ÄNDRA INTE om inte calendarFeed flyttas.
+
+
+-------------------------------------------------------------------------------
+7. GIT-LÄGE
+-------------------------------------------------------------------------------
+Branch main, rent arbetsträd, allt pushat. HEAD = 88eb51f.
+Commits denna session (nyast först):
+  88eb51f  Fixa 400 vid dagändring: kolla motpartens läge, inte referensförälderns
+  8af34e5  Pinna sendHandoffReminders till us-central1 — Cloud Scheduler saknas i europe-north1
+  546196a  Rätta regionkommentarerna: Firestore är i europe-north2, inte north1
+  e6688f9  Avfölj deploy.bat — lokalt deploy-skript, ska inte i repot
+  ca82caf  Optimera latens: flytta callables till europe-north1, m.m.
+deploy.bat finns lokalt, är untracked + gitignorad (avsiktligt).
+Detta dokument (VAXLING-HANDOFF.txt) är untracked — committa eller radera
+efter behov.
+
+
+-------------------------------------------------------------------------------
+8. DEPLOYMENT-ANTECKNINGAR FÖR FRAMTIDEN
+-------------------------------------------------------------------------------
+- Regionändring = Firebase behandlar det som en FLYTT (skapa ny + radera
+  gammal). Non-interactive `firebase deploy` AVBRYTER hellre än att göra
+  halvt. Ska en funktions region ändras igen: radera den gamla regionens
+  kopia FÖRST (`firebase functions:delete <namn> --region <gammal>`), sen
+  deploya.
+- `--force` på `firebase deploy --only functions` krävs för att auto-
+  konfigurera Artifact Registry-cleanup-policy i en ny region (annars exit 1
+  fast funktionerna deployas korrekt).
+- onSchedule-funktioner kan INTE ligga i europe-north1 (Cloud Scheduler
+  saknas där). europe-west1 har Scheduler om samlokalisering med Europa
+  önskas; annars us-central1.
+- GitHub Actions-deployen (.github/workflows/deploy.yml) fungerar fortsatt;
+  service account github-actions-deploy@varannan-familj.iam.gserviceaccount.com.
+- Denna sessions deploys gjordes lokalt; README säger att GitHub Actions är
+  den normala vägen.
+
+===============================================================================
+SLUT
+===============================================================================
