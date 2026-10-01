@@ -34,28 +34,32 @@ function getTransporter() {
 }
 
 /**
- * Skickar ett enkelt textmail och KASTAR vid fel. Används där någon
- * väntar på svaret och behöver veta om det gick vägen — t.ex.
- * testknappen i inställningarna.
+ * Skickar ett mail och KASTAR vid fel. Används där någon väntar på
+ * svaret och behöver veta om det gick vägen — t.ex. testknappen i
+ * inställningarna. `html` är valfri — utelämnas den skickas bara
+ * textversionen (oförändrat beteende för alla befintliga anrop).
+ * Skickas den med läggs den på som ett HTML-alternativ; `body` (text)
+ * följer alltid med också, som fallback för mailklienter utan HTML-stöd.
  */
-export async function sendEmailOrThrow(to: string, subject: string, body: string): Promise<void> {
+export async function sendEmailOrThrow(to: string, subject: string, body: string, html?: string): Promise<void> {
   const transporter = getTransporter();
   await transporter.sendMail({
     from: `Varannan <${GMAIL_USER.value()}>`,
     to,
     subject,
     text: body,
+    ...(html ? { html } : {}),
   });
 }
 
 /**
- * Skickar ett enkelt textmail. Kastar ALDRIG — ett misslyckat mail ska
- * inte få hela påminnelse-jobbet (som skickar till flera föräldrar och
- * barn i en enda körning) att stanna av. Fel loggas bara.
+ * Skickar ett mail. Kastar ALDRIG — ett misslyckat mail ska inte få hela
+ * påminnelse-jobbet (som skickar till flera föräldrar och barn i en enda
+ * körning) att stanna av. Fel loggas bara. Se sendEmailOrThrow för `html`.
  */
-export async function sendEmail(to: string, subject: string, body: string): Promise<void> {
+export async function sendEmail(to: string, subject: string, body: string, html?: string): Promise<void> {
   try {
-    await sendEmailOrThrow(to, subject, body);
+    await sendEmailOrThrow(to, subject, body, html);
   } catch (err) {
     console.error(`[email] Kunde inte skicka till ${to}:`, err);
   }

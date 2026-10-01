@@ -1703,17 +1703,38 @@ function blockingApprovers(
   );
 }
 
-/** Enkelt textmail — samma stil som handoffReminders/sendTestPush. */
+/**
+ * Hur länge en anhörig/utomstående har på sig att använda inbjudnings-
+ * koden, räknat från att den FAKTISKT mailas (se "Alla klara — skicka"
+ * nedan — godkännande-väntan drar inte av från den här tiden). Ändras
+ * den, ändras både expiresAt och mailtexten automatiskt i samma veva.
+ */
+const CALENDAR_INVITE_TTL_HOURS = 7 * 24;
+
+/**
+ * Mailet för en anhörig/utomstående-inbjudan. HTML + text-fallback (för
+ * mailklienter som inte visar HTML) — samma innehåll i båda, se
+ * sendEmail/sendEmailOrThrow i email.ts.
+ */
 function calendarInviteEmailBody(args: {
   inviterName: string;
   childName: string;
   role: CalendarRole;
   code: string;
   shareUrl: string;
-}): string {
+}): { text: string; html: string } {
   const { inviterName, childName, role, code, shareUrl } = args;
-  return [
-    `${inviterName} har bjudit in dig som ${roleLabel(role)} till ${childName} i Varannan.`,
+  const days = CALENDAR_INVITE_TTL_HOURS / 24;
+  const intro = `${inviterName} har bjudit in dig som ${roleLabel(role)} till ${childName} i Varannan.`;
+  const steps = [
+    "Klicka på länken ovan eller kopiera den till din webbläsare",
+    "Logga in eller skapa ett konto",
+    "Granska och godkänn delningen",
+    "Du får tillgång till barnets kalender och kan se schemaändringarna direkt",
+  ];
+
+  const text = [
+    intro,
     "",
     `Inbjudningskod: ${code}`,
     `Eller öppna länken direkt: ${shareUrl}`,
@@ -1721,8 +1742,42 @@ function calendarInviteEmailBody(args: {
     "Har du inget konto i Varannan sedan innan får du skapa ett först",
     "(det tar en minut) — därefter går du med automatiskt.",
     "",
-    "Koden gäller i 48 timmar.",
+    "Steg för steg:",
+    ...steps.map((s, i) => `${i + 1}. ${s}`),
+    "",
+    `Du har ${days} dagar på dig att använda koden.`,
   ].join("\n");
+
+  const html = `
+    <div style="font-family: -apple-system, Helvetica, Arial, sans-serif; max-width: 480px; margin: 0 auto; color: #44403c;">
+      <p style="font-size: 15px; line-height: 1.5;">${intro}</p>
+      <p style="margin: 20px 0; text-align: center;">
+        <a href="${shareUrl}"
+           style="display: inline-block; background: #f43f5e; color: #ffffff; font-weight: 600;
+                  text-decoration: none; padding: 12px 28px; border-radius: 999px; font-size: 15px;">
+          Gå med i Varannan
+        </a>
+      </p>
+      <p style="font-size: 13px; line-height: 1.5; color: #78716c;">
+        Fungerar inte knappen? Öppna den här länken i din webbläsare:<br>
+        <a href="${shareUrl}" style="color: #f43f5e;">${shareUrl}</a><br>
+        Inbjudningskod: <strong>${code}</strong>
+      </p>
+      <p style="font-size: 13px; line-height: 1.5; color: #78716c;">
+        Har du inget konto i Varannan sedan innan får du skapa ett först (det tar en minut)
+        — därefter går du med automatiskt.
+      </p>
+      <p style="font-size: 14px; font-weight: 600; margin: 24px 0 8px;">Steg för steg</p>
+      <ol style="font-size: 14px; line-height: 1.6; padding-left: 20px; margin: 0;">
+        ${steps.map((s) => `<li>${s}</li>`).join("\n        ")}
+      </ol>
+      <p style="font-size: 13px; line-height: 1.5; color: #78716c; margin-top: 24px;">
+        Du har <strong>${days} dagar</strong> på dig att använda koden.
+      </p>
+    </div>
+  `.trim();
+
+  return { text, html };
 }
 
 export const createCalendarInvite = onCall(
@@ -1783,7 +1838,7 @@ export const createCalendarInvite = onCall(
     baseUrl && allowed.includes(baseUrl) ? baseUrl : allowed[0] ?? "http://localhost:3000";
 
   const code = generateCalendarInviteCode();
-  const expiresAt = new Date(Date.now() + 48 * 60 * 60 * 1000);
+  const expiresAt = new Date(Date.now() + CALENDAR_INVITE_TTL_HOURS * 60 * 60 * 1000);
   const shareUrl = `${safeBaseUrl.replace(/\/$/, "")}/join?code=${encodeURIComponent(code)}`;
   const childName = child?.name ?? "kalendern";
 
@@ -1832,11 +1887,8 @@ export const createCalendarInvite = onCall(
   if (status === "sent") {
     // Ensamförälder på kalendern, eller alla andra föräldrar i
     // notis-läge — ingen behöver klicka godkänn.
-    await sendEmail(
-      invitedEmail!.trim(),
-      "Du är inbjuden till Varannan",
-      calendarInviteEmailBody({ inviterName, childName, role, code, shareUrl }),
-    );
+    const { text, html } = calendarInviteEmailBody({ inviterName, childName, role, code, shareUrl });
+    await sendEmail(invitedEmail!.trim(), "Du är inbjuden till Varannan", text, html);
     return { code, expiresAt: expiresAt.toISOString(), shareUrl, status: "sent" as const };
   }
 
@@ -1922,11 +1974,12 @@ export const approveCalendarInvite = onCall(
   }
 
   // Alla klara — skicka. expiresAt sattes vid SKAPANDET av inbjudan
-  // (48h från då) — om godkännandet dröjer äter den väntetiden upp av
-  // samma fönster som den inbjudna sedan har på sig att använda koden,
-  // så koden kunde vara "utgången" innan den ens mailades. Ge den
-  // inbjudna sina fulla 48 timmar från det att koden FAKTISKT skickas.
-  const newExpiresAt = new Date(Date.now() + 48 * 60 * 60 * 1000);
+  // (CALENDAR_INVITE_TTL_HOURS från då) — om godkännandet dröjer äter
+  // den väntetiden upp av samma fönster som den inbjudna sedan har på
+  // sig att använda koden, så koden kunde vara "utgången" innan den ens
+  // mailades. Ge den inbjudna sin FULLA väntetid från det att koden
+  // FAKTISKT skickas.
+  const newExpiresAt = new Date(Date.now() + CALENDAR_INVITE_TTL_HOURS * 60 * 60 * 1000);
   await inviteRef.update({
     approvedBy: admin.firestore.FieldValue.arrayUnion(uid),
     status: "sent",
@@ -1941,17 +1994,16 @@ export const approveCalendarInvite = onCall(
     invite.baseUrl ?? (process.env.ALLOWED_APP_ORIGINS ?? "").split(",")[0] ?? "http://localhost:3000";
   const shareUrl = `${baseUrl.replace(/\/$/, "")}/join?code=${encodeURIComponent(code)}`;
 
-  await sendEmail(
-    invite.invitedEmail,
-    "Du är inbjuden till Varannan",
-    calendarInviteEmailBody({
+  {
+    const { text, html } = calendarInviteEmailBody({
       inviterName,
       childName,
       role: (invite.role as CalendarRole) ?? "relative",
       code,
       shareUrl,
-    }),
-  );
+    });
+    await sendEmail(invite.invitedEmail, "Du är inbjuden till Varannan", text, html);
+  }
   await sendPushToUser(db, invite.invitedBy, {
     title: "Inbjudan skickad",
     body: `${invite.invitedEmail} har fått sin inbjudningskod till ${childName}.`,
