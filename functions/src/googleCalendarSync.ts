@@ -115,6 +115,15 @@ interface TokenDoc {
    */
   excludedChildPaths?: string[];
   /**
+   * Delmängd av excludedChildPaths där ANLEDNINGEN är att ensureChildCalendar
+   * hittade kalendern raderad i Google (404/410) vid en synk — till
+   * skillnad från att användaren själv klickade "Koppla bort" i appen.
+   * Styr bara vilket meddelande CalendarSettingsPanel visar ("Kalendern
+   * togs bort i Google" + "Koppla igen", i stället för den vanliga
+   * "Koppla Google Kalender"-knappen) — se getGoogleCalendarStatus.
+   */
+  externallyRemovedChildPaths?: string[];
+  /**
    * childPath → tidsstämpel (ms) för en pågående kalenderskapning — se
    * ensureChildCalendar(). Förhindrar att två samtidiga synkar för samma
    * uid+barn skapar varsin Google-kalender (den ursprungliga dubblett-
@@ -142,10 +151,18 @@ export const startGoogleCalendarConnect = onCall({ secrets: [GOOGLE_OAUTH_CLIENT
   const uid = request.auth?.uid;
   if (!uid) throw new HttpsError("unauthenticated", "Du måste vara inloggad.");
 
+  // Valfritt: vilken kalender knappen klickades från (CalendarSettingsPanel
+  // skickar alltid med det). Sparas bara för att kunna lägga med i
+  // redirecten tillbaka — se googleCalendarOAuthCallback — så användaren
+  // kommer tillbaka till SAMMA kalender, inte Profil eller en slumpmässig
+  // förstavalsflik.
+  const { teamId, childId } = (request.data ?? {}) as { teamId?: string; childId?: string };
+
   const db = admin.firestore();
   const state = crypto.randomBytes(24).toString("base64url");
   await db.doc(`oauthStates/${state}`).set({
     uid,
+    ...(teamId && childId ? { teamId, childId } : {}),
     createdAt: admin.firestore.FieldValue.serverTimestamp(),
     expiresAt: admin.firestore.Timestamp.fromMillis(Date.now() + 10 * 60 * 1000),
   });
@@ -179,7 +196,22 @@ export const googleCalendarOAuthCallback = onRequest(
     timeoutSeconds: 120,
   },
   async (req, res) => {
-    const back = (result: string) => res.redirect(302, `${APP_ORIGIN}/?google=${result}`);
+    // teamId/childId: vilken kalender startGoogleCalendarConnect kördes
+    // från (se där) — så användaren kommer tillbaka till SAMMA kalender,
+    // inte Profil eller en slumpmässig förstavalsflik. `v`: ett unikt
+    // query-värde varje gång, så att INGEN cache (webbläsarens HTTP-cache,
+    // en proxy, etc) någonsin kan servera en tidigare besökares svar för
+    // den här exakta URL:en — bara en försiktighetsåtgärd, själva appens
+    // Cache-Control-headers (firebase.json) tillåter redan ingen caching
+    // av index.html.
+    const back = (result: string, coords?: { teamId?: string; childId?: string }) => {
+      const params = new URLSearchParams({ google: result, v: Date.now().toString() });
+      if (coords?.teamId && coords?.childId) {
+        params.set("teamId", coords.teamId);
+        params.set("childId", coords.childId);
+      }
+      res.redirect(302, `${APP_ORIGIN}/?${params.toString()}`);
+    };
 
     const state = String(req.query.state ?? "");
     const code = String(req.query.code ?? "");
@@ -191,12 +223,15 @@ export const googleCalendarOAuthCallback = onRequest(
     const stateSnap = await stateRef.get();
     // Engångs: ta bort direkt, oavsett utfall.
     await stateRef.delete().catch(() => undefined);
-    const stateData = stateSnap.data();
-    if (!stateSnap.exists || !stateData?.uid || stateData.expiresAt?.toMillis() < Date.now()) {
+    const stateData = stateSnap.data() as
+      | { uid?: string; teamId?: string; childId?: string; expiresAt?: admin.firestore.Timestamp }
+      | undefined;
+    if (!stateSnap.exists || !stateData?.uid || (stateData.expiresAt?.toMillis() ?? 0) < Date.now()) {
       return back("error");
     }
-    if (googleError) return back(googleError === "access_denied" ? "denied" : "error");
-    if (!code) return back("error");
+    const coords = { teamId: stateData.teamId, childId: stateData.childId };
+    if (googleError) return back(googleError === "access_denied" ? "denied" : "error", coords);
+    if (!code) return back("error", coords);
 
     const uid: string = stateData.uid;
     try {
@@ -214,12 +249,12 @@ export const googleCalendarOAuthCallback = onRequest(
       const tokens = (await tokenRes.json()) as { refresh_token?: string; scope?: string; error?: string };
       if (!tokenRes.ok || !tokens.refresh_token) {
         console.error("Tokenbytet misslyckades", tokenRes.status, tokens.error);
-        return back("error");
+        return back("error", coords);
       }
       // Användaren kan bocka ur kalender-rättigheten i samtyckesfönstret.
       if (!String(tokens.scope ?? "").split(" ").includes(CALENDAR_SCOPE)) {
         await revokeToken(tokens.refresh_token);
-        return back("scope");
+        return back("scope", coords);
       }
 
       // Byte av konto/återkoppling: rensa ev. gammal koppling först, så
@@ -231,7 +266,11 @@ export const googleCalendarOAuthCallback = onRequest(
       await tokenRef.set({
         refreshToken: tokens.refresh_token,
         connectedAt: admin.firestore.FieldValue.serverTimestamp(),
-        calendars: {},
+        // Behåll tidigare kända kalendrar vid omkoppling (t.ex. för att
+        // uppdatera scope) — en tom karta hade fått nästa synk att tro att
+        // INGEN av barnen hade en kalender än och försöka skapa nya åt
+        // alla, trots att de redan fanns kvar i samma Google-konto.
+        calendars: previous?.calendars ?? {},
       });
       await db.doc(`users/${uid}`).set(
         {
@@ -247,10 +286,10 @@ export const googleCalendarOAuthCallback = onRequest(
       // Redirecta DIREKT — se VARNING i filhuvudet för varför synken inte
       // körs här. gcalSyncOnConnect (längst ner) triggas av skrivningen
       // till tokenRef ovan och gör den första synken i en egen invocation.
-      return back("connected");
+      return back("connected", coords);
     } catch (err) {
       console.error("OAuth-callback misslyckades", err);
-      return back("error");
+      return back("error", coords);
     }
   },
 );
@@ -266,12 +305,31 @@ export const disconnectGoogleCalendar = onCall({ secrets: OAUTH_SECRETS }, async
   return { ok: true };
 });
 
+/**
+ * Kör syncUser() och omvandlar ett oväntat fel till ett begripligt
+ * meddelande i stället för att låta det nå klienten som "INTERNAL" (det
+ * generiska, oläsliga felet onCall annars visar för en okänd kastad
+ * Error) — exakt det en användare såg vid andra trycket på "Synka nu"
+ * innan FieldPath-fixen ovan (se ensureChildCalendar). HttpsError som
+ * redan är tänkta att visas (t.ex. "invalid_grant" i syncUser självt)
+ * slipper igenom oförändrade.
+ */
+async function syncUserOrFriendlyError(uid: string, onlyChildPath?: string): Promise<void> {
+  try {
+    await syncUser(uid, onlyChildPath);
+  } catch (err) {
+    if (err instanceof HttpsError) throw err;
+    console.error("syncUser misslyckades", uid, onlyChildPath, err);
+    throw new HttpsError("internal", "Kunde inte synka med Google just nu. Försök igen om en stund.");
+  }
+}
+
 export const syncGoogleCalendarNow = onCall({ secrets: OAUTH_SECRETS, timeoutSeconds: 120 }, async (request) => {
   const uid = request.auth?.uid;
   if (!uid) throw new HttpsError("unauthenticated", "Du måste vara inloggad.");
   const snap = await admin.firestore().doc(`googleCalendarTokens/${uid}`).get();
   if (!snap.exists) throw new HttpsError("failed-precondition", "Google Kalender är inte kopplad.");
-  await syncUser(uid);
+  await syncUserOrFriendlyError(uid);
   return { ok: true };
 });
 
@@ -300,11 +358,19 @@ export const getGoogleCalendarStatus = onCall({ secrets: OAUTH_SECRETS }, async 
   await assertChildMember(teamId, childId, uid);
 
   const token = (await admin.firestore().doc(`googleCalendarTokens/${uid}`).get()).data() as TokenDoc | undefined;
+  const childPath = `${teamId}/${childId}`;
   return {
     /** Är Google-kontot kopplat alls (styr om "Fortsätt" ska gå via OAuth eller inte). */
     accountConnected: !!token?.refreshToken,
     /** Har just DET HÄR barnet en egen kalender just nu. */
-    connected: !!token?.calendars?.[`${teamId}/${childId}`],
+    connected: !!token?.calendars?.[childPath],
+    /**
+     * Fanns kopplad, men en synk upptäckte att kalendern raderats i
+     * Google (vem som helst kan göra det manuellt) — se ensureChildCalendar.
+     * UI:t visar då "Kalendern togs bort i Google" + "Koppla igen" i
+     * stället för den vanliga "Koppla Google Kalender"-knappen.
+     */
+    removedInGoogle: !token?.calendars?.[childPath] && !!token?.externallyRemovedChildPaths?.includes(childPath),
   };
 });
 
@@ -325,13 +391,16 @@ export const connectGoogleCalendarForChild = onCall(
     const tokenRef = admin.firestore().doc(`googleCalendarTokens/${uid}`);
     const token = (await tokenRef.get()).data() as TokenDoc | undefined;
     if (!token?.refreshToken) {
-      throw new HttpsError("failed-precondition", "Koppla ditt Google-konto i Inställningar först.");
+      throw new HttpsError("failed-precondition", "Google-kontot är inte kopplat än.");
     }
     const childPath = `${teamId}/${childId}`;
-    if (token.excludedChildPaths?.includes(childPath)) {
-      await tokenRef.update({ excludedChildPaths: admin.firestore.FieldValue.arrayRemove(childPath) });
+    if (token.excludedChildPaths?.includes(childPath) || token.externallyRemovedChildPaths?.includes(childPath)) {
+      await tokenRef.update({
+        excludedChildPaths: admin.firestore.FieldValue.arrayRemove(childPath),
+        externallyRemovedChildPaths: admin.firestore.FieldValue.arrayRemove(childPath),
+      });
     }
-    await syncUser(uid, childPath);
+    await syncUserOrFriendlyError(uid, childPath);
     return { ok: true };
   },
 );
@@ -377,13 +446,15 @@ export const disconnectGoogleCalendarForChild = onCall({ secrets: OAUTH_SECRETS 
     return { ok: true, accountDisconnected: true };
   }
 
-  // Dot-path, inte en överskrivning av hela calendars-mappen — annars kan
-  // det här anropet tappa en ANNAN samtidig körnings nyss skapade kalender
-  // för ett annat barn (se ensureChildCalendar för samma resonemang).
-  await tokenRef.update({
-    [`calendars.${childPath}`]: admin.firestore.FieldValue.delete(),
-    excludedChildPaths: admin.firestore.FieldValue.arrayUnion(childPath),
-  });
+  // FieldPath (inte en sträng-"dot path" — childPath innehåller "/", vilket
+  // Firestore vägrar i ett strängfält, se calField), och per fält i stället
+  // för en överskrivning av hela calendars-mappen — annars kan det här
+  // anropet tappa en ANNAN samtidig körnings nyss skapade kalender för ett
+  // annat barn (se ensureChildCalendar för samma resonemang).
+  await tokenRef.update(
+    calField("calendars", childPath), admin.firestore.FieldValue.delete(),
+    "excludedChildPaths", admin.firestore.FieldValue.arrayUnion(childPath),
+  );
   return { ok: true, accountDisconnected: false };
 });
 
@@ -425,10 +496,28 @@ async function disconnectUser(uid: string, opts: { removeCalendars: boolean }) {
 const CALENDAR_CLAIM_STALE_MS = 2 * 60 * 1000;
 
 /**
+ * childPath ("teamId/childId") innehåller "/" — ett tecken Firestore
+ * VÄGRAR i ett sträng-fältnamn som "calendars.${childPath}" (kastar
+ * "...is not a valid field path" i körtid; TypeScript varnar inte, det
+ * är bara admin-SDK:ts egen validering). DETTA var den faktiska orsaken
+ * till "Kopplad men ingen kalender i Google" och "INTERNAL" på andra
+ * tryck på Synka nu: ensureChildCalendar kraschade varje gång den
+ * försökte skriva ett sådant fält, så en trasig/borttagen kalender
+ * aldrig hann repareras eller rapporteras. `FieldPath` löser det: varje
+ * konstruktor-argument blir ETT bokstavligt segment, oavsett tecken.
+ */
+function calField(...segments: string[]): admin.firestore.FieldPath {
+  return new admin.firestore.FieldPath(...segments);
+}
+
+/**
  * Säkerställer att childPath har en levande Google-kalender och
- * returnerar dess id — eller null om en SAMTIDIG körning redan håller
- * på att skapa en (vi backar hellre än att skapa en dubblett; nästa
- * synk, oavsett källa, hittar då den redan skapade kalendern).
+ * returnerar dess id — eller null om den inte ska synkas just nu:
+ * antingen för att en SAMTIDIG körning redan skapar en (vi backar
+ * hellre än att skapa en dubblett; nästa synk, oavsett källa, hittar då
+ * den redan skapade kalendern), eller för att den sparade kalendern
+ * upptäcktes raderad i Google och vi medvetet INTE skapar en ny i
+ * bakgrunden — se "upptäckt raderad i Google" nedan.
  *
  * DUBBLETTBUGGEN satt här: skapandet låg tidigare i en read-modify-
  * write på HELA calendars-mappen, utspritt över hela syncUsers körtid
@@ -445,10 +534,10 @@ const CALENDAR_CLAIM_STALE_MS = 2 * 60 * 1000;
  * Fixen: reservera RÄTTEN att skapa i en Firestore-transaktion (bara
  * Firestore-operationer i den — aldrig ett nätverksanrop mot Google,
  * eftersom transaktionen kan köras om vid kollision) innan något skapas
- * hos Google, och skriv resultatet med ett dot-path-fält som bara rör
- * DEN HÄR childPath-nyckeln — aldrig en överskrivning av hela mappen,
- * som annars kan tappa en annan samtidig körnings uppdatering av ett
- * ANNAT barn.
+ * hos Google, och skriv resultatet med ett eget fält som bara rör DEN
+ * HÄR childPath-nyckeln — aldrig en överskrivning av hela mappen, som
+ * annars kan tappa en annan samtidig körnings uppdatering av ett ANNAT
+ * barn.
  */
 async function ensureChildCalendar(
   tokenRef: admin.firestore.DocumentReference,
@@ -462,14 +551,31 @@ async function ensureChildCalendar(
   let entry = fresh?.calendars?.[childPath];
   if (entry) {
     const check = await gfetch(accessToken, "GET", `/calendars/${encodeURIComponent(entry.googleCalendarId)}`);
-    if (check.status === 404 || check.status === 410) entry = undefined; // raderad i Google — skapa en ny
+    if (check.status === 404 || check.status === 410) {
+      // Upptäckt raderad i Google — vem som helst kan göra det manuellt
+      // (en användare gjorde precis det i test). Tolkas som att barnet
+      // kopplats bort: ta bort det sparade id:t så synken slutar skriva
+      // mot en kalender som inte finns, men skapa ALDRIG tyst en ny i
+      // bakgrunden — då kommer den bara tillbaka för någon som just
+      // ville bli av med den. CalendarSettingsPanel visar i stället
+      // "Kalendern togs bort i Google" + en "Koppla igen"-knapp
+      // (connectGoogleCalendarForChild), som uttryckligen skapar en ny.
+      await tokenRef
+        .update(
+          calField("calendars", childPath), admin.firestore.FieldValue.delete(),
+          "excludedChildPaths", admin.firestore.FieldValue.arrayUnion(childPath),
+          "externallyRemovedChildPaths", admin.firestore.FieldValue.arrayUnion(childPath),
+        )
+        .catch(() => undefined);
+      return null;
+    }
   }
   if (entry) {
     if (entry.name !== wantedName) {
       await gfetch(accessToken, "PATCH", `/calendars/${encodeURIComponent(entry.googleCalendarId)}`, {
         summary: wantedName,
       });
-      await tokenRef.update({ [`calendars.${childPath}.name`]: wantedName }).catch(() => undefined);
+      await tokenRef.update(calField("calendars", childPath, "name"), wantedName).catch(() => undefined);
     }
     return entry.googleCalendarId;
   }
@@ -481,7 +587,7 @@ async function ensureChildCalendar(
     if (t?.calendars?.[childPath]) return false; // skapad under tiden — inget att göra här
     const claimedAt = t?.pendingCalendarClaims?.[childPath];
     if (claimedAt && Date.now() - claimedAt < CALENDAR_CLAIM_STALE_MS) return false; // en annan körning håller redan på
-    tx.update(tokenRef, { [`pendingCalendarClaims.${childPath}`]: Date.now() });
+    tx.update(tokenRef, calField("pendingCalendarClaims", childPath), Date.now());
     return true;
   });
   if (!claimed) return null; // backa — en samtidig körning äger skapandet just nu
@@ -494,16 +600,16 @@ async function ensureChildCalendar(
     });
     if (!created.ok) throw new Error(`Kunde inte skapa kalender: ${created.status}`);
     const body = (await created.json()) as { id: string };
-    await tokenRef.update({
-      [`calendars.${childPath}`]: { googleCalendarId: body.id, name: wantedName },
-      [`pendingCalendarClaims.${childPath}`]: admin.firestore.FieldValue.delete(),
-    });
+    await tokenRef.update(
+      calField("calendars", childPath), { googleCalendarId: body.id, name: wantedName },
+      calField("pendingCalendarClaims", childPath), admin.firestore.FieldValue.delete(),
+    );
     return body.id;
   } catch (err) {
     // Släpp reservationen igen, annars blir barnet permanent "pending"
     // om anropet ovan kraschade — en senare synk måste få försöka om.
     await tokenRef
-      .update({ [`pendingCalendarClaims.${childPath}`]: admin.firestore.FieldValue.delete() })
+      .update(calField("pendingCalendarClaims", childPath), admin.firestore.FieldValue.delete())
       .catch(() => undefined);
     throw err;
   }
@@ -562,8 +668,8 @@ async function syncUser(uid: string, onlyChildPath?: string): Promise<void> {
   // Kalendrar för barn man inte längre är med i: ta bort ur Google. Läser
   // fräscht (inte den `token` som lästes i funktionens början) så att en
   // ANNAN samtidig körnings nyss skapade kalender för ett annat barn inte
-  // försvinner härifrån — och skriver bort posterna en och en (dot-path),
-  // aldrig som en överskrivning av hela calendars-mappen.
+  // försvinner härifrån — och skriver bort posterna en och en (FieldPath,
+  // se calField), aldrig som en överskrivning av hela calendars-mappen.
   if (!onlyChildPath) {
     const currentPaths = new Set(childSnaps.docs.map((d) => `${d.ref.parent.parent?.id}/${d.id}`));
     const latest = (await tokenRef.get()).data() as TokenDoc | undefined;
@@ -572,7 +678,7 @@ async function syncUser(uid: string, onlyChildPath?: string): Promise<void> {
       await gfetch(accessToken, "DELETE", `/calendars/${encodeURIComponent(cal.googleCalendarId)}`).catch(
         () => undefined,
       );
-      await tokenRef.update({ [`calendars.${path}`]: admin.firestore.FieldValue.delete() }).catch(() => undefined);
+      await tokenRef.update(calField("calendars", path), admin.firestore.FieldValue.delete()).catch(() => undefined);
     }
   }
 

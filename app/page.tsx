@@ -266,13 +266,15 @@ export default function HomePage() {
   const [section, setSection] = useState<AppSection>("calendar");
 
   // Google skickar tillbaka till /?google=connected|denied|scope|error
-  // efter samtyckesfönstret (functions/src/googleCalendarSync.ts). Visas
-  // som en toast (som pushToast nedan) i stället för i Inställningar —
-  // Google-hanteringen flyttade dit till kugghjulet per barn
-  // (CalendarSettingsPanel), och OAuth-flödet är kontoövergripande och
-  // vet inte vilket barns panel som startade det. Städar bort parametern
-  // ur adressen oavsett.
+  // (+teamId/childId om kopplingen startades från en specifik kalenders
+  // kugghjul — se startGoogleCalendarConnect/googleCalendarOAuthCallback)
+  // efter samtyckesfönstret. Besked visas som en toast (som pushToast
+  // nedan) i stället för i Inställningar, dit Google-hanteringen inte
+  // längre hör. Städar bort parametrarna ur adressen oavsett.
   const [googleResult, setGoogleResult] = useState<{ ok: boolean; text: string } | null>(null);
+  // Sätts bara om callbacken skickade med teamId/childId — se effekten
+  // nedan som väntar in homeTeamId (laddas asynkront) innan den appliceras.
+  const [pendingGoogleChild, setPendingGoogleChild] = useState<{ teamId: string; childId: string } | null>(null);
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const result = params.get("google");
@@ -282,10 +284,30 @@ export default function HomePage() {
       setGoogleResult(message);
       setTimeout(() => setGoogleResult(null), 6000);
     }
+    const qTeamId = params.get("teamId");
+    const qChildId = params.get("childId");
+    if (qTeamId && qChildId) setPendingGoogleChild({ teamId: qTeamId, childId: qChildId });
     params.delete("google");
+    params.delete("teamId");
+    params.delete("childId");
+    params.delete("v");
     const qs = params.toString();
     window.history.replaceState(null, "", window.location.pathname + (qs ? `?${qs}` : ""));
   }, []);
+  // homeTeamId är null tills userDoc hunnit laddas (onSnapshot, asynkront)
+  // — kan inte avgöras i effekten ovan, som bara kör en gång vid mount.
+  useEffect(() => {
+    if (!pendingGoogleChild || !homeTeamId) return;
+    // Bara om det är ETT AV DET EGNA TEAMETS barn: aktiverar man Google
+    // Kalender från en anhörig-kalender i en ANNAN familj vet vi inte
+    // säkert att det är säkert att byta aktiv kalender dit — standardvalet
+    // (första egna barnet) duger lika bra som vid vilken sidladdning som
+    // helst.
+    if (pendingGoogleChild.teamId === homeTeamId) {
+      setSelectedChildId(pendingGoogleChild.childId);
+    }
+    setPendingGoogleChild(null);
+  }, [pendingGoogleChild, homeTeamId]);
   const [listSubTab, setListSubTab] = useState<ListSubTab>("packlist");
   const [infoSubTab, setInfoSubTab] = useState<InfoSubTab>("childinfo");
 

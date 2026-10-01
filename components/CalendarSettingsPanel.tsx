@@ -15,6 +15,7 @@ import {
   connectGoogleCalendarForChild,
   disconnectGoogleCalendarForChild,
   syncGoogleCalendarNow,
+  GoogleCalendarStatus,
 } from "../lib/googleCalendarClient";
 
 interface CalendarSettingsPanelProps {
@@ -78,7 +79,7 @@ export default function CalendarSettingsPanel({
   // Per-barn-status för Google Kalender. null = inte uppslaget än (eller
   // uppslaget misslyckades) — visa då varken "Kopplad" eller "Koppla",
   // utan hoppa helt över sektionen hellre än att gissa fel.
-  const [googleStatus, setGoogleStatus] = useState<{ accountConnected: boolean; connected: boolean } | null>(null);
+  const [googleStatus, setGoogleStatus] = useState<GoogleCalendarStatus | null>(null);
   const [showOAuthWarning, setShowOAuthWarning] = useState(false);
   const [connectingGoogle, setConnectingGoogle] = useState(false);
   const [disconnectingGoogle, setDisconnectingGoogle] = useState(false);
@@ -107,20 +108,24 @@ export default function CalendarSettingsPanel({
     try {
       // Navigerar bort till Google vid lyckat anrop — koden nedanför körs
       // bara om anropet i sig (inte hela OAuth-flödet) misslyckas.
-      await startGoogleCalendarConnect();
+      await startGoogleCalendarConnect(teamId, childId);
     } catch {
       setGoogleConnectError("Kunde inte starta kopplingen. Försök igen.");
       setConnectingGoogle(false);
     }
   }
 
-  /** Kontot redan kopplat, bara det här barnet saknar sin kalender — inget OAuth, ingen varning behövs. */
+  /**
+   * Kontot redan kopplat — antingen barnet aldrig haft en kalender, eller
+   * en tidigare kopplad kalender raderades i Google (removedInGoogle) och
+   * den här knappen är "Koppla igen". Inget OAuth, ingen varning behövs.
+   */
   async function handleConnectChild() {
     setConnectingGoogle(true);
     setGoogleConnectError(null);
     try {
       await connectGoogleCalendarForChild(teamId, childId);
-      setGoogleStatus({ accountConnected: true, connected: true });
+      setGoogleStatus({ accountConnected: true, connected: true, removedInGoogle: false });
     } catch {
       setGoogleConnectError("Kunde inte lägga till kalendern. Försök igen.");
     } finally {
@@ -136,7 +141,7 @@ export default function CalendarSettingsPanel({
       // Sista barnets kalender bort → hela kontot återkallades på köpet
       // (se disconnectGoogleCalendarForChild) — visa det tydligt, annars
       // ser det ut som att bara den här kalendern försvann.
-      setGoogleStatus({ accountConnected: !accountDisconnected, connected: false });
+      setGoogleStatus({ accountConnected: !accountDisconnected, connected: false, removedInGoogle: false });
       setGoogleAccountDisconnectedMsg(accountDisconnected);
       setConfirmGoogleDisconnect(false);
     } catch {
@@ -341,7 +346,7 @@ export default function CalendarSettingsPanel({
 
         {feedError && <p className="mt-2 text-[11px] text-rose-600">{feedError}</p>}
 
-        {googleStatus && !googleStatus.connected && (
+        {googleStatus && !googleStatus.connected && !googleStatus.removedInGoogle && (
           <button
             onClick={() => (googleStatus.accountConnected ? handleConnectChild() : setShowOAuthWarning(true))}
             disabled={connectingGoogle}
@@ -353,6 +358,23 @@ export default function CalendarSettingsPanel({
                 : "Öppnar Google…"
               : "Koppla Google Kalender"}
           </button>
+        )}
+
+        {googleStatus?.removedInGoogle && (
+          <>
+            <p className="mt-2 text-[13px] leading-snug text-rose-700">Kalendern togs bort i Google</p>
+            <p className="mt-1 text-[11px] leading-snug text-stone-400">
+              Någon raderade {childName}s kalender direkt i Google Kalender. Vi skapar den inte
+              tillbaka automatiskt — klicka om du vill ha den kvar.
+            </p>
+            <button
+              onClick={handleConnectChild}
+              disabled={connectingGoogle}
+              className="mt-2 w-full rounded-lg bg-stone-50 px-3 py-2 text-sm font-medium text-stone-700 hover:bg-stone-100 disabled:opacity-50"
+            >
+              {connectingGoogle ? "Kopplar igen…" : "Koppla igen"}
+            </button>
+          </>
         )}
 
         {googleStatus?.connected && (
