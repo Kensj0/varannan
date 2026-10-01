@@ -25,8 +25,9 @@
  *
  * Finns saker i barnets packlistor skickas DÄRUTÖVER en EGEN
  * "Packlista"-notis (samma mottagare, samma tidpunkt, samma
- * sameDay/dayBefore/email-inställningar ovan — men en separat push, inte
- * ihopslagen med överlämnings-texten), som listar sakernas namn.
+ * sameDay/dayBefore/email-inställningar ovan — men en separat push/mail,
+ * inte ihopslagen med överlämnings-texten, och utan bytets tid), som
+ * listar sakernas namn: "(Kom ihåg: badkläder, tandborste)".
  */
 
 import * as admin from "firebase-admin";
@@ -121,8 +122,7 @@ async function remindForChild(
 
   // Saker i barnets packlistor — punktlistor, inga bockade/opackade
   // tillstånd (se types/schema.ts PackListItemDoc) — namnen listas i en
-  // EGEN packlista-notis (se notera nedan), separat från
-  // överlämnings-notisen.
+  // EGEN packlista-notis (se nedan), separat från överlämnings-notisen.
   const packListsSnap = await db.collection(`teams/${teamId}/packLists`).where("childId", "==", childId).get();
   const packItems: string[] = [];
   for (const doc of packListsSnap.docs) {
@@ -162,12 +162,13 @@ async function remindForChild(
       }
 
       // Packlista-påminnelsen är en EGEN notis, separat från
-      // överlämnings-notisen ovan (inte ihopslagen i samma text) — men
-      // styrs av SAMMA inställning ("påminnelse om överlämning": prefs för
-      // samma dag/dagen innan/mail), inte en egen toggle.
+      // överlämnings-notisen ovan — SKA INTE innehålla bytets tid, bara
+      // vilka saker som ska med. Styrs av SAMMA inställning som
+      // överlämningen (prefs för samma dag/dagen innan/mail), inte en
+      // egen toggle.
       if (packItems.length > 0) {
         const packTitle = "Packlista";
-        const packBody = `Byte kl ${time} ${whenLabel} — glöm inte: ${formatPackItemList(packItems)}${childName}`;
+        const packBody = `(Kom ihåg: ${formatPackItemList(packItems)})${childName}`;
         await sendPushToUser(db, uid, { title: packTitle, body: packBody });
         if (prefs.email && user?.email) {
           await sendEmail(user.email, packTitle, packBody);
