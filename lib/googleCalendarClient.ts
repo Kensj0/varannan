@@ -25,6 +25,36 @@ export async function syncGoogleCalendarNow(): Promise<void> {
   await fn();
 }
 
+/**
+ * Per-barn-status i kalenderns inställningspanel (CalendarSettingsPanel).
+ * `accountConnected` = Google-kontot är kopplat alls (styr om knappen ska
+ * gå via full OAuth eller bara lägga till barnet). `connected` = just det
+ * här barnet har en egen kalender just nu.
+ */
+export async function getGoogleCalendarStatus(
+  teamId: string,
+  childId: string,
+): Promise<{ accountConnected: boolean; connected: boolean }> {
+  const fn = httpsCallable<{ teamId: string; childId: string }, { accountConnected: boolean; connected: boolean }>(
+    functions,
+    "getGoogleCalendarStatus",
+  );
+  const { data } = await fn({ teamId, childId });
+  return data;
+}
+
+/** Lägger till (eller lägger tillbaka) det här barnets kalender. Kräver att kontot redan är kopplat. */
+export async function connectGoogleCalendarForChild(teamId: string, childId: string): Promise<void> {
+  const fn = httpsCallable(functions, "connectGoogleCalendarForChild");
+  await fn({ teamId, childId });
+}
+
+/** Tar bort DET HÄR barnets kalender ur Google. Rör varken kontot eller andra barns kalendrar. */
+export async function disconnectGoogleCalendarForChild(teamId: string, childId: string): Promise<void> {
+  const fn = httpsCallable(functions, "disconnectGoogleCalendarForChild");
+  await fn({ teamId, childId });
+}
+
 /** Text för resultatet i ?google=… efter att Google skickat tillbaka användaren. */
 export function googleConnectResultMessage(result: string): { ok: boolean; text: string } | null {
   switch (result) {

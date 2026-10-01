@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   PARENT_PALETTE,
   ParentColorId,
@@ -9,7 +9,12 @@ import {
 } from "../types/schema";
 import { CalendarFeedLinks } from "../lib/calendarExport";
 import { CustodyCycleDoc } from "../types/schema";
-import { startGoogleCalendarConnect } from "../lib/googleCalendarClient";
+import {
+  startGoogleCalendarConnect,
+  getGoogleCalendarStatus,
+  connectGoogleCalendarForChild,
+  disconnectGoogleCalendarForChild,
+} from "../lib/googleCalendarClient";
 
 interface CalendarSettingsPanelProps {
   onClose: () => void;
@@ -26,6 +31,8 @@ interface CalendarSettingsPanelProps {
   onEditStructure?: () => void;
   switchHour: string;
   onChangeSwitchHour: (hh: string, mm: string) => Promise<void>;
+  teamId: string;
+  childId: string;
   childName: string;
   cycle: CustodyCycleDoc | undefined;
 
@@ -49,6 +56,8 @@ export default function CalendarSettingsPanel({
   onEditStructure,
   switchHour,
   onChangeSwitchHour,
+  teamId,
+  childId,
   childName,
   scheduleChangeMode,
   onChangeScheduleChangeMode,
@@ -65,10 +74,29 @@ export default function CalendarSettingsPanel({
   const [changingTime, setChangingTime] = useState(false);
   const [timeError, setTimeError] = useState<string | null>(null);
 
+  // Per-barn-status för Google Kalender. null = inte uppslaget än (eller
+  // uppslaget misslyckades) — visa då varken "Kopplad" eller "Koppla",
+  // utan hoppa helt över sektionen hellre än att gissa fel.
+  const [googleStatus, setGoogleStatus] = useState<{ accountConnected: boolean; connected: boolean } | null>(null);
   const [showOAuthWarning, setShowOAuthWarning] = useState(false);
   const [connectingGoogle, setConnectingGoogle] = useState(false);
+  const [disconnectingGoogle, setDisconnectingGoogle] = useState(false);
+  const [confirmGoogleDisconnect, setConfirmGoogleDisconnect] = useState(false);
   const [googleConnectError, setGoogleConnectError] = useState<string | null>(null);
 
+  useEffect(() => {
+    let cancelled = false;
+    getGoogleCalendarStatus(teamId, childId)
+      .then((status) => {
+        if (!cancelled) setGoogleStatus(status);
+      })
+      .catch(() => undefined); // tyst — sektionen döljs bara tills nästa öppning
+    return () => {
+      cancelled = true;
+    };
+  }, [teamId, childId]);
+
+  /** Kontot inte kopplat alls — full OAuth, efter varningsdialogen. */
   async function handleStartGoogleConnect() {
     setConnectingGoogle(true);
     setGoogleConnectError(null);
@@ -79,6 +107,34 @@ export default function CalendarSettingsPanel({
     } catch {
       setGoogleConnectError("Kunde inte starta kopplingen. Försök igen.");
       setConnectingGoogle(false);
+    }
+  }
+
+  /** Kontot redan kopplat, bara det här barnet saknar sin kalender — inget OAuth, ingen varning behövs. */
+  async function handleConnectChild() {
+    setConnectingGoogle(true);
+    setGoogleConnectError(null);
+    try {
+      await connectGoogleCalendarForChild(teamId, childId);
+      setGoogleStatus({ accountConnected: true, connected: true });
+    } catch {
+      setGoogleConnectError("Kunde inte lägga till kalendern. Försök igen.");
+    } finally {
+      setConnectingGoogle(false);
+    }
+  }
+
+  async function handleDisconnectChild() {
+    setDisconnectingGoogle(true);
+    setGoogleConnectError(null);
+    try {
+      await disconnectGoogleCalendarForChild(teamId, childId);
+      setGoogleStatus({ accountConnected: true, connected: false });
+      setConfirmGoogleDisconnect(false);
+    } catch {
+      setGoogleConnectError("Kunde inte koppla bort kalendern. Försök igen.");
+    } finally {
+      setDisconnectingGoogle(false);
     }
   }
 
@@ -263,13 +319,57 @@ export default function CalendarSettingsPanel({
 
         {feedError && <p className="mt-2 text-[11px] text-rose-600">{feedError}</p>}
 
-        <button
-          onClick={() => setShowOAuthWarning(true)}
-          disabled={connectingGoogle}
-          className="mt-2 w-full rounded-lg bg-stone-50 px-3 py-2 text-sm font-medium text-stone-700 hover:bg-stone-100 disabled:opacity-50"
-        >
-          {connectingGoogle ? "Öppnar Google…" : "Koppla Google Kalender"}
-        </button>
+        {googleStatus && !googleStatus.connected && (
+          <button
+            onClick={() => (googleStatus.accountConnected ? handleConnectChild() : setShowOAuthWarning(true))}
+            disabled={connectingGoogle}
+            className="mt-2 w-full rounded-lg bg-stone-50 px-3 py-2 text-sm font-medium text-stone-700 hover:bg-stone-100 disabled:opacity-50"
+          >
+            {connectingGoogle
+              ? googleStatus.accountConnected
+                ? "Lägger till…"
+                : "Öppnar Google…"
+              : "Koppla Google Kalender"}
+          </button>
+        )}
+
+        {googleStatus?.connected && (
+          <>
+            <p className="mt-2 text-[13px] leading-snug text-stone-500">Google Kalender: kopplad ✓</p>
+            {!confirmGoogleDisconnect ? (
+              <button
+                onClick={() => setConfirmGoogleDisconnect(true)}
+                disabled={disconnectingGoogle}
+                className="mt-1 w-full rounded-lg px-3 py-2 text-sm font-medium text-stone-400 hover:bg-stone-50 hover:text-rose-600 disabled:opacity-50"
+              >
+                Koppla bort {childName} från Google Kalender
+              </button>
+            ) : (
+              <div className="mt-2 rounded-lg bg-rose-50 p-3">
+                <p className="text-[13px] leading-snug text-rose-800">
+                  {childName}s kalender tas bort ur ditt Google-konto. Resten av Google-kopplingen
+                  (och andra barns kalendrar) påverkas inte.
+                </p>
+                <div className="mt-2 flex gap-2">
+                  <button
+                    onClick={() => setConfirmGoogleDisconnect(false)}
+                    disabled={disconnectingGoogle}
+                    className="flex-1 rounded-lg bg-white px-3 py-2 text-sm font-medium text-stone-600"
+                  >
+                    Avbryt
+                  </button>
+                  <button
+                    onClick={handleDisconnectChild}
+                    disabled={disconnectingGoogle}
+                    className="flex-1 rounded-lg bg-rose-600 px-3 py-2 text-sm font-medium text-white disabled:opacity-50"
+                  >
+                    {disconnectingGoogle ? "Kopplar bort…" : "Koppla bort"}
+                  </button>
+                </div>
+              </div>
+            )}
+          </>
+        )}
         {googleConnectError && <p className="mt-2 text-[11px] text-rose-600">{googleConnectError}</p>}
       </div>
 
