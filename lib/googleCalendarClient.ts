@@ -7,10 +7,19 @@ import { functions } from "./firebase";
  * status via users/{uid}.googleCalendar.
  */
 
-/** Skickar användaren till Googles samtyckesfönster. Kommer tillbaka till /?google=… */
-export async function startGoogleCalendarConnect(): Promise<void> {
-  const fn = httpsCallable<void, { url: string }>(functions, "startGoogleCalendarConnect");
-  const { data } = await fn();
+/**
+ * Skickar användaren till Googles samtyckesfönster. Kommer tillbaka till
+ * /?google=…. teamId/childId (valfria) är vilken kalender knappen
+ * klickades från — skickas med så att OAuth-callbacken kan lägga med dem
+ * i returadressen och användaren hamnar tillbaka på SAMMA kalender,
+ * inte en slumpmässig förstavalsflik.
+ */
+export async function startGoogleCalendarConnect(teamId?: string, childId?: string): Promise<void> {
+  const fn = httpsCallable<{ teamId?: string; childId?: string }, { url: string }>(
+    functions,
+    "startGoogleCalendarConnect",
+  );
+  const { data } = await fn({ teamId, childId });
   window.location.assign(data.url);
 }
 
@@ -25,17 +34,24 @@ export async function syncGoogleCalendarNow(): Promise<void> {
   await fn();
 }
 
-/**
- * Per-barn-status i kalenderns inställningspanel (CalendarSettingsPanel).
- * `accountConnected` = Google-kontot är kopplat alls (styr om knappen ska
- * gå via full OAuth eller bara lägga till barnet). `connected` = just det
- * här barnet har en egen kalender just nu.
- */
-export async function getGoogleCalendarStatus(
-  teamId: string,
-  childId: string,
-): Promise<{ accountConnected: boolean; connected: boolean }> {
-  const fn = httpsCallable<{ teamId: string; childId: string }, { accountConnected: boolean; connected: boolean }>(
+export interface GoogleCalendarStatus {
+  /** Är Google-kontot kopplat alls (styr om "Koppla"-knappen ska gå via full OAuth eller inte). */
+  accountConnected: boolean;
+  /** Har just DET HÄR barnet en egen kalender just nu. */
+  connected: boolean;
+  /**
+   * Fanns kopplad, men en synk upptäckte att kalendern raderats i Google
+   * (vem som helst kan göra det manuellt i sin Google Kalender) — inte
+   * samma sak som att användaren kopplat bort den i appen. UI:t ska visa
+   * "Kalendern togs bort i Google" + "Koppla igen", INTE bara återskapa
+   * den tyst.
+   */
+  removedInGoogle: boolean;
+}
+
+/** Per-barn-status i kalenderns inställningspanel (CalendarSettingsPanel). */
+export async function getGoogleCalendarStatus(teamId: string, childId: string): Promise<GoogleCalendarStatus> {
+  const fn = httpsCallable<{ teamId: string; childId: string }, GoogleCalendarStatus>(
     functions,
     "getGoogleCalendarStatus",
   );
