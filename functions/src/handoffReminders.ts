@@ -140,9 +140,13 @@ async function remindForChild(
 
   async function notify(handoff: HandoffOnDate, whenLabel: "idag" | "imorgon", prefKey: "sameDay" | "dayBefore") {
     const time = timeStringInTimeZone(handoff.at, timezone);
-    for (const uid of parentIds) {
-      if (uid !== handoff.toParentId && uid !== handoff.fromParentId) continue;
-
+    // toParentId/fromParentId kan vara en ANHÖRIGS uid (etapp 4 — en
+    // anhörigs "Ändra ansvar" sätter takingOverParentId till anhörigens
+    // eget uid, se docs/roller-och-medlemskap.md), inte bara en av de två
+    // riktiga föräldrarna i parentIds — annars missade en anhörig som tar
+    // över en dag både byte- och packlista-notisen helt.
+    const recipients = new Set([...parentIds, handoff.toParentId, handoff.fromParentId]);
+    for (const uid of recipients) {
       const userSnap = await db.doc(`users/${uid}`).get();
       const user = userSnap.data() as UserDoc | undefined;
       const prefs = user?.handoffReminderPrefs ?? DEFAULT_HANDOFF_REMINDER_PREFS;
