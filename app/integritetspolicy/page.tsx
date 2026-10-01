@@ -13,8 +13,9 @@ export const metadata: Metadata = {
  *
  * Håll innehållet i synk med vad appen FAKTISKT gör. Varje påstående
  * under "Hur vi skyddar din information" måste vara sant:
- *  - Barninfo/konton skyddas av firestore.rules (bara kalenderns
- *    föräldrar, isParentOfCalendar).
+ *  - Barninfo/konton skyddas av firestore.rules: läsning för
+ *    parent+relative (canViewCalendarContent), skrivning bara parent
+ *    (isParentOfCalendar). Ändras det — ändra texten nedan också.
  *  - Google-token för kalendersynk får ALDRIG gå att läsa från
  *    klienten — lagra den där regler säger `allow read, write: if false`
  *    (eller i Secret Manager) och läs den bara i Cloud Functions.
@@ -64,8 +65,8 @@ export default function PrivacyPolicyPage() {
         <ul className="list-disc space-y-1 pl-5">
           <li><strong>Förälder</strong> — ser allt i kalendern.</li>
           <li>
-            <strong>Anhörig</strong> — ser schema, aktiviteter och listor, men inte chatten
-            eller barninformationen.
+            <strong>Anhörig</strong> — ser schema, aktiviteter, listor och barninformation,
+            men kan inte ändra barninformationen och ser inte chatten.
           </li>
           <li><strong>Utomstående</strong> — ser bara schemat och aktiviteterna.</li>
         </ul>
@@ -94,9 +95,10 @@ export default function PrivacyPolicyPage() {
           </li>
           <li>
             <strong>Extra skydd för känslig barninformation:</strong> personnummer,
-            passnummer, medicinsk information och inloggningar kan bara läsas av barnets
-            föräldrar i kalendern — aldrig av anhöriga eller utomstående. Uppgifterna är inte
-            sökbara i databasen.
+            passnummer, medicinsk information och inloggningar kan bara ändras av barnets
+            föräldrar, och bara läsas av föräldrar och anhöriga som föräldrarna gemensamt
+            bjudit in — aldrig av utomstående eller av någon utanför kalendern. Uppgifterna är
+            inte sökbara i databasen.
           </li>
           <li>
             <strong>Åtkomsttoken till Google:</strong> lagras på serversidan på ett ställe som
@@ -204,8 +206,8 @@ export default function PrivacyPolicyPage() {
           <p>
             Each calendar is shared only with people the parents have invited to that
             calendar. There are three roles: <strong>Parent</strong> (sees everything),{" "}
-            <strong>Relative</strong> (sees schedule, activities and lists, but not chat or
-            child information), and <strong>Viewer</strong> (sees schedule and activities
+            <strong>Relative</strong> (sees schedule, activities, lists and child
+            information, but cannot edit child information and cannot see chat), and <strong>Viewer</strong> (sees schedule and activities
             only). A relative or viewer can only be invited after every parent of the
             calendar has approved. We do not sell your information or share it with third
             parties for marketing.
@@ -230,8 +232,9 @@ export default function PrivacyPolicyPage() {
             </li>
             <li>
               <strong>Additional protection for sensitive child data:</strong> national ID
-              numbers, passport numbers, medical information and logins can only be read by
-              the child&apos;s parents on the calendar — never by relatives or viewers. These
+              numbers, passport numbers, medical information and logins can only be edited by
+              the child&apos;s parents, and only read by the parents and by relatives that all
+              parents jointly invited — never by viewers or anyone outside the calendar. These
               fields are not searchable in the database.
             </li>
             <li>

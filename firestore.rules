@@ -302,5 +302,23 @@ service cloud.firestore {
       allow list: if isTeamMember(resource.data.teamId);
       allow write: if false; // skapas/konsumeras endast via Cloud Function
     }
+
+    // ---------------------------------------------------------------
+    // Google Kalender-kopplingen (functions/src/googleCalendarSync.ts)
+    //
+    // googleCalendarTokens/{uid} innehåller användarens refresh-token
+    // till Google. Integritetspolicyn lovar att den ALDRIG kan läsas av
+    // appen i webbläsaren — inte ens av ägaren själv. Bara Cloud
+    // Functions (Admin SDK, kringgår reglerna) läser och skriver den.
+    // oauthStates/{state} är engångsnycklar för samtyckesflödet.
+    // Firestore nekar redan omatchade sökvägar; det här skrivs ut så att
+    // en framtida bred regel inte kan öppna dem av misstag.
+    // ---------------------------------------------------------------
+    match /googleCalendarTokens/{uid} {
+      allow read, write: if false;
+    }
+    match /oauthStates/{state} {
+      allow read, write: if false;
+    }
   }
 }
