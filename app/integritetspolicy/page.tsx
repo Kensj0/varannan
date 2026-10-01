@@ -125,14 +125,16 @@ export default function PrivacyPolicyPage() {
         <p>
           Väljer du att koppla ditt Google-konto för kalendersynk ber vi dessutom om åtkomst
           till Google Kalender. Den åtkomsten används enbart för att skapa, uppdatera och ta
-          bort händelser i en egen, separat kalender som Varannan skapar i ditt Google-konto
-          — dina ansvarsblock och aktiviteter från Varannan. Vi läser inte, ändrar inte och
-          tar inte bort dina övriga kalendrar eller händelser.
+          bort händelser i egna, separata kalendrar som Varannan skapar i ditt Google-konto
+          — en per barn — med dina ansvarsblock och aktiviteter från Varannan. Vi läser inte,
+          ändrar inte och tar inte bort dina övriga kalendrar eller händelser.
         </p>
         <p>
-          Kopplar du bort Google i Varannans inställningar raderar vi din åtkomsttoken och
-          drar tillbaka åtkomsten hos Google. Du kan också dra tillbaka åtkomsten när som
-          helst under ditt Google-konto.
+          Du kan koppla bort ett enskilt barns kalender för sig, eller hela Google-kopplingen
+          på en gång — kopplar du bort det sista barnet räknas det som att hela kopplingen tas
+          bort. Oavsett vilket raderar vi din åtkomsttoken för det som kopplas bort och drar
+          tillbaka åtkomsten hos Google. Du kan också dra tillbaka åtkomsten när som helst
+          under ditt Google-konto.
         </p>
         <p>
           Varannans användning och överföring av information som tas emot från Googles API:er
@@ -261,14 +263,16 @@ export default function PrivacyPolicyPage() {
           <p>
             If you choose to connect your Google account for calendar sync, we also request
             access to Google Calendar. This access is used only to create, update and delete
-            events in a separate, dedicated calendar that Varannan creates in your Google
-            account, containing your custody blocks and activities from Varannan. We do not
-            read, modify or delete any of your other calendars or events.
+            events in separate, dedicated calendars that Varannan creates in your Google
+            account — one per child — containing your custody blocks and activities from
+            Varannan. We do not read, modify or delete any of your other calendars or events.
           </p>
           <p>
-            If you disconnect Google in Varannan&apos;s settings, we delete your access token
-            and revoke the access with Google. You can also revoke access at any time from
-            your Google Account.
+            You can disconnect a single child&apos;s calendar on its own, or the entire Google
+            connection at once — disconnecting the last remaining child is treated as
+            disconnecting the whole connection. Either way, we delete the access token for
+            whatever is disconnected and revoke the access with Google. You can also revoke
+            access at any time from your Google Account.
           </p>
           <p>
             Varannan&apos;s use and transfer to any other app of information received from
