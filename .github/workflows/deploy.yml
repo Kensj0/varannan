@@ -38,9 +38,16 @@ jobs:
     concurrency:
       group: firebase-deploy
       cancel-in-progress: false
+    # contents: write behövs för att flytta taggen production efter deploy.
+    permissions:
+      contents: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # Hela historiken och taggarna, så att kontrollen nedan går att göra.
+          fetch-depth: 0
+          fetch-tags: true
 
       - name: Sätt upp Node.js
         uses: actions/setup-node@v4
@@ -81,6 +88,20 @@ jobs:
       - name: Skriv Google service account-nyckel till fil
         run: echo '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}' > /tmp/gcp-key.json
 
+      - name: Kontrollera att production-taggen finns i historiken
+        # Avbryter om koden inte innehåller den commit som produktionen kör.
+        # Då kan vi inte rulla tillbaka till en version som inte finns i main.
+        run: |
+          if ! git rev-parse -q --verify refs/tags/production >/dev/null; then
+            echo "Taggen production saknas. Avbryter."
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor production HEAD; then
+            echo "Taggen production ligger inte i historiken för HEAD. Avbryter."
+            exit 1
+          fi
+          echo "OK: production ($(git rev-parse --short production)) ligger i historiken för HEAD."
+
       - name: Deploya
         # --force gör att CLI:t raderar funktioner som finns kvar i produktion
         # men inte i lokal källkod. Det är farligt (en incident 2026-10-21
@@ -95,3 +116,11 @@ jobs:
         env:
           GOOGLE_APPLICATION_CREDENTIALS: /tmp/gcp-key.json
           FIREBASE_SUPPRESS_REGION_WARNING: "true"
+
+      - name: Flytta taggen production till den deployade commiten
+        # Körs bara om deployen lyckades (standard i GitHub Actions).
+        run: |
+          git config user.name "varannan-bot"
+          git config user.email "bot@varannan.local"
+          git tag -f -a production -m "Deployad från $GITHUB_SHA ($(date -u +%Y-%m-%dT%H:%M:%SZ))" "$GITHUB_SHA"
+          git push -f origin production
