@@ -22,6 +22,11 @@ on:
           - hosting,functions
           - firestore:rules
           - hosting,functions,firestore:rules
+      delete_functions:
+        description: "Tillåt radering av funktioner som saknas i koden (--force). Lämna avbockat om du inte är säker."
+        required: false
+        default: false
+        type: boolean
 
 jobs:
   deploy:
@@ -77,11 +82,16 @@ jobs:
         run: echo '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}' > /tmp/gcp-key.json
 
       - name: Deploya
-        # --force krävs för att CLI:t ska få radera funktioner som finns
-        # kvar i produktion men inte i lokal källkod (t.ex. gamla
-        # regionversioner efter en regionflytt) — annars avbryter den
-        # icke-interaktivt istället för att fråga.
-        run: firebase deploy --only ${{ github.event.inputs.target }} --non-interactive --force --project varannan-familj
+        # --force gör att CLI:t raderar funktioner som finns kvar i produktion
+        # men inte i lokal källkod. Det är farligt (en incident 2026-10-21
+        # raderade 18 funktioner), så det används bara om delete_functions
+        # är ikryssat. Utan --force avbryter CLI:t i stället för att radera.
+        run: |
+          FORCE=""
+          if [ "${{ github.event.inputs.delete_functions }}" = "true" ]; then
+            FORCE="--force"
+          fi
+          firebase deploy --only ${{ github.event.inputs.target }} --non-interactive $FORCE --project varannan-familj
         env:
           GOOGLE_APPLICATION_CREDENTIALS: /tmp/gcp-key.json
           FIREBASE_SUPPRESS_REGION_WARNING: "true"
