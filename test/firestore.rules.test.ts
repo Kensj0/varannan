@@ -269,6 +269,12 @@ async function seed(testEnv: RulesTestEnvironment) {
       .set({ personnummer: "hemligt-legacy" });
     await db.doc(`users/${LEGACY_PARENT_1}`).set({ teamId: TEAM_LEGACY });
     await db.doc(`users/${LEGACY_PARENT_2}`).set({ teamId: TEAM_LEGACY });
+
+    // Seedas här, med resten, i stället för mitt i testerna. Ett andra
+    // withSecurityRulesDisabled-anrop längre ned gav "settings can no longer
+    // be changed" och stoppade körningen innan tokenkontrollerna gick.
+    await db.doc(`googleCalendarTokens/${PARENT_1}`).set({ refreshToken: "hemlig" });
+    await db.doc(`oauthStates/abc`).set({ uid: PARENT_1 });
   });
 }
 
@@ -694,10 +700,6 @@ async function main() {
   );
 
   console.log("\ngoogleCalendarTokens / oauthStates — aldrig läsbara från klienten");
-  await testEnv.withSecurityRulesDisabled(async (context) => {
-    await context.firestore().doc(`googleCalendarTokens/${PARENT_1}`).set({ refreshToken: "hemlig" });
-    await context.firestore().doc(`oauthStates/abc`).set({ uid: PARENT_1 });
-  });
   await check(
     "KRITISKT: ägaren själv kan INTE läsa sin Google-token",
     () => getDoc(doc(dbAs(PARENT_1), `googleCalendarTokens/${PARENT_1}`)),
