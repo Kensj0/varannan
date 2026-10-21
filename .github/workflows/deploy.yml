@@ -115,6 +115,12 @@ jobs:
       - name: Skriv Google service account-nyckel till fil
         run: echo '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}' > /tmp/gcp-key.json
 
+      - name: Installera Java 21 (krävs av Firestore-emulatorn)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
       - name: Kör tester före deploy
         # Om något test misslyckas stoppas deployen här.
         run: |
