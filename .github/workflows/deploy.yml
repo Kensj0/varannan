@@ -26,6 +26,8 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    # Kräver godkännande och bara från main (se miljöinställningarna på GitHub).
+    environment: Production
     # Kör aldrig två deploys samtidigt — den andra får vänta i kö
     # istället för att kollidera med den första.
     concurrency:
