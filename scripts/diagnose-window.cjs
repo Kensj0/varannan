@@ -3,6 +3,7 @@
 // Skriver ingenting till Firestore. Körs av .github/workflows/diagnose-window.yml.
 const fs = require("fs");
 const path = require("path");
+const crypto = require("crypto");
 const admin = require(path.join(__dirname, "..", "functions", "node_modules", "firebase-admin"));
 
 const start = new Date(process.env.WINDOW_START);
@@ -18,6 +19,10 @@ admin.initializeApp({
 const db = admin.firestore();
 const { Timestamp } = admin.firestore;
 
+function hash(value) {
+  return crypto.createHash("sha256").update(value).digest("hex").slice(0, 12);
+}
+
 function inWindow(query) {
   return query
     .where("createdAt", ">=", Timestamp.fromDate(start))
@@ -31,19 +36,20 @@ function inWindow(query) {
   const children = childSnap.docs.map((d) => ({
     path: d.ref.path,
     teamId: d.get("teamId") ?? null,
-    name: d.get("name") ?? null,
+    // Namnet tas inte med. Bara en hash, så dubbletter går att hitta.
+    nameHash: hash(d.get("name") ?? ""),
     createdAt: d.get("createdAt").toDate().toISOString(),
   }));
 
   // Dubbletter: samma namn i samma team, skapade i fönstret.
   const groups = new Map();
   for (const c of children) {
-    const key = `${c.teamId}|${c.name}`;
+    const key = `${c.teamId}|${c.nameHash}`;
     groups.set(key, [...(groups.get(key) ?? []), c.path]);
   }
   const duplicates = [...groups.entries()]
     .filter(([, paths]) => paths.length > 1)
-    .map(([key, paths]) => ({ teamId_name: key, paths }));
+    .map(([key, paths]) => ({ teamId_nameHash: key, paths }));
 
   const events = eventSnap.docs.map((d) => ({
     path: d.ref.path,
