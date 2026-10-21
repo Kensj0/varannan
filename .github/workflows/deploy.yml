@@ -78,6 +78,18 @@ jobs:
           NEXT_PUBLIC_USE_FIREBASE_EMULATORS=false
           EOF
 
+      - name: Diagnos av Firebase-inställningar (visar bara antal tecken)
+        if: contains(github.event.inputs.target, 'hosting')
+        env:
+          DIAG_API_KEY: ${{ secrets.NEXT_PUBLIC_FIREBASE_API_KEY }}
+          DIAG_AUTH_DOMAIN: ${{ secrets.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN }}
+          DIAG_PROJECT_ID: ${{ secrets.NEXT_PUBLIC_FIREBASE_PROJECT_ID }}
+        run: |
+          echo "apiKey: ${#DIAG_API_KEY} tecken"
+          echo "authDomain: ${#DIAG_AUTH_DOMAIN} tecken"
+          echo "projectId: ${#DIAG_PROJECT_ID} tecken"
+          echo ".env.local: $(wc -l < .env.local) rader, varav $(grep -c '=.' .env.local) med värde"
+
       - name: Bygg frontend (statisk export till out/)
         if: contains(github.event.inputs.target, 'hosting')
         run: npm run build
