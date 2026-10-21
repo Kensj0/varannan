@@ -1,4 +1,4 @@
-name: Diagnos: dokument i tidsfönster
+name: "Diagnos: dokument i tidsfönster"
 
 # Skrivskyddad diagnos. Kör bara läsanrop mot Firestore (se
 # scripts/diagnose-window.cjs) och laddar upp resultatet som artefakt.
