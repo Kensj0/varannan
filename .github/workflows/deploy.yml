@@ -88,6 +88,12 @@ jobs:
       - name: Skriv Google service account-nyckel till fil
         run: echo '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}' > /tmp/gcp-key.json
 
+      - name: Kör tester före deploy
+        # Om något test misslyckas stoppas deployen här.
+        run: |
+          npm test
+          firebase emulators:exec --only firestore "npm run test:rules"
+
       - name: Kontrollera att production-taggen finns i historiken
         # Avbryter om koden inte innehåller den commit som produktionen kör.
         # Då kan vi inte rulla tillbaka till en version som inte finns i main.
