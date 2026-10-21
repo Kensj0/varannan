@@ -158,3 +158,11 @@ export async function setCustomSwitchHour(teamId: string, childId: string, switc
   );
   await call({ teamId, childId, switchHour });
 }
+
+export async function setWeekendBonus(teamId: string, childId: string, weekendBonusDays: number): Promise<void> {
+  const call = httpsCallable<{ teamId: string; childId: string; weekendBonusDays: number }, { ok: boolean }>(
+    functions,
+    "setWeekendBonus"
+  );
+  await call({ teamId, childId, weekendBonusDays });
+}

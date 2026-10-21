@@ -18,7 +18,12 @@
  * → balanceDays minskar med 1 (Pappa ligger nu -1, dvs Mamma +1).
  */
 
-import { CustodyCycleDoc, ShiftRequestDoc, DayBalanceDoc } from "../types/schema";
+import {
+  CustodyCycleDoc,
+  ShiftRequestDoc,
+  DayBalanceDoc,
+  DEFAULT_WEEKEND_BONUS_DAYS,
+} from "../types/schema";
 import { getScheduledParentForDate, getNextOrdinaryHandoff } from "./custodyCycle";
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
@@ -26,7 +31,7 @@ const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const MS_PER_HALF_DAY = MS_PER_DAY / 2;
 
 /**
- * Räknar ut hur många dagar (kan vara .5) som ska justeras på
+ * Räknar ut hur många dagar (i tiondels steg) som ska justeras på
  * dayBalance.balanceDays när `request` godkänns, sett relativt
  * `referenceParentId`.
  *
@@ -35,8 +40,10 @@ const MS_PER_HALF_DAY = MS_PER_DAY / 2;
  * ska balanceDays MINSKAS med det returnerade värdet.
  * Negativt returvärde = referensföräldern FÅR dagar → balanceDays ÖKAS.
  *
- * (Se calculateNewBalance nedan för hur tecknet faktiskt tillämpas —
- * den här funktionen håller sig neutral och bara mäter avvikelsen.)
+ * Helgbonus: för varje lördag och söndag som ett avvikande steg i bytet
+ * berör läggs cycle.weekendBonusDays (default 0.5) till i samma riktning
+ * som avvikelsen, dvs till den förälder som faktiskt tar över. En helgdag
+ * räknas högst en gång per byte.
  */
 export function calculateShiftDeltaDays(
   cycle: CustodyCycleDoc,
@@ -59,6 +66,10 @@ export function calculateShiftDeltaDays(
   const isRealCycleParent = cycle.blocks.some((b) => b.parentId === request.takingOverParentId);
   if (!isRealCycleParent) return 0;
 
+  const timeZone = cycle.timezone || "Europe/Stockholm";
+  const weekendBonus = cycle.weekendBonusDays ?? DEFAULT_WEEKEND_BONUS_DAYS;
+  const weekendDaysCounted = new Set<string>();
+
   let deltaAwayFromReference = 0; // antal dagar som flyttas BORT FRÅN referensföräldern
   let cursor = new Date(start);
 
@@ -73,20 +84,34 @@ export function calculateShiftDeltaDays(
 
     const actualParentId = request.takingOverParentId;
 
+    // sign: +1 = referensföräldern förlorar, -1 = referensföräldern vinner, 0 = ingen avvikelse
+    let sign = 0;
     if (scheduled.parentId === referenceParentId && actualParentId !== referenceParentId) {
       // Referensförälderns dag togs över av den andra → förlust för referensförälder
       deltaAwayFromReference += stepFractionOfDay;
+      sign = 1;
     } else if (scheduled.parentId !== referenceParentId && actualParentId === referenceParentId) {
       // Referensförälderns motpart skulle haft dagen, men referensförälder tog över → vinst
       deltaAwayFromReference -= stepFractionOfDay;
+      sign = -1;
     }
-    // Om scheduled === actual (ingen faktisk avvikelse) → ingen justering.
+
+    // Helgbonus: steget kan täcka högst två kalenderdagar (start och slut),
+    // och varje lördag/söndag ger bonusen en gång.
+    if (sign !== 0) {
+      for (const instant of [cursor, new Date(stepEnd.getTime() - 1)]) {
+        const day = localDay(instant, timeZone);
+        if (day.isWeekend && !weekendDaysCounted.has(day.key)) {
+          weekendDaysCounted.add(day.key);
+          deltaAwayFromReference += sign * weekendBonus;
+        }
+      }
+    }
 
     cursor = stepEnd;
   }
 
-  // Avrunda till närmaste halva dag för att undvika flyttal-brus.
-  return Math.round(deltaAwayFromReference * 2) / 2;
+  return roundTenth(deltaAwayFromReference);
 }
 
 /**
@@ -106,7 +131,7 @@ export function applyApprovedShiftToBalance(
   const deltaAwayFromReference = calculateShiftDeltaDays(cycle, request, currentBalance.referenceParentId);
 
   // deltaAwayFromReference > 0 → referensföräldern förlorade dagar → balanceDays minskar.
-  const newBalanceDays = currentBalance.balanceDays - deltaAwayFromReference;
+  const newBalanceDays = roundTenth(currentBalance.balanceDays - deltaAwayFromReference);
 
   const updatedBalance: DayBalanceDoc = {
     ...currentBalance,
@@ -146,6 +171,23 @@ function formatDays(n: number): string {
 // ---------------------------------------------------------------------------
 // Hjälpfunktioner
 // ---------------------------------------------------------------------------
+
+/** Avrundar till en decimal för att undvika flyttalsbrus (t.ex. 1.2999999). */
+function roundTenth(n: number): number {
+  return Math.round(n * 10) / 10;
+}
+
+/** Lokal kalenderdag (YYYY-MM-DD) och om den är lördag eller söndag i `timeZone`. */
+function localDay(instant: Date, timeZone: string): { key: string; isWeekend: boolean } {
+  const key = new Intl.DateTimeFormat("sv-SE", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(instant);
+  const weekday = new Intl.DateTimeFormat("en-US", { timeZone, weekday: "short" }).format(instant);
+  return { key, isWeekend: weekday === "Sat" || weekday === "Sun" };
+}
 
 function fromTs(ts: { seconds: number; nanoseconds: number }): Date {
   return new Date(ts.seconds * 1000 + ts.nanoseconds / 1e6);

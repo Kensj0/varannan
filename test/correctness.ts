@@ -73,6 +73,7 @@ const cycle: CustodyCycleDoc = {
   cycleStartDate: "2026-01-01",
   switchHour: "12:00",
   timezone: "Europe/Stockholm",
+  weekendBonusDays: 0, // befintliga fall testar grundschemat utan helgbonus
   updatedAt: ts(new Date()),
   updatedBy: "u1",
 };
@@ -175,6 +176,53 @@ check(
     A
   ),
   2
+);
+
+console.log("\n=== Helgbonus ===\n");
+
+const cycleBonus: CustodyCycleDoc = { ...cycle, weekendBonusDays: 0.5 };
+const cycleBonusZero: CustodyCycleDoc = { ...cycle, weekendBonusDays: 0 };
+const cycleBonusFull: CustodyCycleDoc = { ...cycle, weekendBonusDays: 1 };
+
+// 10–11 jan är A:s lördag och söndag. B tar 10 jan 12:00 – 11 jan 12:00:
+// A förlorar 1 dag (½ lördag + ½ söndag) och får bonus för båda helgdagarna.
+check(
+  "helgbonus 0.5: B tar lör+sön av A -> 1 + 2 x 0.5 = 2",
+  calculateShiftDeltaDays(
+    cycleBonus,
+    { startAt: ts(sthlm(2026, 1, 10, 12)), endAt: ts(sthlm(2026, 1, 11, 12)), takingOverParentId: B },
+    A
+  ),
+  2
+);
+check(
+  "helgbonus 0.0: samma byte -> 1",
+  calculateShiftDeltaDays(
+    cycleBonusZero,
+    { startAt: ts(sthlm(2026, 1, 10, 12)), endAt: ts(sthlm(2026, 1, 11, 12)), takingOverParentId: B },
+    A
+  ),
+  1
+);
+// Vardagsbyte 1–2 jan (torsdag–fredag) -> ingen bonus
+check(
+  "helgbonus 0.5: vardagsbyte ger ingen bonus -> 1",
+  calculateShiftDeltaDays(
+    cycleBonus,
+    { startAt: ts(sthlm(2026, 1, 1, 12)), endAt: ts(sthlm(2026, 1, 2, 12)), takingOverParentId: B },
+    A
+  ),
+  1
+);
+// A tar 3–4 jan (B:s lördag och söndag): A vinner 1 dag, plus 1.0 i bonus per helgdag -> -3
+check(
+  "helgbonus 1.0: A tar lör+sön av B -> -(1 + 2 x 1.0) = -3",
+  calculateShiftDeltaDays(
+    cycleBonusFull,
+    { startAt: ts(sthlm(2026, 1, 3, 12)), endAt: ts(sthlm(2026, 1, 4, 12)), takingOverParentId: A },
+    A
+  ),
+  -3
 );
 
 console.log("\n=== Expansion av återkommande aktiviteter ===\n");

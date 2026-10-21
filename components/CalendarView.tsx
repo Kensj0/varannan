@@ -75,6 +75,7 @@ interface CalendarViewProps {
   activityFeedLinks?: CalendarFeedLinks | null;
   onCreateFeed: () => Promise<void>;
   onChangeSwitchHour: (hh: string, mm: string) => Promise<void>;
+  onChangeWeekendBonus: (value: number) => Promise<void>;
   /** Undefined när grundschemat inte går att ändra än. */
   onEditStructure?: () => void;
 
@@ -147,6 +148,7 @@ export default function CalendarView({
   activityFeedLinks,
   onCreateFeed,
   onChangeSwitchHour,
+  onChangeWeekendBonus,
   onEditStructure,
   calendars,
   activeCalendarId,
@@ -490,6 +492,7 @@ export default function CalendarView({
             onEditStructure={onEditStructure}
             switchHour={switchHour}
             onChangeSwitchHour={onChangeSwitchHour}
+            onChangeWeekendBonus={onChangeWeekendBonus}
             childName={childName}
             cycle={cycle}
             scheduleChangeMode={scheduleChangeMode}
