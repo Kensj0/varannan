@@ -30,10 +30,17 @@ function inWindow(query) {
 }
 
 (async () => {
-  const childSnap = await inWindow(db.collectionGroup("children")).get();
-  const eventSnap = await inWindow(db.collectionGroup("events")).get();
+  // Frågar per team i stället för collectionGroup. Då behövs inget
+  // sammansatt index, och ingen indexdeploy krävs.
+  const teams = await db.collection("teams").get();
+  const childDocs = [];
+  const eventDocs = [];
+  for (const team of teams.docs) {
+    childDocs.push(...(await inWindow(team.ref.collection("children")).get()).docs);
+    eventDocs.push(...(await inWindow(team.ref.collection("events")).get()).docs);
+  }
 
-  const children = childSnap.docs.map((d) => ({
+  const children = childDocs.map((d) => ({
     path: d.ref.path,
     teamId: d.get("teamId") ?? null,
     // Namnet tas inte med. Bara en hash, så dubbletter går att hitta.
@@ -51,7 +58,7 @@ function inWindow(query) {
     .filter(([, paths]) => paths.length > 1)
     .map(([key, paths]) => ({ teamId_nameHash: key, paths }));
 
-  const events = eventSnap.docs.map((d) => ({
+  const events = eventDocs.map((d) => ({
     path: d.ref.path,
     teamId: d.get("teamId") ?? null,
     childId: d.get("childId") ?? null,
