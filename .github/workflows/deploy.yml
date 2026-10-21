@@ -82,6 +82,21 @@ jobs:
         if: contains(github.event.inputs.target, 'hosting')
         run: npm run build
 
+      - name: Kontrollera att bygget har rätt Firebase-inställningar
+        # Stoppar deployen om appen byggts utan Firebase-inställningar. Då
+        # skulle inloggningen krascha för alla användare. Hände 2026-10-21.
+        if: contains(github.event.inputs.target, 'hosting')
+        run: |
+          if ! grep -rq "varannan-familj.firebaseapp.com" out/_next; then
+            echo "Bygget saknar Firebase-inställningarna. Avbryter deployen."
+            exit 1
+          fi
+          if grep -rq 'apiKey:"-"' out/_next; then
+            echo "Bygget innehåller platshållare för Firebase. Avbryter deployen."
+            exit 1
+          fi
+          echo "OK: Firebase-inställningarna finns i bygget."
+
       - name: Installera Firebase CLI
         run: npm install -g firebase-tools
 
