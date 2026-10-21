@@ -6,6 +6,7 @@ import {
   ParentColorId,
   ScheduleChangeMode,
   SCHEDULE_CHANGE_MODES,
+  DEFAULT_WEEKEND_BONUS_DAYS,
 } from "../types/schema";
 import { CalendarFeedLinks } from "../lib/calendarExport";
 import { CustodyCycleDoc } from "../types/schema";
@@ -35,6 +36,8 @@ interface CalendarSettingsPanelProps {
   onChangeSwitchHour: (hh: string, mm: string) => Promise<void>;
   teamId: string;
   childId: string;
+  /** Helgbonus 0.0–1.0 per lördag/söndag. Kräver godkännande från båda om det finns en partner. */
+  onChangeWeekendBonus: (value: number) => Promise<void>;
   childName: string;
   cycle: CustodyCycleDoc | undefined;
 
@@ -60,6 +63,8 @@ export default function CalendarSettingsPanel({
   onChangeSwitchHour,
   teamId,
   childId,
+  onChangeWeekendBonus,
+  cycle,
   childName,
   scheduleChangeMode,
   onChangeScheduleChangeMode,
@@ -162,6 +167,27 @@ export default function CalendarSettingsPanel({
       setGoogleConnectError("Kunde inte synka. Försök igen.");
     } finally {
       setSyncingGoogle(false);
+    }
+  }
+
+  const weekendBonusCurrent = cycle?.weekendBonusDays ?? DEFAULT_WEEKEND_BONUS_DAYS;
+  const [pendingBonus, setPendingBonus] = useState(weekendBonusCurrent);
+  const [savingBonus, setSavingBonus] = useState(false);
+  const [bonusError, setBonusError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setPendingBonus(weekendBonusCurrent);
+  }, [weekendBonusCurrent]);
+
+  async function saveWeekendBonus() {
+    setBonusError(null);
+    setSavingBonus(true);
+    try {
+      await onChangeWeekendBonus(pendingBonus);
+    } catch {
+      setBonusError("Kunde inte uppdatera helgbonusen. Försök igen.");
+    } finally {
+      setSavingBonus(false);
     }
   }
 
@@ -276,6 +302,41 @@ export default function CalendarSettingsPanel({
           className="w-full rounded-lg bg-stone-50 px-3 py-2 text-sm font-medium text-stone-700 hover:bg-stone-100 disabled:opacity-50"
         >
           {changingTime ? "Uppdaterar…" : "Uppdatera tid"}
+        </button>
+
+        <Section title="Helgbonus" />
+        <p className="mb-2 text-[11px] leading-snug text-stone-400">
+          Extra dagar i ställningen för varje lördag och söndag som du har barnet genom ett godkänt byte.
+          Kräver godkännande från er båda.
+        </p>
+        <div className="mb-2 flex items-center justify-center gap-4">
+          <button
+            onClick={() => setPendingBonus((v) => clampWeekendBonus(v - 0.1))}
+            disabled={savingBonus || pendingBonus <= 0}
+            className="h-9 w-9 rounded-full bg-stone-100 text-lg font-bold text-stone-600 disabled:opacity-40"
+            aria-label="Minska helgbonus"
+          >
+            −
+          </button>
+          <span className="min-w-[3.5rem] text-center text-xl font-bold text-stone-800">
+            {pendingBonus.toFixed(1)}
+          </span>
+          <button
+            onClick={() => setPendingBonus((v) => clampWeekendBonus(v + 0.1))}
+            disabled={savingBonus || pendingBonus >= 1}
+            className="h-9 w-9 rounded-full bg-stone-100 text-lg font-bold text-stone-600 disabled:opacity-40"
+            aria-label="Öka helgbonus"
+          >
+            +
+          </button>
+        </div>
+        {bonusError && <p className="mb-2 text-[11px] text-rose-600">{bonusError}</p>}
+        <button
+          onClick={saveWeekendBonus}
+          disabled={savingBonus || pendingBonus === weekendBonusCurrent}
+          className="w-full rounded-lg bg-stone-50 px-3 py-2 text-sm font-medium text-stone-700 hover:bg-stone-100 disabled:opacity-50"
+        >
+          {savingBonus ? "Skickar…" : "Uppdatera helgbonus"}
         </button>
 
         <Section title="Min färg" />
@@ -465,6 +526,10 @@ export default function CalendarSettingsPanel({
       )}
     </>
   );
+}
+
+function clampWeekendBonus(v: number): number {
+  return Math.round(Math.min(1, Math.max(0, v)) * 10) / 10;
 }
 
 function Section({ title, first = false }: { title: string; first?: boolean }) {

@@ -55,6 +55,7 @@ import {
   CalendarRole,
 } from "../../types/schema";
 import { applyApprovedShiftToBalance } from "../../lib/dayBalance";
+import { DEFAULT_WEEKEND_BONUS_DAYS } from "../../types/schema";
 import {
   createTeam as createTeamCore,
   createParentInvite,
@@ -81,6 +82,69 @@ export {
   gcalSyncOnConnect,
   gcalNightlySync,
 } from "./googleCalendarSync";
+
+/** Helgbonusen som redan finns på schemat, så att ett nytt grundschema inte nollställer den. */
+async function existingWeekendBonus(teamId: string, childId: string): Promise<number | undefined> {
+  const snap = await db.doc(`teams/${teamId}/children/${childId}/custodyCycle/main`).get();
+  return snap.data()?.weekendBonusDays;
+}
+
+// setWeekendBonus — uppdatera helgbonusen (0.0–1.0 dagar per lördag/söndag)
+export const setWeekendBonus = onCall(async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) throw new HttpsError("unauthenticated", "Du måste vara inloggad.");
+
+  const { teamId, childId, weekendBonusDays } = request.data as {
+    teamId?: string;
+    childId?: string;
+    weekendBonusDays?: number;
+  };
+  if (!teamId || !childId || typeof weekendBonusDays !== "number") {
+    throw new HttpsError("invalid-argument", "teamId, childId och weekendBonusDays krävs.");
+  }
+  // Tillåtet: 0.0–1.0 i steg om 0.1
+  const tenths = Math.round(weekendBonusDays * 10);
+  if (!Number.isFinite(weekendBonusDays) || tenths < 0 || tenths > 10 || Math.abs(weekendBonusDays * 10 - tenths) > 1e-9) {
+    throw new HttpsError("invalid-argument", "Helgbonus måste vara mellan 0.0 och 1.0 i steg om 0.1.");
+  }
+  const value = tenths / 10;
+
+  const teamSnap = await db.doc(`teams/${teamId}`).get();
+  if (!teamSnap.exists) throw new HttpsError("not-found", "Teamet finns inte.");
+  const parentIds: string[] = teamSnap.data()?.parentIds ?? [];
+  if (!parentIds.includes(uid)) throw new HttpsError("permission-denied", "Du tillhör inte teamet.");
+
+  const cycleRef = db.doc(`teams/${teamId}/children/${childId}/custodyCycle/main`);
+  const cycleSnap = await cycleRef.get();
+  if (!cycleSnap.exists) {
+    throw new HttpsError("failed-precondition", "Det finns inget grundschema att ställa in helgbonus på än.");
+  }
+  const current: number = cycleSnap.data()?.weekendBonusDays ?? DEFAULT_WEEKEND_BONUS_DAYS;
+  if (current === value) return { ok: true, pending: false };
+
+  const counterpart = await counterpartFor(teamId, childId, uid);
+  if (structureChangeAppliesDirectly(counterpart)) {
+    await cycleRef.update({ weekendBonusDays: value });
+    if (counterpart) {
+      const name = teamSnap.data()?.parentProfiles?.[uid]?.displayName ?? "Den andra föräldern";
+      await sendPushToUsers(db, [counterpart], {
+        title: "Helgbonusen ändrades",
+        body: `${name} ändrade helgbonusen till ${value}.`,
+      });
+    }
+    return { ok: true, pending: false };
+  }
+
+  return createStructureRequest({
+    teamId,
+    childId,
+    requestedBy: uid,
+    addressedTo: counterpart!,
+    kind: "weekendBonus",
+    payload: { teamId, childId, weekendBonusDays: value },
+    summary: `helgbonus ${current} → ${value}`,
+  });
+});
 
 // setCustomSwitchHour — uppdatera bytestiden för ett barn
 export const setCustomSwitchHour = onCall(async (request) => {
@@ -698,7 +762,7 @@ async function createStructureRequest(args: {
   childId: string;
   requestedBy: string;
   addressedTo: string;
-  kind: "cycle" | "switchHour";
+  kind: "cycle" | "switchHour" | "weekendBonus";
   payload: Record<string, unknown>;
   summary: string;
 }): Promise<{ pending: true; requestId: string }> {
@@ -723,7 +787,7 @@ async function createStructureRequest(args: {
 
 /** Verkställer en strukturändring. Delas av direktvägen och godkännandet. */
 async function applyStructureChange(
-  kind: "cycle" | "switchHour",
+  kind: "cycle" | "switchHour" | "weekendBonus",
   payload: any,
   uid: string,
 ): Promise<void> {
@@ -733,7 +797,17 @@ async function applyStructureChange(
       .update({ switchHour: payload.switchHour });
     return;
   }
-  await setupCustodyCycle(onboardingDb, { ...payload, updatedBy: uid });
+  if (kind === "weekendBonus") {
+    await db
+      .doc(`teams/${payload.teamId}/children/${payload.childId}/custodyCycle/main`)
+      .update({ weekendBonusDays: payload.weekendBonusDays });
+    return;
+  }
+  await setupCustodyCycle(onboardingDb, {
+    ...payload,
+    weekendBonusDays: await existingWeekendBonus(payload.teamId, payload.childId),
+    updatedBy: uid,
+  });
 }
 
 export const respondToStructureRequest = onCall(async (request) => {
@@ -814,7 +888,11 @@ export const saveCustodyCycle = onCall(async (request) => {
 
   const counterpart = await counterpartFor(raw.teamId, raw.childId, uid);
   if (isFirstSetup || structureChangeAppliesDirectly(counterpart)) {
-    await setupCustodyCycle(onboardingDb, { ...raw, updatedBy: uid });
+    await setupCustodyCycle(onboardingDb, {
+      ...raw,
+      weekendBonusDays: await existingWeekendBonus(raw.teamId, raw.childId),
+      updatedBy: uid,
+    });
     if (!isFirstSetup && counterpart) {
       const name = teamSnap.data()?.parentProfiles?.[uid]?.displayName ?? "Den andra föräldern";
       await sendPushToUsers(db, [counterpart], {

@@ -224,7 +224,7 @@ export interface ScheduleStructureRequestDoc {
   requestedBy: string;
   /** Vem som ska svara. Läget som gäller är den här personens. */
   addressedTo: string;
-  kind: "cycle" | "switchHour";
+  kind: "cycle" | "switchHour" | "weekendBonus";
   /** Argumenten till setupCustodyCycle, respektive { switchHour }. */
   payload: Record<string, unknown>;
   /** Kort beskrivning att visa i listan, t.ex. "Bytestid 08:00 → 18:00". */
@@ -416,9 +416,18 @@ export interface CustodyCycleDoc {
   switchHour: string; // "HH:mm"
   /** Tidszonen switchHour tolkas i, t.ex. "Europe/Stockholm". */
   timezone: string;
+  /**
+   * Helgbonus: extra dagar i ställningen per lördag och söndag som en förälder
+   * faktiskt har barnet genom ett godkänt byte. 0.0–1.0 i steg om 0.1.
+   * Saknas fältet gäller DEFAULT_WEEKEND_BONUS_DAYS.
+   */
+  weekendBonusDays?: number;
   updatedAt: FirestoreTimestamp;
   updatedBy: string;
 }
+
+/** Standardvärde för helgbonus om kalendern inte har satt något eget. */
+export const DEFAULT_WEEKEND_BONUS_DAYS = 0.5;
 
 // ---------------------------------------------------------------------------
 // SHIFT REQUESTS — "Ändra ansvar"

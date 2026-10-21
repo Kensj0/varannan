@@ -124,6 +124,7 @@ import {
   getCalendarFeedTokens,
   createCalendarFeedToken,
   setCustomSwitchHour,
+  setWeekendBonus,
   updateParentColor,
   CalendarFeedLinks,
 } from "../lib/calendarExport";
@@ -498,6 +499,11 @@ export default function HomePage() {
   async function handleChangeSwitchHour(hh: string, mm: string) {
     if (!teamId || !activeChildId) return;
     await setCustomSwitchHour(teamId, activeChildId, `${hh}:${mm}`);
+  }
+
+  async function handleChangeWeekendBonus(value: number) {
+    if (!teamId || !activeChildId) return;
+    await setWeekendBonus(teamId, activeChildId, value);
   }
   const activeChild = children.find((c) => c.id === activeChildId) ?? null;
 
@@ -1309,6 +1315,7 @@ export default function HomePage() {
                   otherParentName={parentNames[counterpartId] ?? "Andra föräldern"}
                   onCreateFeed={handleCreateFeed}
                   onChangeSwitchHour={handleChangeSwitchHour}
+                  onChangeWeekendBonus={handleChangeWeekendBonus}
                   onEditStructure={
                     hasPartner && cycle ? () => setEditingStructure(true) : undefined
                   }

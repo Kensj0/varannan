@@ -162,6 +162,8 @@ export interface SetupCustodyCycleInput {
   cycleStartDate: string; // "YYYY-MM-DD"
   switchHour: string; // "12:00"
   timezone: string; // "Europe/Stockholm"
+  /** Bevaras vid omskrivning av schemat; saknas → standardvärdet. */
+  weekendBonusDays?: number;
   referenceParentId: string;
   updatedBy: string;
 }
@@ -188,6 +190,7 @@ export async function setupCustodyCycle(db: OnboardingFirestore, input: SetupCus
     cycleStartDate: input.cycleStartDate,
     switchHour: input.switchHour,
     timezone: input.timezone,
+    ...(input.weekendBonusDays !== undefined ? { weekendBonusDays: input.weekendBonusDays } : {}),
     updatedAt: nowTs(),
     updatedBy: input.updatedBy,
   });
