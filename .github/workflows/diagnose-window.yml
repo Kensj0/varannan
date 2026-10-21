@@ -1,0 +1,43 @@
+name: Diagnos: dokument i tidsfönster
+
+# Skrivskyddad diagnos. Kör bara läsanrop mot Firestore (se
+# scripts/diagnose-window.cjs) och laddar upp resultatet som artefakt.
+# Ingen deploy, inget skrivande till Firestore, ingen commit.
+on:
+  workflow_dispatch:
+    inputs:
+      window_start:
+        description: "Fönsterstart (ISO, UTC)"
+        required: true
+        default: "2026-10-21T06:15:00Z"
+      window_end:
+        description: "Fönsterslut (ISO, UTC)"
+        required: true
+        default: "2026-10-21T06:50:00Z"
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Installera functions-beroenden (för firebase-admin)
+        run: npm ci --prefix functions
+
+      - name: Kör skrivskyddad diagnos
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          WINDOW_START: ${{ github.event.inputs.window_start }}
+          WINDOW_END: ${{ github.event.inputs.window_end }}
+        run: node scripts/diagnose-window.cjs
+
+      - name: Ladda upp resultatet som artefakt
+        uses: actions/upload-artifact@v4
+        with:
+          name: diagnose-window
+          path: diagnostics/window.json
+          retention-days: 14
